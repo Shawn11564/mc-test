@@ -1,0 +1,265 @@
+# =============================================================================
+# mc-test.example.yml — worked environment matrix for the "regions" example
+# -----------------------------------------------------------------------------
+# Spec: docs/ENVIRONMENTS.md  ·  Schema: packages/protocol/schema/mc-test.schema.json
+#
+# What this matrix does:
+#   - Stands up the canonical "regions" SUT (a plugin AND a mod) across
+#     Paper + Fabric + NeoForge, over MC 1.20.4 / 1.21.1 / 1.21.4.
+#   - Runs the SAME semantic test ("join localhost -> /or -> click 'Regions'
+#     -> click 'TestRegion' -> assert chat 'Region loaded' AND region exists")
+#     two ways:
+#       * regions-plugin-headless : Paper, headless Mineflayer bot + server-bukkit
+#                                   agent. Fast, no display. Inventory-GUI reach.
+#       * regions-mod-gui         : Fabric & NeoForge CLIENT targets, in-process
+#                                   client agent under Xvfb. Real mod Screens.
+#   - The mod-gui suite is SKIPPED-WITH-A-REASON on Paper (no clientScreens cap),
+#     demonstrating capability negotiation.
+#
+# Copy real artifact URLs/sha256 into `sources:` before running, or point at
+# locally-built jars with `path:`. EULA must be accepted (provision.eulaAccepted).
+# =============================================================================
+
+version: 1
+
+# -----------------------------------------------------------------------------
+# defaults — merged UNDER every expanded target (a target's own keys win).
+# -----------------------------------------------------------------------------
+defaults:
+  online-mode: false          # forced false anyway; stated for clarity/assertions
+  timeoutSec: 300
+  jvm:
+    java: "21"                # runner still enforces >=17 (<=1.20.4) / >=21 (>=1.20.5)
+    xmx: "2G"
+    xms: "1G"
+  serverProps:
+    view-distance: 6
+    simulation-distance: 6
+    spawn-monsters: false     # quiet, deterministic test world
+  tags: ["regions"]
+
+# -----------------------------------------------------------------------------
+# matrix — expansion axes. Targets opt in via `useMatrix: [mc]`.
+#   `mc` is a well-known axis: it overrides Target.mc on each expansion.
+# -----------------------------------------------------------------------------
+matrix:
+  mc: ["1.20.4", "1.21.1", "1.21.4"]
+  exclude:
+    # NeoForge did not exist for 1.20.4 — drop that one instance instead of
+    # letting it fail to resolve a loader installer.
+    - { id: regions-neoforge-client, mc: "1.20.4" }
+
+# -----------------------------------------------------------------------------
+# sources — named, reusable artifact descriptors (referenced by `{ ref: ... }`).
+# Exactly one resolver per source: url | path | maven | paper | mojang |
+#   modrinth | github.
+# -----------------------------------------------------------------------------
+sources:
+
+  # --- The regions SUT (built by you; here pointed at local build outputs). ---
+  regions-plugin:                       # Bukkit/Paper plugin form of the SUT
+    kind: plugin
+    path: "./examples/regions/build/regions-plugin.jar"
+    as: "regions.jar"
+
+  regions-mod-fabric:                   # Fabric mod form of the SUT (client+server)
+    kind: mod
+    path: "./examples/regions/build/regions-fabric.jar"
+    as: "regions.jar"
+
+  regions-mod-neoforge:                 # NeoForge mod form of the SUT
+    kind: mod
+    path: "./examples/regions/build/regions-neoforge.jar"
+    as: "regions.jar"
+
+  # --- mc-test agents (the in-game MCTP servers). Per-version artifacts. ---
+  # ${{ matrix.mc }} interpolates AFTER matrix expansion, so one source entry
+  # resolves to the right per-version agent jar for each instance.
+  agent-server-bukkit:
+    kind: agent
+    path: "./agents/server-bukkit/build/libs/agent-server-bukkit-${{ matrix.mc }}.jar"
+  agent-client-fabric:
+    kind: agent
+    path: "./agents/client-fabric/build/libs/agent-client-fabric-${{ matrix.mc }}.jar"
+  agent-client-neoforge:
+    kind: agent
+    path: "./agents/client-neoforge/build/libs/agent-client-neoforge-${{ matrix.mc }}.jar"
+
+  # --- Loader installers (resolved from official sources). ---
+  fabric-installer:
+    kind: loader-installer
+    maven:
+      repo: "https://maven.fabricmc.net"
+      group: "net.fabricmc"
+      artifact: "fabric-installer"
+      version: "1.0.1"
+    sha256: "REPLACE_WITH_FABRIC_INSTALLER_SHA256"
+  neoforge-installer:
+    # NeoForge installer version tracks the MC version line; pin per run as needed.
+    kind: loader-installer
+    url: "https://maven.neoforged.net/releases/net/neoforged/neoforge/REPLACE_NEOFORGE_VERSION/neoforge-REPLACE_NEOFORGE_VERSION-installer.jar"
+    sha256: "REPLACE_WITH_NEOFORGE_INSTALLER_SHA256"
+
+# -----------------------------------------------------------------------------
+# worlds — named snapshots. We use the builtin `flat-void` plus a fixture
+# (see suites below) so the test is hermetic and needs no hand-built snapshot.
+# A custom snapshot example is shown but commented out.
+# -----------------------------------------------------------------------------
+worlds:
+  regions-void:
+    name: "world"
+    generate: { type: void, seed: 12345 }   # deterministic, fast-boot void world
+    levelName: "world"
+    resetPolicy: per-test                    # max isolation; restored before each test
+    readOnly: false
+  # regions-prebuilt:                        # alternative: ship a snapshot + datapack
+  #   snapshot: { url: "https://example.com/regions-world.zip", sha256: "..." }
+  #   levelName: "world"
+  #   resetPolicy: per-test
+  #   datapacks:
+  #     - { path: "./examples/regions/datapacks/testregion.zip" }
+
+# -----------------------------------------------------------------------------
+# targets — the matrix rows. Each expands over `useMatrix` axes into instances.
+# -----------------------------------------------------------------------------
+targets:
+
+  # ===== PAPER (server-side plugin; headless bot driver) =====================
+  - id: regions-paper-headless
+    loader: paper
+    mc: "1.21.4"                 # overridden per-instance by matrix.mc
+    side: server
+    driver: headless             # Mineflayer + minecraft-data (+ ViaVersion as needed)
+    useMatrix: ["mc"]            # -> 3 instances: 1.20.4 / 1.21.1 / 1.21.4
+    server:
+      # PaperMC fill API: pick the latest build for this MC version.
+      paper: { project: paper, version: "${{ matrix.mc }}", build: latest }
+    plugins:
+      - { ref: regions-plugin }  # the SUT
+    agent: { ref: agent-server-bukkit }   # server-bukkit agent (MCTP over WS)
+    world: { ref: regions-void }
+    tags: ["regions", "ci", "plugin", "headless"]
+
+  # ===== FABRIC (rendered client; in-process client agent) ===================
+  - id: regions-fabric-client
+    loader: fabric
+    mc: "1.21.4"
+    side: client                 # a real client draws frames -> needs a display
+    driver: inprocess            # the ONLY driver that can see client Screens
+    useMatrix: ["mc"]            # -> 3 instances
+    # Server side of the instance (the client connects to it):
+    server:
+      mojang: { version: "${{ matrix.mc }}", artifact: server }
+    loaderInstaller: { ref: fabric-installer }
+    mods:
+      - { ref: regions-mod-fabric }       # server-side half of the SUT mod
+    agent: { ref: agent-client-fabric }   # client agent goes into the CLIENT below
+    # Rendered client launch profile:
+    client:
+      profile: fabric
+      mc: "${{ matrix.mc }}"
+      connect: auto              # auto-join this instance's allocated game port
+      username: "mc-test-client" # offline profile (server is online-mode=false)
+      windowSize: "1920x1080"
+      mods:
+        - { ref: regions-mod-fabric }     # client-side half of the SUT mod
+        - { ref: agent-client-fabric }    # the in-process client agent (MCTP)
+    world: { ref: regions-void }
+    tags: ["regions", "gui", "client", "fabric"]
+
+  # ===== NEOFORGE (rendered client; in-process client agent) =================
+  - id: regions-neoforge-client
+    loader: neoforge
+    mc: "1.21.4"
+    side: client
+    driver: inprocess
+    useMatrix: ["mc"]            # 1.20.4 excluded via matrix.exclude -> 2 instances
+    server:
+      mojang: { version: "${{ matrix.mc }}", artifact: server }
+    loaderInstaller: { ref: neoforge-installer }
+    mods:
+      - { ref: regions-mod-neoforge }
+    agent: { ref: agent-client-neoforge }
+    client:
+      profile: neoforge
+      mc: "${{ matrix.mc }}"
+      connect: auto
+      username: "mc-test-client"
+      windowSize: "1920x1080"
+      mods:
+        - { ref: regions-mod-neoforge }
+        - { ref: agent-client-neoforge }
+    world: { ref: regions-void }
+    tags: ["regions", "gui", "client", "neoforge"]
+
+# -----------------------------------------------------------------------------
+# suites — which tests run where, and the CAPABILITIES each suite requires.
+# The runner negotiates: a target whose driver can't satisfy `requires` is
+# SKIPPED WITH A REASON (e.g. mod-gui on Paper -> needs clientScreens).
+# -----------------------------------------------------------------------------
+suites:
+
+  # Fast CI path: plugin GUI via the headless bot's inventory reach.
+  - id: regions-plugin-headless
+    match:
+      paths: ["examples/regions/**/*.mctest.yml"]
+      tags: ["regions"]
+    targets:
+      tags: ["plugin"]          # -> the Paper targets only
+    requires:
+      chat: true                # run /or, read "Region loaded"
+      containerGui: true        # click container-GUI buttons "Regions"/"TestRegion"
+      pluginState: true         # truth.assertPluginState: region "TestRegion" exists
+    parallelism: 3
+    retries: 1
+
+  # Real mod client GUI: only the in-process driver advertises clientScreens.
+  - id: regions-mod-gui
+    match:
+      paths: ["examples/regions/**/*.mctest.yml"]
+      tags: ["regions"]
+    targets:
+      tags: ["gui"]             # -> Fabric + NeoForge client targets
+    requires:
+      chat: true
+      clientScreens: true       # inspect/click real ClickableWidgets in the Screen
+      pluginState: true
+    parallelism: 2
+    retries: 1
+
+# -----------------------------------------------------------------------------
+# provision — global provisioning policy.
+# -----------------------------------------------------------------------------
+provision:
+  cacheDir: "~/.mc-test/cache"
+  workDir: ".mc-test/run"
+  parallelism: 4
+  portRange: [25700, 25899]     # gamePort + mctpPort (+rconPort) leased per instance
+  bindHost: "127.0.0.1"         # loopback only — offline-mode servers must not be public
+  eulaAccepted: true            # YOU accept Mojang's EULA by setting this; required to boot
+  downloadRetries: 3
+  keepOnFailure: true           # preserve instance dir + logs when a test fails
+  offline: false                # set true for air-gapped CI (everything must be cached)
+  agentResolver:
+    strategy: path              # resolve agents from the path: sources above
+  # Rendered-client display backend (used only by side:client targets).
+  display:
+    backend: auto               # auto -> xvfb in CI, host on a desktop runner
+    resolution: 1920x1080
+    depth: 24
+    softwareGl: true            # LIBGL_ALWAYS_SOFTWARE for Xvfb + Mesa
+    xvfbArgs: ["-ac", "+extension", "GLX"]
+
+# -----------------------------------------------------------------------------
+# reporting — JUnit XML + artifacts. Skips (capability misses) appear as
+# <skipped> with the negotiation reason.
+# -----------------------------------------------------------------------------
+reporting:
+  outputDir: "./mc-test-report"
+  junitXml: "./mc-test-report/junit/results.xml"
+  video: on-failure             # record the rendered client on failure (gui targets)
+  keepLogsOnSuccess: false
+  artifacts:
+    dir: "./mc-test-report/artifacts"
+    onFailure: ["server-log", "client-log", "screenshot", "world-diff"]
+    onSuccess: []

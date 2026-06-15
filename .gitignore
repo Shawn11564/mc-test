@@ -1,0 +1,41 @@
+# --- Node / TypeScript (packages/*) ---
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.npm/
+.turbo/
+.eslintcache
+
+# --- JVM / Gradle (agents/*) ---
+.gradle/
+**/build/
+*.class
+out/
+bin/
+!**/src/**/bin/
+
+# --- Minecraft run / provisioning artifacts ---
+/artifacts/
+/tmp/
+run/
+server.jar
+*.log
+eula.txt
+world/
+world_nether/
+world_the_end/
+!examples/**/world-snapshot/
+
+# --- Editors / OS ---
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- Secrets / local config ---
+.env
+.env.local
+*.local.yml
