@@ -1,0 +1,15 @@
+{
+  "method": "truth.assertPluginState",
+  "description": "Read authoritative plugin state; the canonical region-exists assertion.",
+  "request": { "jsonrpc": "2.0", "id": 3, "method": "truth.assertPluginState", "params": { "sessionId": "s_srv_01", "plugin": "OpenRegions", "query": "regions.exists", "args": { "name": "TestRegion" }, "expect": { "equals": true } } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": { "jsonrpc": "2.0", "id": 3, "result": { "ok": true, "query": "regions.exists", "value": true, "matched": true, "valueJson": "true" } }
+    },
+    {
+      "name": "assert-failed",
+      "envelope": { "jsonrpc": "2.0", "id": 3, "error": { "code": -32006, "message": "Unknown state query", "data": { "reason": "ASSERT_FAILED", "retryable": false } } }
+    }
+  ]
+}

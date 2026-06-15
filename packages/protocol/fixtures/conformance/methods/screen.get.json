@@ -1,0 +1,27 @@
+{
+  "method": "screen.get",
+  "description": "Snapshot the active screen as a normalized element list.",
+  "request": { "jsonrpc": "2.0", "id": 5, "method": "screen.get", "params": { "sessionId": "s_ui_01", "includeTree": true, "includeInvisible": false } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "ok": true,
+          "screen": {
+            "screenId": "regions:root",
+            "kind": "containerGui",
+            "title": "OpenRegions",
+            "titleRaw": "{\"text\":\"OpenRegions\"}",
+            "size": { "rows": 6, "cols": 9 },
+            "elements": [
+              { "elementId": "el_4", "role": "button", "label": "Regions", "text": "Regions", "itemType": "minecraft:book", "testId": "regions:root:regions", "slot": 4, "enabled": true, "visible": true }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

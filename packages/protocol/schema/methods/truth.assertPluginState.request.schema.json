@@ -1,0 +1,89 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: truth.assertPluginState",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "truth.assertPluginState",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId",
+        "query"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "plugin": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "args": {
+          "description": "Free-form by-name JSON object.",
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {}
+          }
+        },
+        "expect": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "equals": {},
+            "notEquals": {},
+            "contains": {},
+            "gt": {
+              "type": "number"
+            },
+            "gte": {
+              "type": "number"
+            },
+            "lt": {
+              "type": "number"
+            },
+            "lte": {
+              "type": "number"
+            },
+            "exists": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "description": "Generic JSON-RPC error envelopes (the standard range). MCTP-specific codes are covered in the per-method response fixtures.",
+  "errors": [
+    {
+      "name": "parse-error",
+      "envelope": { "jsonrpc": "2.0", "id": 0, "error": { "code": -32700, "message": "Invalid JSON", "data": { "reason": "parseError", "retryable": false } } }
+    },
+    {
+      "name": "invalid-request",
+      "envelope": { "jsonrpc": "2.0", "id": 0, "error": { "code": -32600, "message": "Not a valid envelope", "data": { "reason": "invalidRequest", "retryable": false } } }
+    },
+    {
+      "name": "method-not-found",
+      "envelope": { "jsonrpc": "2.0", "id": 31, "error": { "code": -32601, "message": "Unknown method", "data": { "reason": "methodNotFound", "retryable": false } } }
+    },
+    {
+      "name": "internal-error",
+      "envelope": { "jsonrpc": "2.0", "id": 31, "error": { "code": -32603, "message": "Unexpected agent failure", "data": { "reason": "internalError", "retryable": false } } }
+    }
+  ]
+}

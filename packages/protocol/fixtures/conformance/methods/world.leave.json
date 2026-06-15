@@ -1,0 +1,8 @@
+{
+  "method": "world.leave",
+  "description": "Leave the world / detach (counterpart to world.join).",
+  "request": { "jsonrpc": "2.0", "id": 10, "method": "world.leave", "params": { "sessionId": "s_ui_01", "reason": "testTeardown" } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 10, "result": { "ok": true } } }
+  ]
+}

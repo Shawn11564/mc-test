@@ -1,0 +1,18 @@
+{
+  "name": "mc-test-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "mc-test — WebDriver/Appium-style automated testing framework for Minecraft plugins & mods (monorepo root)",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

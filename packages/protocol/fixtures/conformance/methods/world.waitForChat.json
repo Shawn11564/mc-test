@@ -1,0 +1,26 @@
+{
+  "method": "world.waitForChat",
+  "description": "Block until a chat line matches; the canonical 'Region loaded' assertion.",
+  "request": { "jsonrpc": "2.0", "id": 8, "method": "world.waitForChat", "params": { "sessionId": "s_ui_01", "filter": { "contains": "Region", "channel": "system" }, "timeoutMs": 5000 } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {
+          "ok": true,
+          "chat": { "text": "Region loaded: TestRegion", "rawJson": "{\"text\":\"Region loaded: TestRegion\",\"color\":\"green\"}", "sender": "server", "channel": "system" }
+        }
+      }
+    },
+    {
+      "name": "timeout",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "error": { "code": -32003, "message": "Timed out waiting for chat", "data": { "reason": "TIMEOUT", "retryable": true } }
+      }
+    }
+  ]
+}

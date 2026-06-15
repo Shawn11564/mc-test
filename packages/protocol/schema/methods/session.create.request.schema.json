@@ -1,0 +1,162 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: session.create",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "session.create",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "protocolVersion",
+        "client",
+        "requiredCapabilities"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "type": "string"
+        },
+        "client": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "name",
+            "version",
+            "lang"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "lang": {
+              "anyOf": [
+                {
+                  "const": "ts",
+                  "type": "string"
+                },
+                {
+                  "const": "java",
+                  "type": "string"
+                },
+                {
+                  "const": "kotlin",
+                  "type": "string"
+                },
+                {
+                  "const": "other",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "optionalCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraints": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "mcVersionRange": {
+              "type": "string"
+            },
+            "loader": {
+              "description": "Minecraft loader.",
+              "anyOf": [
+                {
+                  "const": "spigot",
+                  "type": "string"
+                },
+                {
+                  "const": "paper",
+                  "type": "string"
+                },
+                {
+                  "const": "folia",
+                  "type": "string"
+                },
+                {
+                  "const": "fabric",
+                  "type": "string"
+                },
+                {
+                  "const": "forge",
+                  "type": "string"
+                },
+                {
+                  "const": "neoforge",
+                  "type": "string"
+                },
+                {
+                  "const": "quilt",
+                  "type": "string"
+                },
+                {
+                  "const": "vanilla",
+                  "type": "string"
+                }
+              ]
+            },
+            "worldId": {
+              "type": "string"
+            }
+          }
+        },
+        "connection": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "maxFrameBytes": {
+              "type": "integer"
+            },
+            "eventBufferSize": {
+              "type": "integer"
+            },
+            "defaultTimeoutMs": {
+              "type": "integer"
+            },
+            "locale": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

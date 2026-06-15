@@ -1,0 +1,60 @@
+{
+  "description": "Golden event notification envelopes (server -> runner, no id).",
+  "events": [
+    {
+      "event": "event.chat",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "method": "event.chat",
+        "params": {
+          "sessionId": "s_ui_01",
+          "subscriptionId": "sub_chat_1",
+          "seq": 128,
+          "tsMs": 1718412345678,
+          "data": { "text": "Region loaded", "rawJson": "{\"text\":\"Region loaded\",\"color\":\"green\"}", "sender": "server", "channel": "system" }
+        }
+      }
+    },
+    {
+      "event": "event.screenChanged",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "method": "event.screenChanged",
+        "params": {
+          "sessionId": "s_ui_01",
+          "subscriptionId": "sub_screen_1",
+          "seq": 9,
+          "tsMs": 1718412345700,
+          "data": { "change": "opened", "screenId": "regions:list", "kind": "containerGui", "title": "Regions" }
+        }
+      }
+    },
+    {
+      "event": "event.log",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "method": "event.log",
+        "params": {
+          "sessionId": "s_srv_01",
+          "subscriptionId": "sub_log_1",
+          "seq": 4412,
+          "tsMs": 1718412345678,
+          "data": { "level": "INFO", "logger": "RegionsPlugin", "message": "Region loaded: TestRegion", "thread": "Server thread", "source": "server" }
+        }
+      }
+    },
+    {
+      "event": "event.disconnected",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "method": "event.disconnected",
+        "params": {
+          "sessionId": "s_ui_01",
+          "seq": 1,
+          "tsMs": 1718412350000,
+          "data": { "reason": "server stopped", "code": 1006, "graceful": false }
+        }
+      }
+    }
+  ]
+}

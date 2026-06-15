@@ -1,0 +1,15 @@
+{
+  "method": "fixture.set",
+  "description": "Apply a named, parameterized fixture (e.g. create a region).",
+  "request": { "jsonrpc": "2.0", "id": 24, "method": "fixture.set", "params": { "sessionId": "s_srv_01", "fixture": "regions.createRegion", "args": { "name": "TestRegion", "min": { "x": 0, "y": 60, "z": 0 }, "max": { "x": 16, "y": 80, "z": 16 } } } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": { "jsonrpc": "2.0", "id": 24, "result": { "ok": true, "fixture": "regions.createRegion", "applied": true, "handle": "fx_region_TestRegion", "result": { "regionId": "TestRegion" } } }
+    },
+    {
+      "name": "fixture-failed",
+      "envelope": { "jsonrpc": "2.0", "id": 24, "error": { "code": -32005, "message": "Unknown fixture", "data": { "reason": "FIXTURE_FAILED", "retryable": false } } }
+    }
+  ]
+}

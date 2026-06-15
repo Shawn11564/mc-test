@@ -1,0 +1,79 @@
+{
+  "$id": "Selector",
+  "additionalProperties": false,
+  "minProperties": 1,
+  "description": "Semantic selector (all present keys AND-ed; >=1 key required).",
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "textContains": {
+      "type": "string"
+    },
+    "loreContains": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "itemType": {
+      "type": "string"
+    },
+    "role": {
+      "description": "Semantic widget role.",
+      "anyOf": [
+        {
+          "const": "button",
+          "type": "string"
+        },
+        {
+          "const": "slot",
+          "type": "string"
+        },
+        {
+          "const": "label",
+          "type": "string"
+        },
+        {
+          "const": "input",
+          "type": "string"
+        },
+        {
+          "const": "tab",
+          "type": "string"
+        },
+        {
+          "const": "list",
+          "type": "string"
+        },
+        {
+          "const": "listItem",
+          "type": "string"
+        }
+      ]
+    },
+    "index": {
+      "type": "integer"
+    },
+    "nth": {
+      "type": "integer"
+    },
+    "within": {
+      "$ref": "Selector"
+    },
+    "testId": {
+      "type": "string"
+    }
+  }
+}

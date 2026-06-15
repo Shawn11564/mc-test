@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "description": "Generic MCTP event notification envelope (no id).",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "method"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "method": {
+      "type": "string"
+    },
+    "params": {
+      "description": "Free-form by-name JSON object.",
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "@mc-test/protocol",
+  "version": "0.1.0",
+  "description": "MC Test Protocol (MCTP) — the single shared wire contract for mc-test. Pure TypeScript types + JSON Schema + capability/selector helpers + golden conformance fixtures. No game, Mineflayer, or JVM dependency.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema/*": "./schema/*",
+    "./fixtures/*": "./fixtures/*"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "fixtures",
+    "README.md"
+  ],
+  "scripts": {
+    "gen:schema": "tsx scripts/gen-schema.mts",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run gen:schema && tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

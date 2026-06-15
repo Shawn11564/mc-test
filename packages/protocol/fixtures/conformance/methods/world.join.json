@@ -1,0 +1,22 @@
+{
+  "method": "world.join",
+  "description": "Join the bot/client to the target world (no-op for server agents).",
+  "request": { "jsonrpc": "2.0", "id": 2, "method": "world.join", "params": { "sessionId": "s_ui_01", "host": "127.0.0.1", "port": 25565, "username": "Tester", "auth": "offline", "world": "default", "joinTimeoutMs": 30000 } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "ok": true,
+          "playerName": "Tester",
+          "playerUuid": "069a79f4-44e9-4726-a5be-fca90e38aaf5",
+          "dimension": "minecraft:overworld",
+          "position": { "x": 0.5, "y": 64.0, "z": 0.5 },
+          "serverBrand": "Paper"
+        }
+      }
+    }
+  ]
+}

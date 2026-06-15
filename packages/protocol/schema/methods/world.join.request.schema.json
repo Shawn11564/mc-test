@@ -1,0 +1,78 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: world.join",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "world.join",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "username": {
+          "type": "string"
+        },
+        "auth": {
+          "anyOf": [
+            {
+              "const": "offline",
+              "type": "string"
+            },
+            {
+              "const": "microsoft",
+              "type": "string"
+            }
+          ]
+        },
+        "world": {
+          "type": "string"
+        },
+        "joinTimeoutMs": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

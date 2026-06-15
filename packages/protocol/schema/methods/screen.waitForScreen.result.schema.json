@@ -1,0 +1,240 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: screen.waitForScreen",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "screen"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "screen": {
+          "additionalProperties": false,
+          "description": "Active-screen snapshot.",
+          "type": "object",
+          "required": [
+            "kind",
+            "elements"
+          ],
+          "properties": {
+            "screenId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "description": "Active screen kind.",
+              "anyOf": [
+                {
+                  "const": "containerGui",
+                  "type": "string"
+                },
+                {
+                  "const": "clientScreen",
+                  "type": "string"
+                },
+                {
+                  "const": "hud",
+                  "type": "string"
+                },
+                {
+                  "const": "none",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": {
+              "type": "string"
+            },
+            "titleRaw": {
+              "type": "string"
+            },
+            "size": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "rows",
+                "cols"
+              ],
+              "properties": {
+                "rows": {
+                  "type": "integer"
+                },
+                "cols": {
+                  "type": "integer"
+                }
+              }
+            },
+            "elements": {
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "description": "Normalized UI element descriptor.",
+                "type": "object",
+                "required": [
+                  "elementId"
+                ],
+                "properties": {
+                  "elementId": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "description": "Semantic widget role.",
+                    "anyOf": [
+                      {
+                        "const": "button",
+                        "type": "string"
+                      },
+                      {
+                        "const": "slot",
+                        "type": "string"
+                      },
+                      {
+                        "const": "label",
+                        "type": "string"
+                      },
+                      {
+                        "const": "input",
+                        "type": "string"
+                      },
+                      {
+                        "const": "tab",
+                        "type": "string"
+                      },
+                      {
+                        "const": "list",
+                        "type": "string"
+                      },
+                      {
+                        "const": "listItem",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "rawLabel": {
+                    "type": "string"
+                  },
+                  "bodyText": {
+                    "type": "string"
+                  },
+                  "lore": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "itemType": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "bounds": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "x",
+                      "y",
+                      "w",
+                      "h"
+                    ],
+                    "properties": {
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "w": {
+                        "type": "integer"
+                      },
+                      "h": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "screenId": {
+                    "type": "string"
+                  },
+                  "index": {
+                    "type": "integer"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "visible": {
+                    "type": "boolean"
+                  },
+                  "ref": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

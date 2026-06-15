@@ -1,0 +1,25 @@
+{
+  "method": "screen.listElements",
+  "description": "Filter the current screen's elements by a selector (scoped by testId).",
+  "request": { "jsonrpc": "2.0", "id": 7, "method": "screen.listElements", "params": { "sessionId": "s_ui_01", "selector": { "role": "listItem", "within": { "testId": "regions:list" } } } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "ok": true,
+          "count": 1,
+          "elements": [
+            { "elementId": "el_11", "role": "listItem", "label": "TestRegion", "itemType": "minecraft:filled_map", "lore": ["Click to load"], "testId": "regions:entry:TestRegion", "slot": 11, "enabled": true, "visible": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "empty",
+      "envelope": { "jsonrpc": "2.0", "id": 7, "result": { "ok": true, "count": 0, "elements": [] } }
+    }
+  ]
+}

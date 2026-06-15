@@ -1,0 +1,121 @@
+{
+  "description": "Generic MCTP response envelope (success or error).",
+  "anyOf": [
+    {
+      "additionalProperties": false,
+      "description": "Generic MCTP success response envelope.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "id": {
+          "description": "JSON-RPC correlation id (string or integer, never null).",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ]
+        },
+        "result": {
+          "description": "Free-form by-name JSON object.",
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {}
+          }
+        }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "description": "Generic MCTP error response envelope.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "id": {
+          "description": "JSON-RPC correlation id (string or integer, never null).",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ]
+        },
+        "error": {
+          "additionalProperties": false,
+          "description": "JSON-RPC 2.0 error object.",
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            },
+            "data": {
+              "additionalProperties": true,
+              "description": "Structured MCTP error data (PROTOCOL.md §9.1).",
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "type": "string"
+                },
+                "retryable": {
+                  "type": "boolean"
+                },
+                "details": {
+                  "description": "Free-form by-name JSON object.",
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "requestId": {
+                  "type": "string"
+                },
+                "unmet": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "offered": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

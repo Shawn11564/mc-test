@@ -1,0 +1,103 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: screen.waitForScreen",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "screen.waitForScreen",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "match": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "screenId": {
+              "type": "string"
+            },
+            "screenIdPrefix": {
+              "type": "string"
+            },
+            "kind": {
+              "description": "Active screen kind.",
+              "anyOf": [
+                {
+                  "const": "containerGui",
+                  "type": "string"
+                },
+                {
+                  "const": "clientScreen",
+                  "type": "string"
+                },
+                {
+                  "const": "hud",
+                  "type": "string"
+                },
+                {
+                  "const": "none",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          }
+        },
+        "change": {
+          "anyOf": [
+            {
+              "const": "opened",
+              "type": "string"
+            },
+            {
+              "const": "closed",
+              "type": "string"
+            },
+            {
+              "const": "replaced",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP notification: event.chat",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "method": {
+      "const": "event.chat",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId",
+        "data"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "subscriptionId": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "tsMs": {
+          "type": "number"
+        },
+        "data": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "rawJson": {
+              "type": "string"
+            },
+            "sender": {
+              "type": "string"
+            },
+            "channel": {
+              "anyOf": [
+                {
+                  "const": "system",
+                  "type": "string"
+                },
+                {
+                  "const": "chat",
+                  "type": "string"
+                },
+                {
+                  "const": "actionBar",
+                  "type": "string"
+                },
+                {
+                  "const": "gameInfo",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

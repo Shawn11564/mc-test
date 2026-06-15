@@ -1,0 +1,85 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: screen.screenshot",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "screen.screenshot",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "format": {
+          "const": "png",
+          "type": "string"
+        },
+        "return": {
+          "anyOf": [
+            {
+              "const": "inline",
+              "type": "string"
+            },
+            {
+              "const": "ref",
+              "type": "string"
+            }
+          ]
+        },
+        "region": {
+          "anyOf": [
+            {
+              "const": "screen",
+              "type": "string"
+            },
+            {
+              "const": "gui",
+              "type": "string"
+            }
+          ]
+        },
+        "maxWidth": {
+          "type": "integer"
+        },
+        "maxHeight": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

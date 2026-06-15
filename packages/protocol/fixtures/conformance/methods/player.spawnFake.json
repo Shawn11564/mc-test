@@ -1,0 +1,8 @@
+{
+  "method": "player.spawnFake",
+  "description": "Spawn a server-side fake/bot player (Carpet-style).",
+  "request": { "jsonrpc": "2.0", "id": 26, "method": "player.spawnFake", "params": { "sessionId": "s_srv_01", "name": "Bot2", "at": { "x": 2, "y": 64, "z": 2 }, "gameMode": "survival" } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 26, "result": { "ok": true, "name": "Bot2", "uuid": "069a79f4-44e9-4726-a5be-fca90e38bbbb", "handle": "fp_Bot2" } } }
+  ]
+}

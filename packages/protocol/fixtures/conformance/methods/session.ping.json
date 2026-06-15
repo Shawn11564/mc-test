@@ -1,0 +1,8 @@
+{
+  "method": "session.ping",
+  "description": "Liveness/latency probe through the dispatch loop.",
+  "request": { "jsonrpc": "2.0", "id": 7, "method": "session.ping", "params": { "nonce": "abc" } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 7, "result": { "ok": true, "nonce": "abc", "serverTick": 12345 } } }
+  ]
+}

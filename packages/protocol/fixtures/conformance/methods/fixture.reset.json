@@ -1,0 +1,8 @@
+{
+  "method": "fixture.reset",
+  "description": "Restore the world to a pristine snapshot (per-test isolation primitive).",
+  "request": { "jsonrpc": "2.0", "id": 2, "method": "fixture.reset", "params": { "sessionId": "s_srv_01", "snapshot": "regions-baseline", "world": "world" } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 2, "result": { "ok": true, "restored": "regions-baseline", "tookMs": 740 } } }
+  ]
+}

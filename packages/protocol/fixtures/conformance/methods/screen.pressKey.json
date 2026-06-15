@@ -1,0 +1,12 @@
+{
+  "method": "screen.pressKey",
+  "description": "Press a logical key or keybinding (client-side).",
+  "request": { "jsonrpc": "2.0", "id": 15, "method": "screen.pressKey", "params": { "sessionId": "s_ui_01", "key": "inventory", "action": "press", "modifiers": ["shift"] } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 15, "result": { "ok": true, "screenChanged": true } } },
+    {
+      "name": "not-supported",
+      "envelope": { "jsonrpc": "2.0", "id": 15, "error": { "code": -32002, "message": "pressKey not supported by this agent", "data": { "reason": "METHOD_NOT_SUPPORTED", "retryable": false } } }
+    }
+  ]
+}

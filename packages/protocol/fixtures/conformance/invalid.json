@@ -1,0 +1,59 @@
+{
+  "description": "Negative controls: each envelope MUST FAIL validation against the referenced schema. Proves the schemas actually constrain (a contract a driver must satisfy).",
+  "cases": [
+    {
+      "name": "empty-selector",
+      "schemaRef": "selector",
+      "why": "a selector must constrain at least one predicate (minProperties: 1)",
+      "data": {}
+    },
+    {
+      "name": "selector-bad-role",
+      "schemaRef": "selector",
+      "why": "role must be one of the closed enum",
+      "data": { "role": "frobnicate" }
+    },
+    {
+      "name": "click-missing-selector",
+      "schemaRef": "request:screen.clickElement",
+      "why": "selector is a required param",
+      "data": { "jsonrpc": "2.0", "id": 6, "method": "screen.clickElement", "params": { "sessionId": "s_ui_01" } }
+    },
+    {
+      "name": "click-unknown-param",
+      "schemaRef": "request:screen.clickElement",
+      "why": "params are closed (additionalProperties: false)",
+      "data": { "jsonrpc": "2.0", "id": 6, "method": "screen.clickElement", "params": { "sessionId": "s_ui_01", "selector": { "label": "Regions" }, "bogus": true } }
+    },
+    {
+      "name": "click-wrong-method-const",
+      "schemaRef": "request:screen.clickElement",
+      "why": "method must be the literal screen.clickElement",
+      "data": { "jsonrpc": "2.0", "id": 6, "method": "screen.typeText", "params": { "sessionId": "s_ui_01", "selector": { "label": "Regions" } } }
+    },
+    {
+      "name": "waitForChat-result-missing-chat",
+      "schemaRef": "result:world.waitForChat",
+      "why": "result.chat is required",
+      "data": { "jsonrpc": "2.0", "id": 8, "result": { "ok": true } }
+    },
+    {
+      "name": "capabilities-unknown-key",
+      "schemaRef": "capabilities",
+      "why": "capability keys are closed (additionalProperties: false)",
+      "data": { "command": true, "telepathy": true }
+    },
+    {
+      "name": "missing-jsonrpc",
+      "schemaRef": "request:session.ping",
+      "why": "every envelope must declare jsonrpc 2.0",
+      "data": { "id": 7, "method": "session.ping", "params": { "nonce": "abc" } }
+    },
+    {
+      "name": "notification-with-id",
+      "schemaRef": "notification:event.chat",
+      "why": "notifications must not carry an id",
+      "data": { "jsonrpc": "2.0", "id": 1, "method": "event.chat", "params": { "sessionId": "s_ui_01", "data": { "text": "hi" } } }
+    }
+  ]
+}

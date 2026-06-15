@@ -1,0 +1,37 @@
+{
+  "additionalProperties": false,
+  "description": "Generic MCTP JSON-RPC request envelope.",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "type": "string"
+    },
+    "params": {
+      "description": "Free-form by-name JSON object.",
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {}
+      }
+    }
+  }
+}

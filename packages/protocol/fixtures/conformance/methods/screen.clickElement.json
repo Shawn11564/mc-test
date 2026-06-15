@@ -1,0 +1,27 @@
+{
+  "method": "screen.clickElement",
+  "description": "Click the element resolved by a semantic selector (the central UI primitive).",
+  "request": { "jsonrpc": "2.0", "id": 6, "method": "screen.clickElement", "params": { "sessionId": "s_ui_01", "selector": { "label": "Regions" }, "button": "left", "clickType": "single", "expectScreenChange": true } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": { "jsonrpc": "2.0", "id": 6, "result": { "ok": true, "screenChanged": true, "resolved": { "via": "label", "slot": 4, "screenId": "regions:list" } } }
+    },
+    {
+      "name": "element-not-found",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "error": { "code": -32000, "message": "No element matched selector", "data": { "reason": "ELEMENT_NOT_FOUND", "retryable": true, "details": { "selector": { "label": "Regions" }, "screenId": "regions:root", "candidatesConsidered": 7 } } }
+      }
+    },
+    {
+      "name": "ambiguous-selector",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "error": { "code": -32001, "message": "Selector matched more than one element", "data": { "reason": "AMBIGUOUS_SELECTOR", "retryable": false, "details": { "matches": [4, 13] } } }
+      }
+    }
+  ]
+}

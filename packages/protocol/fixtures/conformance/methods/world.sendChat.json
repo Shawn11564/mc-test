@@ -1,0 +1,8 @@
+{
+  "method": "world.sendChat",
+  "description": "Send a chat message (not a command).",
+  "request": { "jsonrpc": "2.0", "id": 12, "method": "world.sendChat", "params": { "sessionId": "s_ui_01", "message": "hello" } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 12, "result": { "ok": true } } }
+  ]
+}

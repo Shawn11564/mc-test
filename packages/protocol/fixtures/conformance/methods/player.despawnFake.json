@@ -1,0 +1,12 @@
+{
+  "method": "player.despawnFake",
+  "description": "Despawn a previously spawned fake player by handle.",
+  "request": { "jsonrpc": "2.0", "id": 27, "method": "player.despawnFake", "params": { "sessionId": "s_srv_01", "handle": "fp_Bot2" } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 27, "result": { "ok": true, "despawned": "fp_Bot2" } } },
+    {
+      "name": "unknown-handle",
+      "envelope": { "jsonrpc": "2.0", "id": 27, "error": { "code": -32602, "message": "Unknown fake-player handle", "data": { "reason": "invalidParams", "retryable": false } } }
+    }
+  ]
+}

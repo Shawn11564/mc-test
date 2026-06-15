@@ -1,0 +1,96 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: world.runCommand",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chat": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "rawJson": {
+              "type": "string"
+            },
+            "sender": {
+              "type": "string"
+            },
+            "channel": {
+              "anyOf": [
+                {
+                  "const": "system",
+                  "type": "string"
+                },
+                {
+                  "const": "chat",
+                  "type": "string"
+                },
+                {
+                  "const": "actionBar",
+                  "type": "string"
+                },
+                {
+                  "const": "gameInfo",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

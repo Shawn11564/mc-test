@@ -1,0 +1,80 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: screen.clickElement",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolved": {
+          "additionalProperties": false,
+          "description": "Resolved element reference (diagnostics).",
+          "type": "object",
+          "required": [
+            "via"
+          ],
+          "properties": {
+            "via": {
+              "type": "string"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "widgetId": {
+              "type": "string"
+            },
+            "screenId": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

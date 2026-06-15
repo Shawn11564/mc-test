@@ -1,0 +1,66 @@
+{
+  "method": "session.create",
+  "description": "Capability-negotiation handshake (UI session — headless bot).",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "session.create",
+    "params": {
+      "protocolVersion": "1.0",
+      "client": { "name": "mc-test-runner", "version": "0.4.2", "lang": "ts" },
+      "requiredCapabilities": ["command", "containerGui", "chat", "testIdTags"],
+      "optionalCapabilities": ["clientScreens"],
+      "constraints": { "mcVersionRange": "1.20.4", "loader": "paper" },
+      "connection": { "maxFrameBytes": 8388608, "defaultTimeoutMs": 15000, "locale": "en_us" }
+    }
+  },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "ok": true,
+          "sessionId": "s_ui_01",
+          "protocolVersion": "1.0",
+          "agent": { "name": "mc-test-driver-headless", "version": "0.4.2", "kind": "headlessBot", "lang": "ts" },
+          "target": { "minecraft": "1.20.4", "protocolVersion": 765, "loader": "paper", "loaderVersion": "1.20.4-R0.1", "viaVersion": true },
+          "grantedCapabilities": ["command", "containerGui", "chat", "testIdTags"],
+          "deniedCapabilities": ["clientScreens"],
+          "capabilityDetails": { "containerGui": { "version": 1, "screenModel": "containerSlots" } },
+          "limits": { "maxFrameBytes": 8388608, "maxConcurrentRequests": 16 }
+        }
+      }
+    },
+    {
+      "name": "version-unsupported",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {
+          "code": -32099,
+          "message": "Unsupported protocol version",
+          "data": { "reason": "PROTOCOL_VERSION_UNSUPPORTED", "retryable": false }
+        }
+      }
+    },
+    {
+      "name": "no-required-capabilities",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {
+          "code": -32002,
+          "message": "Required capabilities not available",
+          "data": {
+            "reason": "METHOD_NOT_SUPPORTED",
+            "retryable": false,
+            "unmet": ["clientScreens", "screenshot"],
+            "offered": ["command", "containerGui", "worldTruth"]
+          }
+        }
+      }
+    }
+  ]
+}

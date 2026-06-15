@@ -1,0 +1,8 @@
+{
+  "method": "screen.typeText",
+  "description": "Type into the focused/targeted text field (anvil rename, sign, search).",
+  "request": { "jsonrpc": "2.0", "id": 14, "method": "screen.typeText", "params": { "sessionId": "s_ui_01", "selector": { "role": "input" }, "text": "TestRegion", "submit": false, "clear": true } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 14, "result": { "ok": true, "screenChanged": false } } }
+  ]
+}

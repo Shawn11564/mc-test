@@ -1,0 +1,21 @@
+{
+  "method": "session.describe",
+  "description": "Cheap discovery of protocol/version/capabilities without a session.",
+  "request": { "jsonrpc": "2.0", "id": 1, "method": "session.describe" },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "ok": true,
+          "protocolVersion": "1.0",
+          "supportedProtocols": ["1.0"],
+          "agent": { "name": "mc-test-driver-headless", "version": "0.4.2", "kind": "headlessBot" },
+          "capabilities": ["command", "chat", "containerGui", "typeText", "testIdTags"]
+        }
+      }
+    }
+  ]
+}

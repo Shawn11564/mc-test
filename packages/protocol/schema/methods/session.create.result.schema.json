@@ -1,0 +1,223 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: session.create",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId",
+        "protocolVersion",
+        "agent",
+        "target",
+        "grantedCapabilities",
+        "deniedCapabilities"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "protocolVersion": {
+          "type": "string"
+        },
+        "agent": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "name",
+            "version",
+            "kind"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "const": "headlessBot",
+                  "type": "string"
+                },
+                {
+                  "const": "clientMod",
+                  "type": "string"
+                },
+                {
+                  "const": "serverPlugin",
+                  "type": "string"
+                },
+                {
+                  "const": "serverMod",
+                  "type": "string"
+                },
+                {
+                  "const": "pixelOcr",
+                  "type": "string"
+                }
+              ]
+            },
+            "lang": {
+              "anyOf": [
+                {
+                  "const": "ts",
+                  "type": "string"
+                },
+                {
+                  "const": "java",
+                  "type": "string"
+                },
+                {
+                  "const": "kotlin",
+                  "type": "string"
+                },
+                {
+                  "const": "other",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        "target": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "minecraft",
+            "loader"
+          ],
+          "properties": {
+            "minecraft": {
+              "type": "string"
+            },
+            "protocolVersion": {
+              "type": "integer"
+            },
+            "loader": {
+              "description": "Minecraft loader.",
+              "anyOf": [
+                {
+                  "const": "spigot",
+                  "type": "string"
+                },
+                {
+                  "const": "paper",
+                  "type": "string"
+                },
+                {
+                  "const": "folia",
+                  "type": "string"
+                },
+                {
+                  "const": "fabric",
+                  "type": "string"
+                },
+                {
+                  "const": "forge",
+                  "type": "string"
+                },
+                {
+                  "const": "neoforge",
+                  "type": "string"
+                },
+                {
+                  "const": "quilt",
+                  "type": "string"
+                },
+                {
+                  "const": "vanilla",
+                  "type": "string"
+                }
+              ]
+            },
+            "loaderVersion": {
+              "type": "string"
+            },
+            "viaVersion": {
+              "type": "boolean"
+            }
+          }
+        },
+        "grantedCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deniedCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "capabilityDetails": {
+          "description": "Free-form by-name JSON object.",
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {}
+          }
+        },
+        "limits": {
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "maxFrameBytes": {
+              "type": "integer"
+            },
+            "maxConcurrentRequests": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

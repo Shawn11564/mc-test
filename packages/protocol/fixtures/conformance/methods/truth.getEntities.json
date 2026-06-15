@@ -1,0 +1,21 @@
+{
+  "method": "truth.getEntities",
+  "description": "List entities near a point (server truth).",
+  "request": { "jsonrpc": "2.0", "id": 22, "method": "truth.getEntities", "params": { "sessionId": "s_srv_01", "world": "world", "center": { "x": 0, "y": 64, "z": 0 }, "radius": 16, "type": "minecraft:armor_stand" } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 22,
+        "result": {
+          "ok": true,
+          "count": 1,
+          "entities": [
+            { "id": "e_31:982", "uuid": "e9f1a0c2-0000-4000-8000-000000000031", "type": "minecraft:armor_stand", "name": "TestRegion Marker", "position": { "x": 1.0, "y": 64.0, "z": 1.0 }, "tags": ["regions_marker"], "customNameRaw": "{\"text\":\"TestRegion Marker\"}" }
+          ]
+        }
+      }
+    }
+  ]
+}

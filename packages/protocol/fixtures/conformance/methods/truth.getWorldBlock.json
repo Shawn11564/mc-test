@@ -1,0 +1,19 @@
+{
+  "method": "truth.getWorldBlock",
+  "description": "Read authoritative block state from the server.",
+  "request": { "jsonrpc": "2.0", "id": 21, "method": "truth.getWorldBlock", "params": { "sessionId": "s_srv_01", "world": "world", "x": 100, "y": 64, "z": -200 } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 21,
+        "result": { "ok": true, "block": { "type": "minecraft:oak_sign", "properties": { "rotation": "8" }, "nbtJson": "{\"Text1\":\"{\\\"text\\\":\\\"TestRegion\\\"}\"}", "biome": "minecraft:plains" } }
+      }
+    },
+    {
+      "name": "world-not-ready",
+      "envelope": { "jsonrpc": "2.0", "id": 21, "error": { "code": -32004, "message": "Chunk not loaded", "data": { "reason": "WORLD_NOT_READY", "retryable": true } } }
+    }
+  ]
+}

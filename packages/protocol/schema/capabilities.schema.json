@@ -1,0 +1,130 @@
+{
+  "additionalProperties": false,
+  "description": "Flat capability map + target descriptors.",
+  "type": "object",
+  "properties": {
+    "chat": {
+      "type": "boolean"
+    },
+    "command": {
+      "type": "boolean"
+    },
+    "containerGui": {
+      "type": "boolean"
+    },
+    "clientScreens": {
+      "type": "boolean"
+    },
+    "screenshot": {
+      "type": "boolean"
+    },
+    "rendering": {
+      "type": "boolean"
+    },
+    "worldTruth": {
+      "type": "boolean"
+    },
+    "pluginState": {
+      "type": "boolean"
+    },
+    "fixtures": {
+      "type": "boolean"
+    },
+    "fakePlayers": {
+      "type": "boolean"
+    },
+    "typeText": {
+      "type": "boolean"
+    },
+    "pressKey": {
+      "type": "boolean"
+    },
+    "testIdTags": {
+      "type": "boolean"
+    },
+    "loader": {
+      "anyOf": [
+        {
+          "description": "Minecraft loader.",
+          "anyOf": [
+            {
+              "const": "spigot",
+              "type": "string"
+            },
+            {
+              "const": "paper",
+              "type": "string"
+            },
+            {
+              "const": "folia",
+              "type": "string"
+            },
+            {
+              "const": "fabric",
+              "type": "string"
+            },
+            {
+              "const": "forge",
+              "type": "string"
+            },
+            {
+              "const": "neoforge",
+              "type": "string"
+            },
+            {
+              "const": "quilt",
+              "type": "string"
+            },
+            {
+              "const": "vanilla",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "description": "Minecraft loader.",
+            "anyOf": [
+              {
+                "const": "spigot",
+                "type": "string"
+              },
+              {
+                "const": "paper",
+                "type": "string"
+              },
+              {
+                "const": "folia",
+                "type": "string"
+              },
+              {
+                "const": "fabric",
+                "type": "string"
+              },
+              {
+                "const": "forge",
+                "type": "string"
+              },
+              {
+                "const": "neoforge",
+                "type": "string"
+              },
+              {
+                "const": "quilt",
+                "type": "string"
+              },
+              {
+                "const": "vanilla",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "mcVersionRange": {
+      "type": "string"
+    }
+  }
+}

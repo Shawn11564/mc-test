@@ -1,0 +1,19 @@
+{
+  "method": "screen.waitForScreen",
+  "description": "Block for a screen transition matching criteria, then return the snapshot.",
+  "request": { "jsonrpc": "2.0", "id": 18, "method": "screen.waitForScreen", "params": { "sessionId": "s_ui_01", "match": { "screenIdPrefix": "regions:", "kind": "containerGui" }, "change": "opened", "timeoutMs": 5000 } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 18,
+        "result": { "ok": true, "screen": { "screenId": "regions:list", "kind": "containerGui", "title": "Regions", "elements": [] } }
+      }
+    },
+    {
+      "name": "timeout",
+      "envelope": { "jsonrpc": "2.0", "id": 18, "error": { "code": -32003, "message": "No matching screen transition", "data": { "reason": "TIMEOUT", "retryable": true } } }
+    }
+  ]
+}

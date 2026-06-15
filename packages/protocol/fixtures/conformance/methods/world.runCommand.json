@@ -1,0 +1,8 @@
+{
+  "method": "world.runCommand",
+  "description": "Run a slash command as the player; /or opens the regions GUI.",
+  "request": { "jsonrpc": "2.0", "id": 4, "method": "world.runCommand", "params": { "sessionId": "s_ui_01", "command": "or", "expectChat": false } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 4, "result": { "ok": true, "screenChanged": true } } }
+  ]
+}

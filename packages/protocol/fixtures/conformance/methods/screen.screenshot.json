@@ -1,0 +1,27 @@
+{
+  "method": "screen.screenshot",
+  "description": "Capture the current rendered frame (client mod / pixel driver).",
+  "request": { "jsonrpc": "2.0", "id": 16, "method": "screen.screenshot", "params": { "sessionId": "s_cli_01", "format": "png", "return": "inline", "region": "screen", "maxWidth": 1280 } },
+  "responses": [
+    {
+      "name": "success-inline",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "result": { "ok": true, "image": { "format": "png", "width": 1280, "height": 720, "encoding": "base64", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" } }
+      }
+    },
+    {
+      "name": "success-ref",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "result": { "ok": true, "image": { "format": "png", "width": 1280, "height": 720, "ref": "artifact://s_cli_01/shot_017.png" } }
+      }
+    },
+    {
+      "name": "not-supported",
+      "envelope": { "jsonrpc": "2.0", "id": 16, "error": { "code": -32002, "message": "No render surface", "data": { "reason": "METHOD_NOT_SUPPORTED", "retryable": false } } }
+    }
+  ]
+}
