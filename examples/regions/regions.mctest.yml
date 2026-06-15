@@ -1,0 +1,20 @@
+name: regions-open-testregion
+# RequiredCapabilities (subset of the canonical capability keys).
+requires:
+  command: true
+  containerGui: true
+target: ${matrix} # filled by the mc-test.yml row selected with --target
+steps:
+  - join: { host: localhost, port: 25565, username: Tester }
+  - command: "or" # runs /or
+  - waitForScreen: { titleContains: "OpenRegions" }
+  - click: { label: "Regions" }
+  - click: { label: "TestRegion" }
+  - assertChat: { contains: "Region loaded" }
+  # The server-truth half is declared but SKIPS until M3 provides worldTruth/pluginState:
+  - assertPluginState:
+      requires: { pluginState: true }
+      plugin: "OpenRegions"
+      query: "regions.exists"
+      args: { name: "TestRegion" }
+      expect: true

@@ -141,7 +141,7 @@ This is the **default CI driver**. It logs into the server as a real protocol-le
     "command": true,
     "containerGui": true,
     "typeText": true,        // anvil/sign/book server-side text only; see §1.2
-    "testIdTags": true,      // reads NBT mctp:testId / mc-test:test_id on items
+    "testIdTags": false,     // bot CAN read PDC testId, but M2 advertises only the 5 core caps (BUILD_PROMPT §M2)
     "screenshot": false,     // no framebuffer; see limits
     "rendering": false,
     "clientScreens": false,  // CANNOT — bare protocol, no client UI
@@ -149,7 +149,7 @@ This is the **default CI driver**. It logs into the server as a real protocol-le
     "pluginState": "via-pair",
     "fixtures": "via-pair",
     "fakePlayers": "via-pair",
-    "pressKey": false,       // no client to receive key events
+    "pressKey": true,        // M2: advertised (BUILD_PROMPT §M2). ESCAPE closes a window; other keys are no-ops on a bare bot
     "pixelOnly": false       // driver-local marker (non-canonical); always false here
   }
 }
@@ -170,7 +170,7 @@ This is the **default CI driver**. It logs into the server as a real protocol-le
 | `screen.listElements` | Enumerate `bot.currentWindow.slots`; each non-null slot → `Element { ref: "slot-"+i, label: item.customName ?? prettifyName(item), role: "slot", itemType: item.name (mcData), lore: item.customLore, bounds: null }`. With a selector, filters in-driver: `label`→display name equality; `textContains`→substring of display name; `loreContains`→substring across lore lines; `itemType`→`mcData` material id; `testId`→read NBT key `mctp:testId` (or `mc-test:test_id` component on 1.20.5+) from `item.nbt`; `nth`/`index`/`within` as defined. |
 | `screen.clickElement` | Resolve to one slot index `i`, then `bot.clickWindow(i, button, mode)` (`mode 0` left, `button 1` for shift). For player-inventory hotbar items, `bot.setQuickBarSlot` / `bot.activateItem` as appropriate. |
 | `screen.typeText` | Only meaningful for **anvil/sign/book** server-side text inputs the bot supports: `bot.writeBook`, anvil rename via `bot.setRenamedItem` (a.k.a. anvil API). For arbitrary client inputs → **not supported** (`METHOD_NOT_SUPPORTED`). |
-| `screen.pressKey` | **Not supported** — no client to receive key events. Returns `METHOD_NOT_SUPPORTED`. (Use `screen.clickElement` or `world.runCommand` instead.) |
+| `screen.pressKey` | M2: advertised. `ESCAPE`/`ESC` closes the open window; other keys return `{ ok, screenChanged:false }` with a warning (a bare bot has no client to receive key events). |
 | `screen.screenshot` | **Not supported** by default. Optional degraded mode renders an **ASCII/HTML inventory grid** artifact (slot map) for debugging — advertised separately as `inventoryGridSnapshot`, NOT as `screenshot`/`rendering`. |
 | `screen.close` | `bot.closeWindow(bot.currentWindow)` if a container window is open; else no-op. |
 | `truth.getWorldBlock` / `truth.getEntities` / `truth.assertPluginState` / `fixture.set` / `fixture.reset` / `player.spawnFake` / `player.despawnFake` | Routed to the paired server agent (`via-pair`). The bot itself only knows blocks/entities **within its own loaded view**; for authoritative truth the runner prefers the server agent. (A degraded `truth.getEntities` from `bot.entities` is available and advertised as `worldViewBot` for cases with no server agent.) |

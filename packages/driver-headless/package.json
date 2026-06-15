@@ -1,0 +1,37 @@
+{
+  "name": "@mc-test/driver-headless",
+  "version": "0.1.0",
+  "description": "mc-test headless driver — a Mineflayer protocol bot hosting an MCTP WebSocket server. Drives server-driven container GUIs, chat, and commands; advertises chat/command/containerGui/typeText/pressKey.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "import": "./dist/capabilities.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mc-test/protocol": "0.1.0",
+    "mineflayer": "^4.20.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "@types/ws": "^8.5.13",
+    "ajv": "^8.17.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

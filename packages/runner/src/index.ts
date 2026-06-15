@@ -1,0 +1,41 @@
+/**
+ * `@mc-test/runner` — the MCTP client/orchestrator. Public surface: the fluent
+ * authoring API, the engine (`Runner`, `Session`, `SelectorWaits`,
+ * capability matching), driver selection, config loaders, the JUnit reporter,
+ * and the minimal Paper provisioner.
+ */
+export { test, FluentTest } from "./authoring/fluent.js";
+export { Runner } from "./engine/Runner.js";
+export type { ProvisionHandle, TargetMeta } from "./engine/Runner.js";
+export {
+  DriverRegistry,
+  defaultRegistry,
+  type DriverDescriptor,
+  type DriverHandle,
+  type SelectionResult,
+} from "./drivers/DriverRegistry.js";
+export { MctpClient, MctpRpcError } from "./drivers/MctpClient.js";
+export { Session } from "./engine/Session.js";
+export { withSelectorWaits, type SelectorWaitOptions } from "./engine/SelectorWaits.js";
+export {
+  matchCapabilities,
+  requiredKeys,
+  advertisedKeys,
+  capsFromKeys,
+} from "./engine/CapabilityMatch.js";
+export { executeStep, VERB_CAPABILITY, type ExecContext } from "./engine/StepExecutor.js";
+export { loadSteps, parseStepDocument } from "./config/loadSteps.js";
+export { loadMatrix, parseMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
+export { renderJUnit, writeJUnit } from "./report/JUnitReporter.js";
+export { collectArtifacts } from "./report/Artifacts.js";
+export {
+  provisionPaper,
+  resolvePaperJar,
+  resolveMojangServerJar,
+  findFreePort,
+  type PaperProvisionOptions,
+  type ProvisionedServer,
+} from "./provision/PaperProvisioner.js";
+export type { NormalizedTest, NormalizedStep } from "./model/Step.js";
+export type { MatrixFile, MatrixTarget, WorldDef, Source, ProvisionPolicy } from "./model/Target.js";
+export type { TestResult, StepResult, SuiteResult, SkipInfo, Outcome } from "./model/result.js";

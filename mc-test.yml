@@ -1,0 +1,30 @@
+# mc-test.yml — minimal M2 matrix for the canonical "regions" example.
+# Run:  npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
+#
+# See mc-test.example.yml for the full multi-loader matrix (M3+). This file is
+# the small, runnable slice M2 ships: one Paper target driven by the headless bot.
+version: 1
+
+provision:
+  eulaAccepted: true # You accept Mojang's EULA by setting this; required to boot.
+  bindHost: 127.0.0.1 # Loopback only — offline-mode servers must not be public.
+  portRange: [25700, 25899]
+  cacheDir: ~/.mc-test/cache
+  workDir: .mc-test/run
+
+worlds:
+  regions-world:
+    # Empty snapshot ⇒ Paper generates a fast superflat world (the GUI/chat test
+    # does not depend on terrain). The copy-per-test mechanism still runs.
+    snapshot: { path: ./examples/regions/world-snapshot }
+    levelName: world
+
+targets:
+  - id: paper-1.20.4
+    loader: paper
+    mc: "1.20.4"
+    driver: headless # Mineflayer bot — server-driven container GUIs, chat, commands.
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    world: { ref: regions-world }

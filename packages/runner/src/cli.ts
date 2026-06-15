@@ -1,0 +1,221 @@
+#!/usr/bin/env node
+/**
+ * `mc-test` CLI — `run`, `list`, `doctor`.
+ *
+ *   mc-test run <stepfile.mctest.yml> --target <id> [--matrix mc-test.yml] [--out dir]
+ *   mc-test list   [--matrix mc-test.yml]
+ *   mc-test doctor [--matrix mc-test.yml]
+ */
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
+import { existsSync } from "node:fs";
+import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
+import { loadSteps } from "./config/loadSteps.js";
+import { Runner, type ProvisionHandle, type TargetMeta } from "./engine/Runner.js";
+import { defaultRegistry } from "./drivers/DriverRegistry.js";
+import { provisionPaper, findFreePort } from "./provision/PaperProvisioner.js";
+import { writeJUnit } from "./report/JUnitReporter.js";
+import { collectArtifacts } from "./report/Artifacts.js";
+import type { MatrixFile, MatrixTarget } from "./model/Target.js";
+import type { TestResult } from "./model/result.js";
+
+interface Args {
+  _: string[];
+  flags: Record<string, string>;
+}
+
+function parseArgs(argv: string[]): Args {
+  const _: string[] = [];
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a.startsWith("--")) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("--")) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = "true";
+      }
+    } else {
+      _.push(a);
+    }
+  }
+  return { _, flags };
+}
+
+function expandHome(p: string): string {
+  return p.startsWith("~") ? join(homedir(), p.slice(1)) : p;
+}
+
+function pluginSpecs(target: MatrixTarget): { path: string; as?: string }[] {
+  return (target.plugins ?? [])
+    .filter((p) => p.path)
+    .map((p) => ({ path: resolve(p.path!), ...(p.as ? { as: p.as } : {}) }));
+}
+
+function buildProvision(
+  matrix: MatrixFile,
+  target: MatrixTarget,
+): () => Promise<ProvisionHandle> {
+  const prov = matrix.provision ?? {};
+  const bindHost = prov.bindHost ?? "127.0.0.1";
+  const [from, to] = prov.portRange ?? [25700, 25899];
+  const cacheDir = expandHome(prov.cacheDir ?? "~/.mc-test/cache");
+  const workDir = prov.workDir ?? ".mc-test/run";
+  const world = resolveWorld(matrix, target);
+  const worldSnapshotPath = world?.snapshot?.path ? resolve(world.snapshot.path) : undefined;
+
+  return async () => {
+    const gamePort = await findFreePort(bindHost, from, to);
+    const instanceDir = resolve(join(workDir, `${target.id}-${gamePort}-${process.pid}`));
+    const server = await provisionPaper({
+      mc: target.mc,
+      build: target.server?.paper?.build ?? "latest",
+      bindHost,
+      gamePort,
+      instanceDir,
+      cacheDir,
+      plugins: pluginSpecs(target),
+      ...(worldSnapshotPath ? { worldSnapshotPath } : {}),
+      ...(world?.levelName ? { levelName: world.levelName } : {}),
+      ...(target.serverProps ? { serverProps: target.serverProps } : {}),
+      eulaAccepted: prov.eulaAccepted ?? false,
+      onLog: () => {},
+    });
+    return { host: server.host, port: server.port, logPath: server.logPath, stop: server.stop };
+  };
+}
+
+function printResult(result: TestResult): void {
+  const icon = result.outcome === "passed" ? "✓" : result.outcome === "skipped" ? "○" : "✗";
+  console.log(`\n${icon} ${result.name} [${result.target}] — ${result.outcome.toUpperCase()} (${(result.durationMs / 1000).toFixed(1)}s, driver=${result.driver ?? "none"})`);
+  for (const s of result.steps) {
+    const si = s.outcome === "passed" ? "  ✓" : s.outcome === "skipped" ? "  ○" : "  ✗";
+    if (s.outcome === "skipped" && s.skip) {
+      console.log(`${si} ${s.verb}: SKIPPED ${s.skip.reason} unmet=[${s.skip.unmet.join(",")}]`);
+    } else if (s.outcome === "failed") {
+      console.log(`${si} ${s.verb}: FAILED ${s.error?.reason ?? ""} ${s.error?.message ?? ""}`);
+    } else {
+      console.log(`${si} ${s.verb}${s.detail ? `: ${s.detail}` : ""}`);
+    }
+  }
+  if (result.skip) console.log(`  → skipped: ${result.skip.message}`);
+  if (result.failure) console.log(`  → failure: ${result.failure.message}`);
+}
+
+async function cmdRun(args: Args): Promise<number> {
+  const stepFile = args._[1];
+  if (!stepFile) {
+    console.error("usage: mc-test run <stepfile.mctest.yml> --target <id>");
+    return 2;
+  }
+  const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
+  if (!existsSync(matrixPath)) {
+    console.error(`matrix file not found: ${matrixPath} (pass --matrix)`);
+    return 2;
+  }
+  const matrix = loadMatrix(matrixPath);
+  const targetId = args.flags["target"];
+  if (!targetId) {
+    console.error("missing --target <id>");
+    return 2;
+  }
+  const target = findTarget(matrix, targetId);
+  if (!target) {
+    console.error(`target '${targetId}' not found in ${matrixPath}`);
+    return 2;
+  }
+
+  const test = loadSteps(resolve(stepFile));
+  const outDir = resolve(args.flags["out"] ?? "mc-test-report");
+
+  const meta: TargetMeta = {
+    target: target.id,
+    loader: target.loader,
+    mc: target.mc,
+    ...(target.driver && target.driver !== "auto" ? { driverPin: target.driver } : {}),
+  };
+
+  console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc})…`);
+  const runner = new Runner(defaultRegistry());
+  const result = await runner.runTarget(test, meta, buildProvision(matrix, target));
+
+  printResult(result);
+
+  const junitPath = join(outDir, "junit", "results.xml");
+  writeJUnit(junitPath, [result]);
+  const bundle = collectArtifacts(outDir, result);
+  console.log(`\nJUnit: ${junitPath}`);
+  if (bundle.files.length) console.log(`Artifacts: ${bundle.dir}`);
+
+  const failOnSkip = args.flags["fail-on-skip"] === "true";
+  if (result.outcome === "failed") return 1;
+  if (result.outcome === "skipped" && failOnSkip) return 1;
+  return 0;
+}
+
+function cmdList(args: Args): number {
+  const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
+  if (!existsSync(matrixPath)) {
+    console.error(`matrix file not found: ${matrixPath}`);
+    return 2;
+  }
+  const matrix = loadMatrix(matrixPath);
+  console.log(`Targets in ${matrixPath}:`);
+  for (const t of matrix.targets) {
+    console.log(`  - ${t.id}  (loader=${t.loader} mc=${t.mc} driver=${t.driver ?? "auto"})`);
+  }
+  return 0;
+}
+
+async function cmdDoctor(args: Args): Promise<number> {
+  console.log("mc-test doctor:");
+  const java = await checkCommand("java", ["-version"]);
+  console.log(`  java: ${java ? "ok" : "MISSING (needed to boot a server)"}`);
+  let net = false;
+  try {
+    const res = await fetch("https://fill.papermc.io/v3/projects/paper");
+    net = res.ok;
+  } catch {
+    net = false;
+  }
+  console.log(`  PaperMC API reachable: ${net ? "ok" : "no"}`);
+  const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
+  console.log(`  matrix file (${matrixPath}): ${existsSync(matrixPath) ? "found" : "not found"}`);
+  return java ? 0 : 1;
+}
+
+function checkCommand(cmd: string, cmdArgs: string[]): Promise<boolean> {
+  return new Promise((resolveCheck) => {
+    import("node:child_process").then(({ spawn }) => {
+      const p = spawn(cmd, cmdArgs, { stdio: "ignore" });
+      p.once("error", () => resolveCheck(false));
+      p.once("exit", (code) => resolveCheck(code === 0));
+    });
+  });
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const command = args._[0];
+  let code: number;
+  switch (command) {
+    case "run":
+      code = await cmdRun(args);
+      break;
+    case "list":
+      code = cmdList(args);
+      break;
+    case "doctor":
+      code = await cmdDoctor(args);
+      break;
+    default:
+      console.error("usage: mc-test <run|list|doctor> [...]");
+      code = 2;
+  }
+  process.exit(code);
+}
+
+void main();

@@ -20,6 +20,8 @@ bin/
 /artifacts/
 /tmp/
 run/
+.mc-test/
+mc-test-report/
 server.jar
 *.log
 eula.txt

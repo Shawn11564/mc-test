@@ -1,0 +1,38 @@
+{
+  "name": "@mc-test/runner",
+  "version": "0.1.0",
+  "description": "mc-test runner — the MCTP client/orchestrator. CLI (mc-test run|list|doctor), YAML/fluent authoring, capability-driven driver selection, SelectorWaits, minimal Paper provisioning, JUnit reporting.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "mc-test": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "mc-test": "node ./dist/cli.js"
+  },
+  "dependencies": {
+    "@mc-test/driver-headless": "0.1.0",
+    "@mc-test/protocol": "0.1.0",
+    "ws": "^8.18.0",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
