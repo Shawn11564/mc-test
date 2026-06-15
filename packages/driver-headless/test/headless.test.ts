@@ -23,7 +23,7 @@ import { HeadlessDriver } from "../src/HeadlessDriver.js";
 // ---------- pure selector resolution ----------
 
 const ROOT: ResolvedElement[] = [
-  { slot: 4, elementId: "slot-4", label: "Regions", itemType: "minecraft:book", role: "button", testId: "regions.btn.list" },
+  { slot: 4, elementId: "slot-4", label: "Regions", itemType: "minecraft:book", role: "button", testId: "regions:root:regions" },
   { slot: 8, elementId: "slot-8", label: "§7Close", itemType: "minecraft:barrier", role: "button" },
 ];
 
@@ -53,7 +53,7 @@ describe("resolveSelector", () => {
     expect(resolveSelector({ label: "close" }, ROOT).matches.map((m) => m.slot)).toEqual([8]);
   });
   it("matches by testId, itemType, and textContains", () => {
-    expect(resolveSelector({ testId: "regions.btn.list" }, ROOT).matches.map((m) => m.slot)).toEqual([4]);
+    expect(resolveSelector({ testId: "regions:root:regions" }, ROOT).matches.map((m) => m.slot)).toEqual([4]);
     expect(resolveSelector({ itemType: "book" }, ROOT).matches.map((m) => m.slot)).toEqual([4]);
     expect(resolveSelector({ textContains: "egio" }, ROOT).matches.map((m) => m.slot)).toEqual([4]);
   });

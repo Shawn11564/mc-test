@@ -4,14 +4,14 @@
  * `TestResult`. Driver selection flows through `DriverRegistry` +
  * `matchCapabilities` — there is no hard-coded "use headless" branch.
  */
-import { PROTOCOL_VERSION, matchCapabilities } from "@mc-test/protocol";
-import { MctpClient, MctpRpcError } from "../drivers/MctpClient.js";
+import { matchCapabilities, type Capabilities } from "@mc-test/protocol";
+import { MctpRpcError } from "../drivers/MctpClient.js";
 import { DriverRegistry, type DriverDescriptor } from "../drivers/DriverRegistry.js";
 import type { NormalizedTest, NormalizedStep } from "../model/Step.js";
 import type { Outcome, StepResult, TestResult, SkipInfo } from "../model/result.js";
-import { Session } from "./Session.js";
+import { SessionGroup, type ConnDef } from "./SessionGroup.js";
 import { executeStep, VERB_CAPABILITY, type ExecContext } from "./StepExecutor.js";
-import { advertisedKeys, capsFromKeys, requiredKeys } from "./CapabilityMatch.js";
+import { advertisedKeys, requiredKeys } from "./CapabilityMatch.js";
 import type { RequiredCapabilities } from "@mc-test/protocol";
 
 /** A live, provisioned target (the server the bot will join). */
@@ -20,6 +20,12 @@ export interface ProvisionHandle {
   port: number;
   /** Where the server log lives (for failure artifacts). */
   logPath?: string;
+  /**
+   * Co-selected server-agent connections this provisioning brought up (M3): the
+   * agent jar dropped into `plugins/` listening on a second MCTP port. Forwarded
+   * to `runTest` so truth/fixture/player steps fan to the agent.
+   */
+  agents?: AgentConn[];
   stop: () => Promise<void>;
 }
 
@@ -30,6 +36,20 @@ export interface TargetMeta {
   mc?: string;
   /** Optional driver pin (target.driver). */
   driverPin?: string;
+}
+
+/**
+ * A co-selected server-agent connection (M3). The runner opens this alongside
+ * the driver and fans truth/fixture/player steps to it. Its `advertised` caps
+ * join the union used for per-step skip decisions, so steps requiring
+ * `worldTruth`/`pluginState`/`fixtures`/`fakePlayers` RUN when an agent is
+ * connected and honestly SKIP when none is.
+ */
+export interface AgentConn {
+  url: string;
+  advertised: Capabilities;
+  /** `agent.kind`, e.g. `"serverPlugin"` (informational; routing is by caps). */
+  kind?: string;
 }
 
 const errMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -79,6 +99,12 @@ export class Runner {
   /**
    * Run a test against an already-live MCTP endpoint + provisioned server.
    * This is the protocol-pure core (mock-agent E2E exercises exactly this).
+   *
+   * When `agents` are supplied, the runner opens a multi-connection
+   * `SessionGroup` (driver + each agent) and fans truth/fixture/player steps to
+   * the agent. Per-step skip decisions use the **union** of advertised caps, so
+   * an `assertPluginState` step runs when an agent is co-connected and honestly
+   * skips `unmet:["pluginState"]` when none is (M2 back-compat).
    */
   async runTest(
     test: NormalizedTest,
@@ -86,29 +112,40 @@ export class Runner {
     endpointUrl: string,
     exec: ExecContext,
     meta: TargetMeta,
+    agents: AgentConn[] = [],
   ): Promise<TestResult> {
     const start = Date.now();
     const steps: StepResult[] = [];
-    const client = new MctpClient();
-    const session = new Session(client);
+    const group = new SessionGroup();
     let outcome: Outcome = "passed";
     let failure: TestResult["failure"];
     let testSkip: SkipInfo | undefined;
 
+    const required = requiredKeys(test.requires);
+    const constraints = {
+      ...(meta.mc ? { mcVersionRange: meta.mc } : {}),
+      ...(meta.loader ? { loader: meta.loader } : {}),
+    };
+    const driverConn: ConnDef = {
+      url: endpointUrl,
+      required,
+      optional: advertisedKeys(descriptor.advertised).filter((k) => !required.includes(k)),
+      advertised: descriptor.advertised,
+      role: "driver",
+      ...(Object.keys(constraints).length ? { constraints } : {}),
+    };
+    // Agents negotiate only their own advertised caps; a refusing agent simply
+    // drops out of the union (its steps then honestly skip) — never a test fail.
+    const agentConns: ConnDef[] = agents.map((agent) => ({
+      url: agent.url,
+      required: advertisedKeys(agent.advertised),
+      advertised: agent.advertised,
+      role: "agent",
+    }));
+
     try {
-      await client.connect(endpointUrl);
-      const required = requiredKeys(test.requires);
-      const optional = advertisedKeys(descriptor.advertised).filter((k) => !required.includes(k));
       try {
-        await session.create({
-          protocolVersion: PROTOCOL_VERSION,
-          requiredCapabilities: required,
-          optionalCapabilities: optional,
-          constraints: {
-            ...(meta.mc ? { mcVersionRange: meta.mc } : {}),
-            ...(meta.loader ? { loader: meta.loader } : {}),
-          },
-        });
+        await group.connect([driverConn, ...agentConns]);
       } catch (err) {
         if (err instanceof MctpRpcError && err.code === -32002) {
           testSkip = {
@@ -124,9 +161,12 @@ export class Runner {
       }
 
       if (!testSkip) {
+        // The union of EVERY connected surface — driver + co-selected agents —
+        // is what each step's capability is matched against (not just the driver).
+        const union = group.unionAdvertised();
         for (const step of test.steps) {
           const sStart = Date.now();
-          const match = matchCapabilities(stepRequired(step), descriptor.advertised);
+          const match = matchCapabilities(stepRequired(step), union);
           if (!match.ok) {
             steps.push({
               index: step.index,
@@ -137,13 +177,13 @@ export class Runner {
                 category: "capability",
                 reason: "NO_COMPATIBLE_DRIVER",
                 unmet: match.unmet,
-                message: `step '${step.verb}' requires {${match.unmet.join(", ")}} not advertised by driver '${descriptor.id}'`,
+                message: `step '${step.verb}' requires {${match.unmet.join(", ")}} not advertised by driver '${descriptor.id}' or any co-selected agent`,
               },
             });
             continue;
           }
           try {
-            const detail = await executeStep(session, step, exec);
+            const detail = await executeStep((cap) => group.route(cap), step, exec);
             steps.push({
               index: step.index,
               verb: step.verb,
@@ -173,8 +213,7 @@ export class Runner {
       outcome = "failed";
       failure = { message: errMessage(err), type: "Error" };
     } finally {
-      await session.close("testTeardown");
-      await client.close();
+      await group.closeAll("testTeardown");
     }
 
     return {
@@ -229,7 +268,7 @@ export class Runner {
         port: provisioned.port,
         defaultUsername,
       };
-      const result = await this.runTest(test, descriptor, driver.url, exec, meta);
+      const result = await this.runTest(test, descriptor, driver.url, exec, meta, provisioned.agents ?? []);
       if (provisioned.logPath && (result.outcome === "failed")) {
         result.artifacts = [provisioned.logPath];
       }

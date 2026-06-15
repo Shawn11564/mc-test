@@ -16,6 +16,11 @@ out/
 bin/
 !**/src/**/bin/
 
+# --- JVM / Maven (examples/regions/plugin) ---
+# Build output (jar, classes, maven-status). The SUT jar is rebuilt with
+# `mvn -f examples/regions/plugin/pom.xml package`; never commit it.
+target/
+
 # --- Minecraft run / provisioning artifacts ---
 /artifacts/
 /tmp/
@@ -41,3 +46,9 @@ Thumbs.db
 .env
 .env.local
 *.local.yml
+
+# --- M3: JVM agents (Gradle) build output + scratch plan ---
+agents/**/build/
+agents/.gradle/
+**/.gradle/
+M3_PLAN.scratch.md

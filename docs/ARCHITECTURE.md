@@ -220,13 +220,26 @@ recompiles per (loader × version). Obfuscation mappings (Yarn/MCP/Mojmap) are t
 ### 2.6 Server companion — *world-truth + plugin-state*
 
 A specialization of the in-game agent (driver #3) that runs server-side as a
-Bukkit/Paper **plugin** (`/agents/server-bukkit`) or a server **mod**
-(`/agents/server-fabric`). It answers the authoritative-state primitives
-(`truth.getWorldBlock`, `truth.getEntities`, `truth.assertPluginState`) and the
-setup primitives (`fixture.set`, `player.spawnFake`). This is how the canonical
-regions test proves
-that region `"TestRegion"` **actually exists** in the plugin, not just that a
-chat line appeared.
+Bukkit/Paper **plugin** (`/agents/server-bukkit`, MCTP `agent.kind: serverPlugin`)
+or a server **mod** (`/agents/server-fabric`). It answers the authoritative-state
+primitives (`truth.getWorldBlock`, `truth.getEntities`, `truth.assertPluginState`)
+and the setup primitives (`fixture.set`, `fixture.reset`, `player.spawnFake`,
+`player.despawnFake`). This is how the canonical regions test proves that region
+`"TestRegion"` **actually exists** in the plugin, not just that a chat line appeared.
+
+**Multi-connection session (the companion is its own MCTP server).** The server
+companion listens on its **own** MCTP port, independent of the UI driver. A test
+that needs both a UI surface and server truth therefore runs over **two MCTP
+connections** unified behind one logical session (the runner's `SessionGroup`): the
+runner fans GUI/chat steps to the UI driver connection and `truth.*` / `fixture.*` /
+`player.*` steps to the companion connection. The negotiator reasons about the
+**union** of both connections' advertised capabilities (§5); the test author writes
+no connection plumbing. When no companion is co-selected, the server-owned steps
+**skip with a reason** rather than pass. SUTs we control expose plugin state and
+custom fixtures to the companion through two pure-Java SPIs shipped in
+`/agents/core` — `McTestStateProvider` and `McTestFixtureProvider` — registered via
+the Bukkit `ServicesManager`. (This is the M3 milestone; see `ROADMAP.md` §4 and the
+wire sequence in `PROTOCOL.md` §11.)
 
 ### 2.7 Selector model — *semantic, never coordinates*
 

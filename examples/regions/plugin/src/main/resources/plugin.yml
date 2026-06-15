@@ -4,6 +4,11 @@ main: com.example.openregions.OpenRegionsPlugin
 api-version: '1.20'
 description: Minimal canonical "regions" SUT for mc-test.
 author: mc-test
+# Soft dependency on the mc-test server agent: when present, OpenRegions registers its
+# McTestStateProvider/McTestFixtureProvider with the ServicesManager and shares the agent's
+# copy of the mc-test-agent-core SPI classes (compiled here at provided scope, not bundled).
+# Absent → registration is skipped and the plugin still enables (pure-M2 mode).
+softdepend: [mc-test-agent]
 commands:
   or:
     description: Open the OpenRegions GUI.

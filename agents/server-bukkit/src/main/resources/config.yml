@@ -1,0 +1,10 @@
+# mc-test server agent (MCTP) configuration.
+# The runner provisions this file as plugins/mc-test-agent/config.yml with the per-target port it
+# allocated (distinct from the game port), then learns the bound port from the
+# "MCTP listening on :<port>" log line.
+
+# WebSocket port the MCTP server binds. Overridden per target by the runner's provisioning.
+port: 25575
+
+# Bind address. Loopback only by default (CI default; agents bind loopback per PROTOCOL.md §2.1).
+host: 127.0.0.1

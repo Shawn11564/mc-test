@@ -49,10 +49,10 @@ Every driver implements a subset of this method set. Methods are grouped by the 
 - `world.join` — connect/join the target world.
 - `world.leave` — disconnect/leave the world.
 
-**World-truth primitives (server-side):**
-- `truth.getWorldBlock` — `{ world, x, y, z } -> { type, blockData, nbt? }`.
-- `truth.getEntities` — query entities by `{ world?, type?, near?, radius? }` -> `Entity[]`.
-- `truth.assertPluginState` — evaluate a named, plugin-registered probe (e.g. `regions.exists("TestRegion")`) and return `{ ok, value, detail }`.
+**World-truth primitives (server-side):** (result shapes per `PROTOCOL.md` §7.3 / §7.5)
+- `truth.getWorldBlock` — `{ world?, x, y, z } -> { block: { type, properties?, nbtJson?, biome? } }`.
+- `truth.getEntities` — query entities by `{ world?, center, radius, type? }` -> `{ count, entities: [{ id, uuid, type, name?, position, tags?, customNameRaw? }] }`.
+- `truth.assertPluginState` — evaluate a named, plugin-registered probe by `query` (params `{ plugin?, query, args?, expect? }`, e.g. `query:"regions.exists"` `args:{name:"TestRegion"}`) and return `{ ok, query, value, matched, valueJson }`.
 
 **Fixture / lifecycle primitives (server-side):**
 - `fixture.set` — apply a named world/plugin fixture (place blocks, create regions, set time/weather, load a config).
@@ -76,7 +76,7 @@ A **selector** is a JSON object. Never coordinates, never slot indices in the te
 | `role` | semantic role | `{ "role": "button" }` |
 | `index` / `nth` | disambiguate among matches (0-based) | `{ "textContains": "Region", "nth": 1 }` |
 | `within` | scope to a sub-container/region selector | `{ "within": { "role": "list" }, "label": "TestRegion" }` |
-| `testId` | invisible tag emitted by SUTs we control | `{ "testId": "regions.entry.TestRegion" }` |
+| `testId` | invisible tag emitted by SUTs we control | `{ "testId": "regions:entry:TestRegion" }` |
 
 `testId` is the most robust: a cooperating plugin/mod stamps an invisible **NBT key** `mctp:testId` (inventory items) or **data component** `mc-test:test_id` (1.20.5+) or a mod-side widget `testId` field, and drivers resolve it deterministically. Drivers that cannot read tags (pixel) ignore `testId` and fall back to `label`/`textContains` via OCR.
 
@@ -89,7 +89,7 @@ A selector resolving to **zero** elements on a `screen.clickElement` raises `ELE
   "ref": "el-7",                 // opaque, screen-scoped handle (stable within a screen)
   "label": "Regions",            // best-effort visible text
   "role": "button",              // button | slot | label | input | tab | list | listItem
-  "testId": "regions.btn.list",  // present only if the SUT emitted one and the driver can read it
+  "testId": "regions:list",      // present only if the SUT emitted one and the driver can read it
   "itemType": "minecraft:paper", // inventory GUIs only
   "lore": ["Click to open"],     // inventory GUIs / tooltips
   "enabled": true,
@@ -202,9 +202,9 @@ For a **chest-menu** regions plugin:
 1. `world.runCommand("or")` → server opens a chest window.
 2. `screen.waitForScreen({ kind: "container" })` (or poll `screen.get`).
 3. `screen.clickElement({ label: "Regions" })` → resolves to the slot whose item display name is "Regions"; `bot.clickWindow`.
-4. `screen.clickElement({ testId: "regions.entry.TestRegion" })` (or `{ label: "TestRegion" }`).
+4. `screen.clickElement({ testId: "regions:entry:TestRegion" })` (or `{ label: "TestRegion" }`).
 5. `world.waitForChat()` → assert a line `plain` contains `"Region loaded"` (assertion runs in the runner, not the bot).
-6. Paired `server-bukkit`: `truth.assertPluginState({ probe: "regions.exists", args: ["TestRegion"] })` → `{ ok: true }`.
+6. Paired `server-bukkit`: `truth.assertPluginState({ query: "regions.exists", args: { name: "TestRegion" }, expect: { equals: true } })` → `{ ok: true, query: "regions.exists", value: true, matched: true, valueJson: "true" }`.
 
 ---
 
@@ -290,7 +290,7 @@ For a **client-rendered** regions mod (the case headless cannot do):
 1. `world.runCommand("or")` → mod opens its custom `RegionsScreen`.
 2. `screen.get()` → `kind: "menu"`, title "Open Regions".
 3. `screen.clickElement({ label: "Regions" })` → resolves a `ButtonWidget` by `getMessage()`; click dispatched on render thread.
-4. `screen.clickElement({ testId: "regions.entry.TestRegion" })` (mod implements `TestIdHolder`).
+4. `screen.clickElement({ testId: "regions:entry:TestRegion" })` (mod implements `TestIdHolder`).
 5. `screen.screenshot()` on failure → PNG artifact.
 6. `world.waitForChat()` → assert contains `"Region loaded"`. Server-truth half of the assertion runs on the paired `server-fabric` agent.
 
@@ -299,31 +299,38 @@ For a **client-rendered** regions mod (the case headless cannot do):
 ## 3. Driver: Server-side agent (`server-bukkit` / `server-fabric`)
 
 **Agents:** `/agents/server-bukkit` (Bukkit/Paper plugin) and `/agents/server-fabric` (server-mod variant) over `/agents/core`.
-**Kind:** `server`.
+**`driverKind`:** `server` · **MCTP `agent.kind`:** `serverPlugin` (server mod variant: `serverMod`) — the value returned in the `session.create` handshake (`PROTOCOL.md` §4.3).
 **Owns authoritative world-truth, plugin/mod-state assertions, fixtures, and fake players.**
 
-This agent runs **inside the server JVM**. It is the source of ground truth: it reads the real world, queries SUT plugin state through registered probes, mutates state for setup, and spawns fake players. It does **no** client-side UI work — it has no screen. It is almost always **paired** with driver 1 or driver 2 (which drive the UI) to complete an assertion.
+This agent runs **inside the server JVM**. It is the source of ground truth: it reads the real world, queries SUT plugin state through registered probes, mutates state for setup, and spawns fake players. It does **no** client-side UI work — it has no screen. It is almost always **paired** with driver 1 or driver 2 (which drive the UI) to complete an assertion. As of **M3** the Bukkit plugin agent (`/agents/server-bukkit`) is the first server agent built; it is implemented against the **stable Bukkit/Paper API only** (no NMS / Mojang-mapped symbols), so it needs no per-version remap.
 
 ### 3.1 Capability set (advertised)
 
+`server-bukkit` advertises exactly these six canonical capability keys (`PROTOCOL.md` §6.1; the `serverPlugin`/`serverMod` bundle in §6.2). `command` is **not** in the advertised set — the agent runs console commands internally for fixtures/fake players, but does not advertise `command` as a UI-actor capability (the bot/client driver owns `world.runCommand`).
+
 ```jsonc
 {
-  "driverKind": "server",
+  "driverKind": "server",     // runner-side driver id (cost order, §5)
+  "agentKind": "serverPlugin",// MCTP handshake agent.kind (PROTOCOL.md §4.3)
   "capabilities": {
+    "worldTruth": true,       // authoritative blocks/entities
+    "pluginState": true,      // truth.assertPluginState via registered probes
+    "fixtures": true,         // fixture.set / fixture.reset
+    "fakePlayers": true,      // player.spawnFake / despawnFake (Carpet-backed)
     "chat": true,             // can inject/observe server chat
-    "command": true,          // runs console / player commands
-    "worldTruth": true,       // authoritative
-    "pluginState": true,
-    "fixtures": true,
-    "fakePlayers": true,
+    "testIdTags": true,       // SUTs we control emit testId carriers the agent honors
     "containerGui": false,    // no client; cannot click a rendered GUI
     "clientScreens": false,
+    "command": false,         // UI command-actor is the bot/client; agent runs console internally
     "typeText": false,
     "pressKey": false,
-    "testIdTags": false,      // no client structure to read tags from
     "screenshot": false,
     "rendering": false,
     "pixelOnly": false        // driver-local marker (non-canonical); always false here
+  },
+  "capabilityDetails": {
+    "worldTruth": { "radiusLimit": 64 },     // max truth.getEntities radius (PROTOCOL.md §6.3)
+    "fakePlayers": { "backend": "carpet" }    // Carpet-style /player command backend
   }
 }
 ```
@@ -334,19 +341,32 @@ This agent runs **inside the server JVM**. It is the source of ground truth: it 
 |-------------|-------------------------------|
 | `session.create`/`session.describe`/`session.close`/`session.ping` | Native in `/agents/core`, embedded in the plugin/mod's `onEnable`/`onInitialize`. WS server bound to a per-instance port. |
 | `world.join`/`world.leave` | Marks the agent's logical session against the running world; no client connection of its own (the agent already lives in the server JVM). |
-| `truth.getWorldBlock` | **Bukkit:** `world.getBlockAt(x,y,z)` → `{ type: block.getType().getKey(), blockData: block.getBlockData().getAsString(), nbt }`. **Fabric server:** `serverWorld.getBlockState(pos)`. Runs on the main server thread via the scheduler. |
-| `truth.getEntities` | **Bukkit:** `world.getNearbyEntities(loc, r, r, r)` or `world.getEntities()` filtered by type → `Entity[]` `{ id, type, pos, name, customName }`. **Fabric:** `serverWorld.getEntitiesByType(...)`. |
-| `truth.assertPluginState` | Looks up a **registered probe** by name in the agent's probe registry. SUT authors (or a shim) register probes at startup, e.g. `agent.registerProbe("regions.exists", args -> WorldGuard.getRegionManager(world).hasRegion(args[0]))`. Returns `{ ok, value, detail }`. Unknown probe → `ASSERT_FAILED`. |
-| `fixture.set` | Applies a **named fixture** from the agent's fixture registry: place a schematic, create a region via the SUT's API, set time/weather, load a config file, give items. e.g. `fixture.set("regions.seed.TestRegion")`. Idempotent where possible. A fixture that fails to apply → `FIXTURE_FAILED`. |
-| `fixture.reset` | Reverts applied fixtures, restoring the pristine world/plugin baseline (e.g. delete seeded regions, restore the world snapshot). |
-| `player.spawnFake` | **Bukkit:** integrates **Carpet fake players** (`/player <name> spawn`) or a ProtocolLib/`packetevents` NPC; returns a handle `{ fakePlayerId, name }`. **Fabric:** Carpet/`FakePlayer` (`EntityPlayerMPFake`). The handle is usable as an actor for server-side actions (move, use item). |
-| `player.despawnFake` | Despawns the handle (`/player <name> kill` or API). |
+| `truth.getWorldBlock` | **Bukkit:** `world.getBlockAt(x,y,z)` → `{ type: block.getType().getKey() (lowercase `namespace:path`), properties: blockData, nbtJson?, biome? }`. **Fabric server:** `serverWorld.getBlockState(pos)`. Runs on the main server thread via the scheduler. Out-of-range/unloaded → `WORLD_NOT_READY`. Field shape per `PROTOCOL.md` §7.3 `truth.getWorldBlock`. |
+| `truth.getEntities` | **Bukkit:** `world.getNearbyEntities(loc, r, r, r)` (sphere) or `world.getEntities()` filtered by type → `{ ok, count, entities:[{ id, uuid, type, name?, position:{x,y,z}, tags?[], customNameRaw? }] }`. **Fabric:** `serverWorld.getEntitiesByType(...)`. `radius` > granted `worldTruth.radiusLimit` → `-32602 invalidParams`. Field shape per `PROTOCOL.md` §7.3. |
+| `truth.assertPluginState` | Resolves a **registered probe** by `query` name (params `{ plugin?, query, args?, expect? }`). Preferred path: the SUT registers an `McTestStateProvider` via the Bukkit `ServicesManager` (see §3.2.1); a reflective/expression fallback (`regions.exists(name)`, `config.get(path)`, `perms.has`) covers SUTs without the SPI. Evaluates the optional `expect` predicate (`equals｜notEquals｜contains｜gt｜gte｜lt｜lte｜exists`) over the value and returns `{ ok, query, value, matched, valueJson }` (`matched:null` if no `expect`). Unknown query / evaluation failure → `ASSERT_FAILED`. The agent returns facts; the **runner** owns the verdict. Field shape per `PROTOCOL.md` §7.5. |
+| `fixture.set` | Applies a **named fixture** (params `{ fixture, args? }`): built-ins `gamerule`, `time`, `weather`, `inventory` (give/clear), `permissions` (grant/revoke). Any fixture a registered `McTestFixtureProvider#supports` (e.g. `regions.createRegion` from the SUT) is delegated to that provider. Records an undo per applied fixture. Returns `{ ok, fixture, applied:true, handle, result? }`. Unknown/failed → `FIXTURE_FAILED`; bad args → `-32602`. Field shape per `PROTOCOL.md` §7.5. |
+| `fixture.reset` | Reverts applied fixtures (params `{ snapshot?, world?, fixtureId? }`; no arg ⇒ revert all session fixtures), restoring the pristine world/plugin baseline. Returns `{ ok, restored?, tookMs? }`. |
+| `player.spawnFake` | **Bukkit:** Carpet-style console command `/player <name> spawn at <x> <y> <z>` (`Bukkit.dispatchCommand(consoleSender, …)`); params `{ name, at?, gameMode? }` → `{ ok, name, uuid, handle }`. `capabilityDetails.fakePlayers.backend = "carpet"`. The handle is usable as an actor for server-side actions. |
+| `player.despawnFake` | Despawns by `handle` (or `name`): params `{ handle?, name? }` → `{ ok, despawned }`. Unknown → `-32602`. The agent also despawns any remaining fake players on `session.close`. |
 | `world.sendChat` | Broadcasts/injects chat; can also `player.performCommand` for a named (fake) player. |
 | `world.runCommand` | Runs a **console command** (`Bukkit.dispatchCommand(consoleSender, cmd)`) or a named (fake) player's command. |
 | `world.waitForChat` | Subscribes to server chat events (`AsyncPlayerChatEvent` / Fabric `ServerMessageEvents`) and broadcast log; blocks for a matching line and emits `event.chat`. |
 | `screen.listElements`/`screen.get`/`screen.clickElement`/`screen.typeText`/`screen.pressKey`/`screen.screenshot`/`screen.close`/`screen.waitForScreen` | **Not supported** — the server has no client screen to introspect or click. All return `METHOD_NOT_SUPPORTED`. (UI is the bot's or client mod's job.) |
 
 > Note on `containerGui`: even though container GUIs are *server-driven*, **clicking** one requires a connected client/bot to receive the open-window packet and send click packets. The server agent can *open* an inventory for a (fake) player but cannot itself perform the semantic `screen.clickElement`. So `containerGui` is advertised **false** here; the bot/client driver does the clicking, the server agent does the truth.
+
+> Per-session resources: the agent **tracks** every fixture it applies and every fake player it spawns against the originating session, and **releases** them on `session.close` (revert fixtures, despawn fake players) — `PROTOCOL.md` §4.4 / §7.5.
+
+### 3.2.1 SUT extension SPIs (`McTestStateProvider` / `McTestFixtureProvider`)
+
+Both SPIs are **pure Java interfaces** shipped in `/agents/core` (no Bukkit types), so a SUT can implement them without depending on the agent's loader. The canonical `/examples/regions` plugin registers both to make the regions assertion resolve from **real** plugin state.
+
+| SPI (in `/agents/core`) | Backs | Shape | How the SUT registers it |
+|---|---|---|---|
+| `McTestStateProvider` | `truth.assertPluginState` (cap `pluginState`) | `Object query(String query, Map<String,Object> args) throws Exception` | `getServer().getServicesManager().register(McTestStateProvider.class, provider, plugin, ServicePriority.Normal)` |
+| `McTestFixtureProvider` | `fixture.set` / `fixture.reset` (cap `fixtures`) | `boolean supports(String fixture)` · `Object apply(String fixture, Map<String,Object> args) throws Exception` · `void undo(String handle) throws Exception` | registered the same way via the Bukkit `ServicesManager` |
+
+The agent resolves a `query`/`fixture` to a provider through the `ServicesManager` first; only if no provider answers does it fall back to the reflective/expression path (for `assertPluginState`) or fail with `FIXTURE_FAILED` (for an unknown fixture). For the regions example, `query:"regions.exists"` with `args:{name:"TestRegion"}` returns a real boolean from the plugin's region store, and `fixture:"regions.createRegion"` mutates that store and registers an undo. The classloading discipline (SUT compiles the SPI at *provided* scope and `softdepend`s the agent so both share one class) is owned by `/examples/regions` — see `ROADMAP.md` §4.3.
 
 ### 3.3 Version strategy — Bukkit API stability + packetevents
 
@@ -358,10 +378,14 @@ This agent runs **inside the server JVM**. It is the source of ground truth: it 
 
 ### 3.4 Build / runtime requirements
 
-- JDK matching the server (17 for modern Paper/Fabric; 8 for legacy). Gradle; `server-bukkit` shades `/agents/core` + `packetevents` into a normal Paper plugin jar dropped in `plugins/`. `server-fabric` builds a server mod jar for `mods/`.
+- JDK matching the server (17 for modern Paper/Fabric; 8 for legacy). Gradle (`/agents` is a `mc-test-agents` Gradle build: `:core` + `:server-bukkit`). `server-bukkit` is a **fat plugin jar** that bundles `/agents/core` + Java-WebSocket (paper-api and Gson are `compileOnly` — Paper provides them at runtime); it is dropped in `plugins/`. `server-fabric` builds a server mod jar for `mods/`.
+- The plugin's `plugin.yml` declares `name: mc-test-agent`, `main: io.mctest.agent.bukkit.McTestAgentPlugin`. The MCTP port is read from `plugins/mc-test-agent/config.yml` (`port:`), and on start the agent logs **`MCTP listening on :PORT`** (the line the runner scrapes to learn the port).
+- **Build-artifact naming.** The fat jar produced by the Gradle build is **`mc-test-agent-bukkit.jar`**. When dropped into the provisioner via the `agentResolver`, it is resolved/installed under the per-version name **`agent-server-bukkit-<mc>.jar`** (e.g. `agent-server-bukkit-1.20.4.jar`) — the canonical `agent-<variant>-<mc>.jar` convention (`ENVIRONMENTS.md` §2.4). The Bukkit agent needs no per-version remap, so the same jar serves every `mc` the Bukkit API supports.
 - Optional **Carpet** mod/plugin for fake players; optional **packetevents** (shaded).
 - Runs headless inside the server container — no display.
 - The runner provisions it Testcontainers-style: auto-download Paper/Fabric, copy a **pristine world snapshot**, install SUT + this agent, boot `online-mode=false` on a unique port.
+
+> **Multi-connection (driver + agent) session.** The server agent listens on its **own** MCTP port — distinct from the game port and from any UI driver. A test that needs both a UI surface and server truth runs over **two MCTP connections** unified behind one logical session: the runner fans GUI/chat steps to the UI driver connection and `truth.*`/`fixture.*`/`player.*` steps to this agent connection. The agent advertises its caps independently; the runner reasons about the **union** of advertised caps (`CAPABILITIES.md` §4 co-driver rule, `PROTOCOL.md` §11). When no server agent is co-selected, `pluginState`/`worldTruth`/`fixtures`/`fakePlayers` steps **skip honestly** with `unmet:[…]` rather than pass.
 
 ### 3.5 Known limits / what it CANNOT do
 
@@ -373,9 +397,9 @@ This agent runs **inside the server JVM**. It is the source of ground truth: it 
 ### 3.6 Canonical regions example (server path)
 
 The server agent provides **setup + the world-truth half** of the canonical assertion:
-1. `fixture.set("regions.seed.TestRegion")` (optional) — pre-create the region so `/or` has data.
+1. `fixture.set({ fixture: "regions.createRegion", args: { name: "TestRegion" } })` (optional) — pre-create the region so `/or` has data; `→ { ok, fixture, applied:true, handle, result:{ regionId:"TestRegion" } }`.
 2. (UI driver runs `/or` → click "Regions" → click "TestRegion".)
-3. `truth.assertPluginState({ probe: "regions.exists", args: ["TestRegion"] })` → `{ ok: true, value: true }`.
+3. `truth.assertPluginState({ query: "regions.exists", args: { name: "TestRegion" }, expect: { equals: true } })` → `{ ok: true, query: "regions.exists", value: true, matched: true, valueJson: "true" }`. The runner asserts `matched === true`.
 4. Optionally `truth.getWorldBlock` / `truth.getEntities` to verify region-side effects (e.g. a marker block placed at the region center).
 
 ---
@@ -518,8 +542,13 @@ Driver-local advertisements (NOT part of the canonical vocabulary): `pixelOnly` 
 **`screen.get` fields (this doc's shape):** `screenId`, `title`, `kind`, `size`, `elementCount`. **`kind` enum (driver-local):** `container`, `menu`, `hud`, `none`, `visual`, `unknown`.
 
 **Driver kinds (`driverKind`):** `headless`, `inprocess-client`, `server`, `pixel`.
+**MCTP `agent.kind` values (PROTOCOL.md §4.3):** `headlessBot`, `clientMod`, `serverPlugin`, `serverMod`, `pixelOcr`. (The `server` driver's Bukkit agent advertises `agent.kind: "serverPlugin"`; the Fabric server-mod variant advertises `"serverMod"`.)
 
 **testId carriers:** NBT key `mctp:testId` (pre-1.20.5 inventory items); `mc-test:test_id` data component (1.20.5+); `TestIdHolder` interface / `WIDGET_ID` synthetic (client widgets).
+
+**SUT extension SPIs (defined in `/agents/core`, pure Java):** `McTestStateProvider` (`Object query(String, Map)`) backs `truth.assertPluginState`; `McTestFixtureProvider` (`boolean supports(String)`, `Object apply(String, Map)`, `void undo(String)`) backs `fixture.set`/`fixture.reset`. SUTs register both via the Bukkit `ServicesManager`.
+
+**Agent build-artifact naming:** Gradle fat jar `mc-test-agent-bukkit.jar`; resolver/install name `agent-server-bukkit-<mc>.jar` (the `agent-<variant>-<mc>.jar` convention). Plugin id `mc-test-agent`; config `plugins/mc-test-agent/config.yml` (`port:`); boot log line `MCTP listening on :PORT`.
 
 **JSON-RPC error codes (driver-side; numeric values defined in `PROTOCOL.md`):**
 `-32000 ELEMENT_NOT_FOUND` (selector matched zero),
@@ -533,6 +562,6 @@ Driver-local advertisements (NOT part of the canonical vocabulary): `pixelOnly` 
 Plus standard JSON-RPC `-32700`, `-32600`, `-32601`, `-32602`.
 **Runner-level skip reason:** `NO_COMPATIBLE_DRIVER` (carries `unmet[]`) — used when no driver/pair satisfies the required caps, when a required `loader`/`mcVersionRange` target is unmet, or when `session.create` is rejected for a capability the driver lacks.
 
-**Canonical probe / fixture names (regions example):** probe `regions.exists` (args `["TestRegion"]`); fixture `regions.seed.TestRegion`; testId `regions.entry.TestRegion`, `regions.btn.list`.
+**Canonical probe / fixture names (regions example):** plugin-state query `regions.exists` (args `{ name: "TestRegion" }`, per `PROTOCOL.md` §7.5); fixture `regions.createRegion` (args `{ name: "TestRegion" }`); testId `regions:entry:TestRegion`, `regions:list`. (Earlier drafts used `regions.seed.TestRegion` / array args / dotted testIds — superseded by the `PROTOCOL.md` spellings.)
 
 **Paths referenced:** `/packages/driver-headless`, `/packages/driver-inprocess`, `/packages/driver-pixel`, `/packages/runner`, `/packages/protocol`, `/agents/core`, `/agents/client-fabric`, `/agents/client-forge`, `/agents/client-neoforge`, `/agents/server-bukkit`, `/agents/server-fabric`, `mc-test.yml`.

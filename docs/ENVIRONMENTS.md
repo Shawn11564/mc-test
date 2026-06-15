@@ -98,7 +98,7 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `loaderInstaller` | `Source` \| `{ref}` | cond | — | For mod loaders, the loader installer (e.g. Fabric installer jar, NeoForge installer). REQUIRED for `fabric`/`forge`/`neoforge`/`quilt` unless `server`/`client` already points at a pre-installed server jar. |
 | `plugins` | list<`Source`\|`{ref}`> | — | `[]` | Bukkit/Spigot/Paper **plugins** to install (the SUT and its deps). Dropped into `plugins/`. The regions plugin is one of these. |
 | `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. |
-| `agent` | `Source`\|`{ref}` | — | auto-resolved | The **mc-test agent** for this `(loader × mc × side)`. If omitted, the runner resolves the matching prebuilt agent from `provision.agentResolver` (§2.4). This is the in-game piece that speaks MCTP. |
+| `agents` | list<`AgentId`> | — | inferred from `driver`/`side` | The set of mc-test agents co-installed and **co-selected** for this target. Each entry is a known agent id — `server-bukkit`, `server-fabric`, `client-fabric`, `client-forge`, `client-neoforge` (resolved via `agentResolver`, §2.4); a per-agent artifact override may be supplied out-of-band via `agentSources` (keyed by agent id). When `agents` is omitted the runner infers them from `driver`/`side`. Listing `server-bukkit` on a Paper target installs the server agent and gives the test the server-owned capabilities (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`) over a **second MCTP connection** (§2.4.1, §4). Example: `agents: [ server-bukkit ]`. A client target typically lists both a client and a server agent, e.g. `agents: [ client-fabric, server-fabric ]`. |
 | `world` | `World`\|`{ref}` | — | `flat-void` builtin | The world snapshot copied **fresh per test** (§3). May be a named ref. |
 | `serverProps` | map<string,scalar> | — | see §2.6 | Overrides merged into `server.properties` after the framework-enforced keys. Cannot override `online-mode`, `query.port`, `server-port` (those are owned by the runner). |
 | `online-mode` | bool | — | `false` | **Forced to `false`** by the framework for all booted servers (offline auth, §5.4). Exposed only so a suite can *assert* on it; setting `true` is rejected by the loader. |
@@ -212,7 +212,14 @@ Capabilities are the **negotiated vocabulary** between suites and drivers. Canon
 | `screenshot` | bool | Capture PNG screenshots of the client. |
 | `worldTruth` | bool | Read authoritative world state (`truth.getWorldBlock`, `truth.getEntities`). |
 | `pluginState` | bool | Assert plugin/mod internal state (`truth.assertPluginState`) — e.g. region `TestRegion` exists. |
-| `fixtures` | bool | Apply server-side fixtures (`fixture.set`, `player.spawnFake`). |
+| `fixtures` | bool | Apply/reset server-side fixtures (`fixture.set`, `fixture.reset`). |
+| `fakePlayers` | bool | Spawn/despawn server-side fake players (`player.spawnFake`, `player.despawnFake`; Carpet-backed). |
+| `testIdTags` | bool | The target emits invisible `testId` carriers the driver/agent can resolve. |
+
+> The `server-bukkit` agent (§2.4.1) advertises exactly `worldTruth`, `pluginState`,
+> `fixtures`, `fakePlayers`, `chat`, `testIdTags`. The four world/plugin/fixture/fake-player
+> caps are **server-owned**: a UI-driven test obtains them by co-selecting this agent (§4),
+> and the requiring steps **skip with a reason** when no agent is present.
 
 - **`RequiredCapabilities`** (on a suite/test): a map of `key: true` (must-have) or
   `key: "optional"` (prefer-but-skip-feature). The negotiator picks the cheapest driver
@@ -363,10 +370,48 @@ instance) to open the MCTP WebSocket on the **allocated `mctpPort`**, bound to
 `provision.bindHost`, with a one-time **handshake token** the runner also holds — so only
 our runner can drive the instance.
 
+### 2.4.1 The server agent (`server-bukkit`) — install, port, and discovery
+
+When a target's `agents:` list includes the **Bukkit server agent**
+(`/agents/server-bukkit`, MCTP `agent.kind: serverPlugin`), provisioning installs and
+configures it as follows (M3):
+
+1. **Install.** Drop the agent's **fat plugin jar** into `<instance>/plugins/`. The build
+   produces it as `mc-test-agent-bukkit.jar`; the `agentResolver` installs it under the
+   canonical per-version name `agent-server-bukkit-<mc>.jar` (§2.4). The jar bundles
+   `/agents/core` + Java-WebSocket; Paper provides the Bukkit API and Gson at runtime. Its
+   `plugin.yml` declares `name: mc-test-agent`.
+2. **Configure its own MCTP port.** The server agent listens on a **second** MCTP
+   port — distinct from the game `server-port` and from any UI driver's `mctpPort`. The
+   runner allocates it with the same pool allocator (§2.5) and writes it into
+   `<instance>/plugins/mc-test-agent/config.yml` as `port: <allocatedAgentPort>`
+   (bound to `provision.bindHost`).
+3. **Discover the port from the boot log.** On start the agent logs
+   **`MCTP listening on :PORT`**. The runner confirms readiness by connecting to the
+   allocated agent port and completing `session.create` (TCP connect + handshake within
+   `Target.timeoutSec`, else `BOOT_TIMEOUT`); the log line is the human-readable confirmation
+   that the agent bound the expected port.
+4. **Co-selected two-connection session.** Because the server agent is an **independent**
+   MCTP server, a test that needs both a UI surface and server truth runs over **two MCTP
+   connections** unified behind one logical session (a `SessionGroup`): the runner fans
+   GUI/chat steps to the UI driver connection and `truth.*` / `fixture.*` / `player.*` steps
+   to the server-agent connection. The negotiator reasons about the **union** of both
+   connections' advertised capabilities (§4). If a target lists no server agent, the
+   server-owned requirements are unmet and those steps **skip with a reason** (§4) rather than
+   pass.
+
+> The SUT registers its plugin-state probe and region fixtures with the agent via the
+> `McTestStateProvider` / `McTestFixtureProvider` SPIs shipped in `/agents/core` — see
+> [`DRIVERS.md`](./DRIVERS.md) §3.2.1 and [`ROADMAP.md`](./ROADMAP.md) §4.3. Provisioning does
+> not need to know those names; it only drops the jars and wires the port.
+
 ### 2.5 Allocate ports (parallelism)
 
 Each instance needs ≥2 free TCP ports: `gamePort` (Minecraft `server-port`) and `mctpPort`
-(agent WebSocket); `+rconPort` if RCON is enabled.
+(the UI driver / primary agent WebSocket); `+rconPort` if RCON is enabled. When the target
+also co-installs a **server agent** (§2.4.1), the runner allocates an **additional** MCTP
+port for it (distinct from `gamePort` and the UI `mctpPort`), so a co-selected GUI+truth
+target uses ≥3 ports.
 
 - The allocator hands out ports from `provision.portRange`, skipping any already bound
   (probes `bind()` on `bindHost`) and any reserved by a live instance.
@@ -496,9 +541,17 @@ can do*.
    force-on/off hints.
 2. The suite/test declares `requires` (§1.7).
 3. The negotiator selects the **cheapest** driver whose advertised set ⊇ the required
-   must-haves (cost order: `headless` < `server-bukkit`/`server-fabric` < `inprocess` <
-   `pixel`). `Target.driver` (if not `auto`) constrains the candidate set first.
-4. If **no** candidate satisfies the requirements, the test is **SKIPPED** (not failed) with
+   must-haves (cost order: `server-bukkit`/`server-fabric` < `headless` < `inprocess` <
+   `pixel`; cost order is owned by [`CAPABILITIES.md`](./CAPABILITIES.md) §7). `Target.driver`
+   (if not `auto`) constrains the candidate set first.
+3a. **Co-selection (multi-connection).** When the required set spans both UI capabilities and
+   **server-owned** ones (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`), and the
+   target's `agents:` includes a server agent (`server-bukkit`/`server-fabric`), the runner
+   opens a **second MCTP connection** to that agent and reasons about the **union** of the UI
+   driver's and the server agent's advertised caps (§2.4.1). One logical session fans each
+   step to the connection that advertises its capability — the test author writes no plumbing.
+   If a server-owned cap is required but no server agent is listed, that requirement is unmet.
+4. If **no** candidate (or union) satisfies the requirements, the test is **SKIPPED** (not failed) with
    a precise reason, e.g.:
    `SKIP regions/real-mod-gui on paper-1.20.4-headless: requires clientScreens, but driver
    'headless' advertises {chat, command, containerGui, worldTruth, pluginState}. Use an
@@ -648,9 +701,11 @@ Stable, machine-readable codes surfaced in reports and CLI:
 
 - [PROTOCOL.md](./PROTOCOL.md) — MCTP JSON-RPC methods (`session.create`, `screen.listElements`,
   `screen.clickElement`, `screen.get`, `screen.typeText`, `screen.pressKey`, `screen.screenshot`, `truth.getWorldBlock`,
-  `truth.getEntities`, `fixture.set`, `player.spawnFake`, `truth.assertPluginState`, `session.close`) and
+  `truth.getEntities`, `fixture.set`, `fixture.reset`, `player.spawnFake`, `player.despawnFake`, `truth.assertPluginState`, `session.close`) and
   the canonical **capability registry**.
-- [DRIVERS.md](./DRIVERS.md) — the four drivers and their advertised capabilities.
+- [DRIVERS.md](./DRIVERS.md) — the four drivers and their advertised capabilities; the
+  `server-bukkit` agent (§3): advertised caps, build-artifact naming, the
+  `McTestStateProvider` / `McTestFixtureProvider` SPIs, and the multi-connection session.
 - [AUTHORING.md](./AUTHORING.md) — fluent API / YAML steps / record-replay (the *write-once*
   layer).
 - [`/examples/regions`](../examples/regions) — the canonical SUT + test this doc references.

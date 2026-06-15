@@ -26,6 +26,23 @@ export interface PluginSpec {
   as?: string;
 }
 
+/**
+ * A server agent to install alongside the SUT (M3): its built jar dropped into
+ * `plugins/`, listening on its own `port` (a second MCTP port distinct from the
+ * game port). The agent reads its port from `plugins/mc-test-agent/config.yml`.
+ */
+export interface AgentSpec {
+  name: string;
+  jarPath: string;
+  port: number;
+}
+
+/** A resolved server-agent MCTP endpoint after boot. */
+export interface AgentEndpoint {
+  name: string;
+  url: string;
+}
+
 export interface PaperProvisionOptions {
   mc: string;
   build?: number | "latest";
@@ -34,6 +51,8 @@ export interface PaperProvisionOptions {
   instanceDir: string;
   cacheDir: string;
   plugins: PluginSpec[];
+  /** Server agents to install + wire to a second MCTP port (M3). */
+  agents?: AgentSpec[];
   worldSnapshotPath?: string;
   levelName?: string;
   serverProps?: Record<string, string | number | boolean>;
@@ -48,6 +67,8 @@ export interface ProvisionedServer {
   port: number;
   logPath: string;
   instanceDir: string;
+  /** Resolved server-agent MCTP endpoints (one per installed agent). */
+  agentEndpoints: AgentEndpoint[];
   stop: () => Promise<void>;
 }
 
@@ -208,37 +229,66 @@ function hasWorldData(dir: string): boolean {
   }
 }
 
+/**
+ * Resolves when the server has booted (`Done (`) AND every co-installed agent has bound its MCTP
+ * port (`MCTP listening on :PORT`) — the readiness gate the runner relies on before connecting the
+ * agent session. A trailing agent line (the WS bind is async, sometimes just after `Done (`) is
+ * awaited up to `bootTimeoutMs`; if an agent never binds, fail with a precise BOOT_TIMEOUT rather
+ * than returning a half-ready target.
+ */
 function waitForReady(
   proc: ChildProcess,
   logStream: ReturnType<typeof createWriteStream>,
   onLog: ((line: string) => void) | undefined,
   bootTimeoutMs: number,
+  expectedAgentPorts: number[] = [],
 ): Promise<void> {
   return new Promise((resolveReady, reject) => {
-    let ready = false;
+    let resolved = false;
+    let serverDone = false;
     let buffer = "";
+    const pendingPorts = new Set(expectedAgentPorts);
+    const listening = /MCTP listening on :(\d+)/g;
+
     const timer = setTimeout(() => {
-      if (!ready) reject(new Error("BOOT_TIMEOUT: server did not reach 'Done' in time"));
+      if (resolved) return;
+      reject(
+        new Error(
+          serverDone
+            ? `BOOT_TIMEOUT: server agent(s) never bound MCTP port(s) ${[...pendingPorts].join(", ")}`
+            : "BOOT_TIMEOUT: server did not reach 'Done' in time",
+        ),
+      );
     }, bootTimeoutMs);
+
+    const finish = (): void => {
+      if (!resolved && serverDone && pendingPorts.size === 0) {
+        resolved = true;
+        clearTimeout(timer);
+        resolveReady();
+      }
+    };
 
     const onData = (chunk: Buffer): void => {
       const s = chunk.toString();
       logStream.write(s);
       onLog?.(s);
-      if (!ready) {
-        buffer += s;
-        if (buffer.includes("Done (")) {
-          ready = true;
-          clearTimeout(timer);
-          resolveReady();
-        }
-        if (buffer.length > 200000) buffer = buffer.slice(-50000);
+      if (resolved) return;
+      buffer += s;
+      if (!serverDone && buffer.includes("Done (")) serverDone = true;
+      if (pendingPorts.size) {
+        let m: RegExpExecArray | null;
+        while ((m = listening.exec(buffer)) !== null) pendingPorts.delete(Number(m[1]));
+        listening.lastIndex = 0;
       }
+      if (buffer.length > 200000) buffer = buffer.slice(-50000);
+      finish();
     };
+    // The agent logs via the server console — scan both streams so a line on either is caught.
     proc.stdout?.on("data", onData);
-    proc.stderr?.on("data", (c: Buffer) => logStream.write(c.toString()));
+    proc.stderr?.on("data", onData);
     proc.once("exit", (code) => {
-      if (!ready) {
+      if (!resolved) {
         clearTimeout(timer);
         reject(new Error(`server exited before ready (code ${code ?? "?"})`));
       }
@@ -301,8 +351,21 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
 
   for (const plugin of opts.plugins) {
     const src = resolve(plugin.path);
-    if (!existsSync(src)) throw new Error(`plugin not found: ${src}`);
+    if (!existsSync(src)) throw new Error(`plugin not found: ${src} (build the SUT first — plugin jars are not committed)`);
     cpSync(src, join(opts.instanceDir, "plugins", plugin.as ?? basename(src)));
+  }
+
+  // Install each server agent (M3): drop its jar into plugins/ and write its
+  // dedicated MCTP port to plugins/mc-test-agent/config.yml. The agent reads the
+  // port from config on enable and logs "MCTP listening on :PORT".
+  const agents = opts.agents ?? [];
+  for (const agent of agents) {
+    const src = resolve(agent.jarPath);
+    if (!existsSync(src)) throw new Error(`agent jar not found: ${src} (build agent '${agent.name}' first)`);
+    cpSync(src, join(opts.instanceDir, "plugins", basename(src)));
+    const agentConfigDir = join(opts.instanceDir, "plugins", "mc-test-agent");
+    mkdirSync(agentConfigDir, { recursive: true });
+    writeFileSync(join(agentConfigDir, "config.yml"), `port: ${agent.port}\n`);
   }
 
   const logPath = join(opts.instanceDir, "logs", "server.log");
@@ -313,17 +376,31 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
   });
 
   try {
-    await waitForReady(proc, logStream, opts.onLog, opts.bootTimeoutMs ?? 240000);
+    await waitForReady(
+      proc,
+      logStream,
+      opts.onLog,
+      opts.bootTimeoutMs ?? 240000,
+      agents.map((agent) => agent.port),
+    );
   } catch (err) {
     await stopServer(proc).catch(() => {});
     throw err;
   }
+
+  // Each agent listens on its assigned port at the canonical MCTP path. waitForReady above only
+  // resolves once every agent has logged "MCTP listening on :PORT", so each endpoint is bound.
+  const agentEndpoints: AgentEndpoint[] = agents.map((agent) => ({
+    name: agent.name,
+    url: `ws://${opts.bindHost}:${agent.port}/mctp`,
+  }));
 
   return {
     host: opts.bindHost,
     port: opts.gamePort,
     logPath,
     instanceDir: opts.instanceDir,
+    agentEndpoints,
     stop: async () => {
       await stopServer(proc);
       logStream.end();

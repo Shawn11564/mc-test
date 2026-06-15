@@ -16,6 +16,10 @@ chat. This is exactly the flow the canonical test drives — once, across driver
 
 ## Build the plugin
 
+The jar is a build artifact (under `plugin/target/`) and is **not committed** —
+build it before running the test; `mc-test.yml` points the SUT plugin at its
+output path:
+
 ```bash
 mvn -B -f examples/regions/plugin/pom.xml package
 # → examples/regions/plugin/target/regions-plugin.jar
@@ -23,7 +27,8 @@ mvn -B -f examples/regions/plugin/pom.xml package
 
 ## Run the test (real Paper boot, headless bot)
 
-From the repo root (after `npm install` and building the packages):
+From the repo root (after `npm install`, building the packages, and **building
+the plugin above**):
 
 ```bash
 npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4

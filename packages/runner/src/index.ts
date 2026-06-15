@@ -6,7 +6,8 @@
  */
 export { test, FluentTest } from "./authoring/fluent.js";
 export { Runner } from "./engine/Runner.js";
-export type { ProvisionHandle, TargetMeta } from "./engine/Runner.js";
+export type { ProvisionHandle, TargetMeta, AgentConn } from "./engine/Runner.js";
+export { SessionGroup, type ConnDef } from "./engine/SessionGroup.js";
 export {
   DriverRegistry,
   defaultRegistry,
@@ -23,7 +24,14 @@ export {
   advertisedKeys,
   capsFromKeys,
 } from "./engine/CapabilityMatch.js";
-export { executeStep, VERB_CAPABILITY, type ExecContext } from "./engine/StepExecutor.js";
+export type { Capabilities, RequiredCapabilities, CapabilityKey } from "@mc-test/protocol";
+export {
+  executeStep,
+  VERB_CAPABILITY,
+  singleSessionRouter,
+  type ExecContext,
+  type SessionRouter,
+} from "./engine/StepExecutor.js";
 export { loadSteps, parseStepDocument } from "./config/loadSteps.js";
 export { loadMatrix, parseMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 export { renderJUnit, writeJUnit } from "./report/JUnitReporter.js";
@@ -35,6 +43,8 @@ export {
   findFreePort,
   type PaperProvisionOptions,
   type ProvisionedServer,
+  type AgentSpec,
+  type AgentEndpoint,
 } from "./provision/PaperProvisioner.js";
 export type { NormalizedTest, NormalizedStep } from "./model/Step.js";
 export type { MatrixFile, MatrixTarget, WorldDef, Source, ProvisionPolicy } from "./model/Target.js";

@@ -1,0 +1,7 @@
+name: mc-test-agent
+version: '0.1.0'
+main: io.mctest.agent.bukkit.McTestAgentPlugin
+api-version: '1.20'
+load: STARTUP
+description: mc-test server-side agent — MCTP world-truth, fixtures, plugin-state, and fake players.
+author: mc-test

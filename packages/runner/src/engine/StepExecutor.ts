@@ -1,8 +1,13 @@
 /**
  * Step → MCTP mapping (ROADMAP §3.4) + the verb → capability table used for
- * per-step honest skips. Each verb compiles to one or more MCTP calls; the
- * `click` verb is wrapped in SelectorWaits so `ELEMENT_NOT_FOUND` is retried by
- * the runner (never the agent).
+ * per-step honest skips and **connection routing**. Each verb compiles to one or
+ * more MCTP calls; the `click` verb is wrapped in SelectorWaits so
+ * `ELEMENT_NOT_FOUND` is retried by the runner (never the agent).
+ *
+ * Multi-connection (M3): the executor no longer takes a single `Session`. It
+ * takes a `SessionRouter` and resolves each verb to the right connection via
+ * `VERB_CAPABILITY[verb]` — GUI/chat verbs fan to the driver, truth/fixture/
+ * player verbs fan to the server agent. The author writes no connection plumbing.
  */
 import { describeSelector, type Selector, type CapabilityKey, type StepVerb } from "@mc-test/protocol";
 import { Session } from "./Session.js";
@@ -41,6 +46,18 @@ export interface ExecContext {
   host: string;
   port: number;
   defaultUsername: string;
+}
+
+/**
+ * Resolves the connection a verb's MCTP calls go to, keyed by the capability
+ * the verb implies (`VERB_CAPABILITY[verb]`). `null` → the primary/driver
+ * session. A `SessionGroup` satisfies this contract directly via `route`.
+ */
+export type SessionRouter = (cap: CapabilityKey | null) => Session | undefined;
+
+/** A single-connection router (M2 back-compat / unit tests): every verb → one session. */
+export function singleSessionRouter(session: Session): SessionRouter {
+  return () => session;
 }
 
 function asObject(v: unknown): Record<string, unknown> {
@@ -89,16 +106,42 @@ interface PluginStateResult {
   matched?: boolean | null;
 }
 
+/** The `expect` predicate operators (PROTOCOL.md §7.5). */
+const PREDICATE_KEYS = new Set(["equals", "notEquals", "contains", "gt", "gte", "lt", "lte", "exists"]);
+
 /**
- * Execute one step against the session, returning a human-readable detail.
- * Throws (an `MctpRpcError` or assertion `Error`) to mark the step — and the
- * test — failed.
+ * Build the wire `expect` object. A value already in predicate shape (`{ gt: 3 }`) passes through;
+ * the common `expect: true` shorthand (a bare scalar) becomes `{ equals: <value> }`. This keeps the
+ * canonical shorthand while letting authors reach the other seven predicates.
+ */
+function toExpect(raw: unknown): Record<string, unknown> {
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    const keys = Object.keys(raw as Record<string, unknown>);
+    if (keys.length > 0 && keys.every((k) => PREDICATE_KEYS.has(k))) {
+      return raw as Record<string, unknown>;
+    }
+  }
+  return { equals: raw };
+}
+
+/**
+ * Execute one step, returning a human-readable detail. The verb's MCTP calls are
+ * routed to the connection that advertises its capability (`VERB_CAPABILITY`),
+ * so GUI verbs hit the driver and truth/fixture/player verbs hit the server
+ * agent. Throws (an `MctpRpcError` or assertion `Error`) to mark the step — and
+ * the test — failed.
  */
 export async function executeStep(
-  session: Session,
+  router: SessionRouter,
   step: { verb: StepVerb; args: unknown },
   ctx: ExecContext,
 ): Promise<string> {
+  const session = router(VERB_CAPABILITY[step.verb]);
+  if (!session) {
+    // Defensive: the Runner skips a step before calling us when no connection
+    // advertises its capability, so this only fires on a routing misconfiguration.
+    throw new Error(`no connection routes verb '${step.verb}'`);
+  }
   const a = asObject(step.args);
   switch (step.verb) {
     case "join": {
@@ -185,13 +228,19 @@ export async function executeStep(
       return `${result.count ?? 0} entit(ies)`;
     }
     case "assertPluginState": {
+      // `expect` is REQUIRED to produce a verdict: without it the agent returns `matched:null`
+      // and the step would pass regardless of the actual state (a false green). Fail loudly instead.
+      if (a["expect"] === undefined) {
+        throw new Error(`assertPluginState '${String(a["query"] ?? "")}' requires 'expect' to produce a verdict`);
+      }
       const result = await session.call<PluginStateResult>("truth.assertPluginState", {
         ...(a["plugin"] ? { plugin: a["plugin"] } : {}),
         query: String(a["query"] ?? ""),
         ...(a["args"] ? { args: a["args"] } : {}),
-        ...(a["expect"] !== undefined ? { expect: { equals: a["expect"] } } : {}),
+        expect: toExpect(a["expect"]),
       });
-      if (result.matched === false) {
+      // Pass only on an explicit positive verdict; `matched` false/null/absent is a failure.
+      if (result.matched !== true) {
         throw new Error(`pluginState assertion failed: ${String(a["query"])} = ${JSON.stringify(result.value)}`);
       }
       return `pluginState ${String(a["query"])} = ${JSON.stringify(result.value)}`;

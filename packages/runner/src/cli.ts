@@ -9,15 +9,39 @@
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
+import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
-import { Runner, type ProvisionHandle, type TargetMeta } from "./engine/Runner.js";
+import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
 import { defaultRegistry } from "./drivers/DriverRegistry.js";
-import { provisionPaper, findFreePort } from "./provision/PaperProvisioner.js";
+import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
 import { collectArtifacts } from "./report/Artifacts.js";
 import type { MatrixFile, MatrixTarget } from "./model/Target.js";
 import type { TestResult } from "./model/result.js";
+
+/**
+ * The capabilities the Bukkit server agent advertises (PROTOCOL.md §6.3:
+ * serverPlugin → `worldTruth, pluginState, fixtures, fakePlayers, chat,
+ * testIdTags`). Used to build the `AgentConn` the runner co-selects.
+ */
+const SERVER_BUKKIT_CAPABILITIES: Capabilities = {
+  worldTruth: true,
+  pluginState: true,
+  fixtures: true,
+  fakePlayers: true,
+  chat: true,
+  testIdTags: true,
+  loader: ["paper", "spigot", "folia"],
+};
+
+/** Known server agents: how to find their built jar (ROADMAP §4 / DRIVERS.md). */
+const KNOWN_AGENTS: Record<string, { jarPath: string; advertised: Capabilities }> = {
+  "server-bukkit": {
+    jarPath: "agents/server-bukkit/build/libs/mc-test-agent-bukkit.jar",
+    advertised: SERVER_BUKKIT_CAPABILITIES,
+  },
+};
 
 interface Args {
   _: string[];
@@ -55,6 +79,21 @@ function pluginSpecs(target: MatrixTarget): { path: string; as?: string }[] {
     .map((p) => ({ path: resolve(p.path!), ...(p.as ? { as: p.as } : {}) }));
 }
 
+/** Resolve the configured server agents into install specs (M3). Unknown agent
+ *  names throw with a clear message; a missing built jar is reported at boot. */
+function resolveAgentJars(target: MatrixTarget): { name: string; jarPath: string; advertised: Capabilities }[] {
+  return (target.agents ?? []).map((name) => {
+    const known = KNOWN_AGENTS[name];
+    if (!known) throw new Error(`unknown agent '${name}' (target '${target.id}'); known: ${Object.keys(KNOWN_AGENTS).join(", ")}`);
+    const override = target.agentSources?.[name]?.path;
+    return {
+      name,
+      jarPath: resolve(override ?? known.jarPath),
+      advertised: known.advertised,
+    };
+  });
+}
+
 function buildProvision(
   matrix: MatrixFile,
   target: MatrixTarget,
@@ -66,9 +105,18 @@ function buildProvision(
   const workDir = prov.workDir ?? ".mc-test/run";
   const world = resolveWorld(matrix, target);
   const worldSnapshotPath = world?.snapshot?.path ? resolve(world.snapshot.path) : undefined;
+  const agentJars = resolveAgentJars(target);
 
   return async () => {
     const gamePort = await findFreePort(bindHost, from, to);
+    // Each agent gets its own MCTP port, distinct from the game port and each other.
+    const agentSpecs: AgentSpec[] = [];
+    let portCursor = gamePort + 1;
+    for (const agent of agentJars) {
+      const agentPort = await findFreePort(bindHost, portCursor, to);
+      agentSpecs.push({ name: agent.name, jarPath: agent.jarPath, port: agentPort });
+      portCursor = agentPort + 1;
+    }
     const instanceDir = resolve(join(workDir, `${target.id}-${gamePort}-${process.pid}`));
     const server = await provisionPaper({
       mc: target.mc,
@@ -78,13 +126,25 @@ function buildProvision(
       instanceDir,
       cacheDir,
       plugins: pluginSpecs(target),
+      ...(agentSpecs.length ? { agents: agentSpecs } : {}),
       ...(worldSnapshotPath ? { worldSnapshotPath } : {}),
       ...(world?.levelName ? { levelName: world.levelName } : {}),
       ...(target.serverProps ? { serverProps: target.serverProps } : {}),
       eulaAccepted: prov.eulaAccepted ?? false,
       onLog: () => {},
     });
-    return { host: server.host, port: server.port, logPath: server.logPath, stop: server.stop };
+    // Pair each resolved endpoint with the agent's advertised caps → AgentConn.
+    const agentConns: AgentConn[] = server.agentEndpoints.map((ep) => {
+      const known = agentJars.find((a) => a.name === ep.name);
+      return { url: ep.url, advertised: known?.advertised ?? SERVER_BUKKIT_CAPABILITIES, kind: "serverPlugin" };
+    });
+    return {
+      host: server.host,
+      port: server.port,
+      logPath: server.logPath,
+      ...(agentConns.length ? { agents: agentConns } : {}),
+      stop: server.stop,
+    };
   };
 }
 

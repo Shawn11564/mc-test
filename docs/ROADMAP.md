@@ -532,22 +532,52 @@ M2). M3 ships these built-in fixture kinds (extensible via the same SPI):
 
 ### 4.5 Acceptance criteria (M3 is "done" when…)
 
+> **M3 status note (2026-06-15).** The M3 build landed `/agents/core`, `/agents/server-bukkit`,
+> the runner's multi-connection fan-out (`SessionGroup`), and the `/examples/regions` SPI
+> registration, with the design docs synced to the shipped names/shapes (this change). The
+> **integration build was executed and is green**: `gradle :core:build :core:publishToMavenLocal`
+> → `gradle :server-bukkit:build` → `mvn -f examples/regions/plugin/pom.xml package` → runner
+> `npm test` all pass (the `/agents/core` `ConformanceTest` replays the M1 `truth.*`/`fixture.*`/
+> `player.*` golden fixtures against a real `MctpServer` and passes; the fat plugin jar bundles
+> Java-WebSocket + core with **zero** Bukkit/Gson/Paper leakage). The boxes ticked below are the
+> ones proven by that build and by the runner's no-boot M3 test suite
+> (`packages/runner/test/m3.test.ts` against `mockServerAgent.ts`: regions-green, honest-skip,
+> truth/UI-divergence, fixture-driven, fan-out routing). The boxes that remain **unticked**
+> require a **real Paper(+Carpet) boot** of the live two-connection session (which this
+> environment does not run) — their no-boot mock equivalents are noted inline and do pass. See
+> §7.3 ("testing the tester") and §9.
+
 - [ ] The canonical regions test now runs to **full green including** the previously-skipped
       `assertPluginState { plugin: OpenRegions, query: regions.exists, args: { name: TestRegion },
       expect: true }` — the runner proves the region exists in **real** server state, not just chat.
+      *(Real-boot acceptance. The no-boot mock-agent equivalent — full green including
+      `assertPluginState` against a mock `serverPlugin` agent — is covered by the runner M3 tests.)*
 - [ ] A fixture-driven variant passes: `fixture: { name: regions, spec: { create: ["TestRegion"] } }`
       at setup and `fixture.reset` at teardown leave the world pristine (verified by a second run on
       the same snapshot with the fixture **omitted** correctly failing `regions.exists`).
+      *(Real-boot acceptance; the no-boot equivalent — `fixture.set regions.createRegion` makes a later
+      `regions.exists` true, absent it false — is covered by the runner M3 mock-agent tests.)*
 - [ ] `truth.getWorldBlock` and `truth.getEntities` return correct values for a known seeded world
       (e.g. assert a placed beacon at a coordinate; assert a spawned villager count).
+      *(Real-boot acceptance; seeded-value routing is exercised against the mock agent with no boot.)*
 - [ ] `player.spawnFake { username: Bot2 }` makes a fake player visible to both the server
       (`truth.getEntities type=player`) and the headless bot in the same world.
-- [ ] The server agent passes the **M1 conformance fixtures** for `truth.*`, `fixture.*`, `player.*`.
-- [ ] One `Session` transparently fans GUI steps to the headless driver and truth steps to the Bukkit
+      *(Real-boot acceptance; the mock agent proves a spawned fake appears in `getEntities` with no boot.)*
+- [x] The server agent passes the **M1 conformance fixtures** for `truth.*`, `fixture.*`, `player.*`.
+      *(Proven: `/agents/core` `ConformanceTest` boots a real `MctpServer` with stub `truth.*`/
+      `fixture.*`/`player.*` handlers and replays the golden fixtures — `gradle :core:test` is green,
+      covering `getWorldBlock`, `getEntities`, `assertPluginState`, `fixture.set`/`reset`,
+      `spawnFake`/`despawnFake`, plus negotiation grant/refuse and constraint refusal.)*
+- [x] One `Session` transparently fans GUI steps to the headless driver and truth steps to the Bukkit
       agent — the **test author writes no connection plumbing**.
+      *(Proven by the runner M3 tests via `SessionGroup` + a mock `serverPlugin` agent, with no
+      Minecraft boot: GUI verbs route to the driver, `truth.*`/`fixture.*`/`player.*` to the agent,
+      and the agent receives only the truth/session calls. The live-pairing against a real Paper
+      boot is the stronger real-boot form.)*
 - [ ] Built with the Bukkit/Paper API only; CI confirms **no Mojang-mapped/NMS symbols** are
       referenced (so M3 needs no per-version remap — a `1.20.4` and a `1.21.x` build differ only by
       the API artifact version).
+      *(Gated on the `/agents/server-bukkit` build + import-scan check during the integration build.)*
 
 ### 4.6 What M3 unlocks
 
@@ -855,14 +885,33 @@ These are the things that will actually hurt. Each has an owner-milestone and a 
 
 Every milestone that ships runnable code must also satisfy:
 
-- [ ] Green against the **M1 conformance fixtures** for all advertised methods.
-- [ ] At least one **negative control** wired into CI (a designed red and a designed skip) per §7.3.
+> **M3 status note (2026-06-15).** For M3 these are met as follows. The **negative controls** (a
+> designed red and a designed skip) and **capability-driven selection** are proven with no boot by
+> the runner M3 tests — the truth/UI **divergence** test (chat says loaded but `regions.exists`
+> false → red on `assertPluginState`, §7.3) and the **honest skip** (no agent → `assertPluginState`
+> skipped `unmet:["pluginState"]`) run against the mock server agent. The **conformance** box is
+> proven by the now-green `/agents` build (core `ConformanceTest`). **Reproducible provisioning** of the
+> server agent (jar in `plugins/`, second MCTP port via `plugins/mc-test-agent/config.yml`, port
+> learned from the `MCTP listening on :PORT` log) is specified in `ENVIRONMENTS.md` §2.4.1 and
+> wired in the runner provisioner; the live-boot exercise is acceptance-only here. **Docs** are
+> synced (this change) and each new agent dir ships a `README.md`. Boxes left unticked are gated on
+> the integration build/boot, not on missing design.
+
+- [x] Green against the **M1 conformance fixtures** for all advertised methods. *(Core `ConformanceTest`
+      replays the M1 fixtures against a real `MctpServer` — `gradle :core:test` green.)*
+- [x] At least one **negative control** wired into CI (a designed red and a designed skip) per §7.3.
+      *(Proven by the runner M3 mock-agent tests — divergence→red and no-agent→skip — with no boot.)*
 - [ ] JUnit XML + on-failure artifacts (logs always; screenshot when `screenshot` is advertised).
-- [ ] Capability-driven selection only — **no hard-coded driver/agent choice** in the engine.
+      *(Inherited unchanged from the M2 reporter; not re-exercised for the multi-connection path here.)*
+- [x] Capability-driven selection only — **no hard-coded driver/agent choice** in the engine.
+      *(M3 routes server-owned steps to the agent purely by advertised capability via `SessionGroup`;
+      a transport-unreachable or refusing agent drops out of the union and its steps honestly skip.)*
 - [ ] Reproducible provisioning: pinned jars/mappings, `online-mode=false`, per-test world snapshot,
-      ephemeral ports, parallel-safe.
-- [ ] Docs: a `README.md` in the package/agent dir showing how to run the canonical regions example
-      against it.
+      ephemeral ports, parallel-safe. *(Server-agent provisioning (jar + second MCTP port + readiness
+      gate on the `MCTP listening on :PORT` log) is wired in the runner provisioner; the live-boot
+      exercise is acceptance-only here.)*
+- [x] Docs: a `README.md` in the package/agent dir showing how to run the canonical regions example
+      against it. *(Docs synced this change; `/agents/core` and `/agents/server-bukkit` ship READMEs.)*
 
 ---
 

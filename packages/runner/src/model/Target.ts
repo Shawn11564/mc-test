@@ -56,6 +56,15 @@ export interface MatrixTarget {
   driver?: DriverId | "auto";
   server?: Source;
   plugins?: Source[];
+  /**
+   * Co-selected server agents (M3): names of agents to provision alongside the
+   * driver, e.g. `["server-bukkit"]`. Each is built, dropped into `plugins/`,
+   * and given a second MCTP port; the runner connects them so truth/fixture/
+   * player steps fan to the agent (honest skip when the list is empty).
+   */
+  agents?: string[];
+  /** Optional per-agent source overrides (built-jar path), keyed by agent name. */
+  agentSources?: Record<string, Source>;
   world?: WorldDef | { ref: string };
   serverProps?: Record<string, string | number | boolean>;
   timeoutSec?: number;

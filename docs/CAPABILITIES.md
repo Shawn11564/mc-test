@@ -128,6 +128,8 @@ Footnotes (conditions under which a ⚠️ becomes ✅ for that target):
 
 **Co-driver rule (multi-driver sessions).** `worldTruth`, `pluginState`, `fixtures`, and `fakePlayers` are **server-owned**. A primarily client-facing test (using `inprocess` or `headless` for UI) gets these by attaching the **`server` driver as a co-driver** in the same session. The runner does this automatically when the required set spans both UI and server-owned capabilities (see [§6](#6-the-negotiation-handshake) and [§7](#7-driver-selection-algorithm)). The advertised set the runner reasons about is the **union** of the primary driver's and the co-driver's advertisements.
 
+**Server-agent fan-out (M3, `server-bukkit`).** The first concrete co-driver is the Bukkit plugin agent `/agents/server-bukkit` (MCTP `agent.kind: serverPlugin`), which advertises exactly `worldTruth, pluginState, fixtures, fakePlayers, chat, testIdTags`. The runner opens it as a **second MCTP connection** (its own port) alongside the UI driver and merges its advertised caps into the **union** above. Per-step routing follows the gating capability: a step that requires `worldTruth`/`pluginState`/`fixtures`/`fakePlayers` is **fanned to the server-agent connection**; UI/chat steps stay on the primary driver connection — the test author writes no connection plumbing. When **no** server agent is co-selected for a target, those server-owned requirements are unmet, so the step is reported **`skipped` with `NO_COMPATIBLE_DRIVER` carrying `unmet:[…]`** (e.g. `unmet:["pluginState"]`) — an honest skip, never a false pass. This is exactly the M2→M3 transition: the canonical regions `assertPluginState` step **skips** until the `server-bukkit` agent is built and co-selected, then **runs green** against real plugin state.
+
 ---
 
 ## 5. Capability → primitive mapping
@@ -249,7 +251,9 @@ The runner picks **one** primary driver (plus an optional server co-driver) per 
 4. pixel       # OCR/template last resort; brittle, slowest
 ```
 
-(`server` is cheapest but only satisfies server-owned + command/chat requirements; most UI tests fall to `headless` or `inprocess`.)
+(`server` is cheapest but only satisfies server-owned + chat requirements; most UI tests fall to `headless` or `inprocess`.)
+
+The `server` tier is the in-server agent (`/agents/server-bukkit`, MCTP `agent.kind: serverPlugin`; the Fabric server-mod variant is `serverMod`). It is the cheapest tier because it pays for **no** bot login and **no** rendered client. In practice it is almost always selected as a **co-driver** in the union with a UI primary (`headless`/`inprocess`) rather than alone: it answers the server-owned caps while the primary answers the UI caps. Selecting it stand-alone is reserved for pure server-state tests (no GUI/chat-UI steps).
 
 **`anyOf` expansion.** A requirement group like `anyOf: [containerGui, clientScreens]` is satisfied if a candidate advertises **at least one** member. The runner expands each group against each candidate independently, so the *same* test can resolve to `containerGui` on `headless` for a plugin target and to `clientScreens` on `inprocess` for a mod target — author once, run everywhere.
 

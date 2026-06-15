@@ -11,7 +11,10 @@ steps:
   - click: { label: "Regions" }
   - click: { label: "TestRegion" }
   - assertChat: { contains: "Region loaded" }
-  # The server-truth half is declared but SKIPS until M3 provides worldTruth/pluginState:
+  # The server-truth half. With the server-bukkit agent co-selected (the target's
+  # `agents: [ server-bukkit ]`), this RUNS against real plugin state — asserting
+  # the region truly exists, not just that chat said so. With no agent it honestly
+  # SKIPS with unmet:[pluginState] (the M2 behavior is preserved).
   - assertPluginState:
       requires: { pluginState: true }
       plugin: "OpenRegions"

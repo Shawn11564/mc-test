@@ -27,4 +27,8 @@ targets:
     server: { paper: { project: paper, version: "1.20.4", build: latest } }
     plugins:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    # Co-select the Bukkit server agent (M3): dropped into plugins/ on a second
+    # MCTP port, it answers the truth/fixture/player half so the canonical
+    # assertPluginState RUNS (not skips) once the agent jar is built.
+    agents: [ server-bukkit ]
     world: { ref: regions-world }

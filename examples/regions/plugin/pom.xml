@@ -30,6 +30,20 @@
       <version>1.20.4-R0.1-SNAPSHOT</version>
       <scope>provided</scope>
     </dependency>
+    <!--
+      mc-test server-agent SPI (McTestStateProvider / McTestFixtureProvider).
+      provided = compile against it but DO NOT bundle: at runtime the SUT uses the agent
+      plugin's copy of these classes (see softdepend: [mc-test-agent] in plugin.yml), so the
+      Class objects used to register and the ones the agent looks up are identical.
+      Resolved from the local Maven repository — Component A runs `gradle :core:publishToMavenLocal`
+      (publishing io.mctest:mc-test-agent-core:0.1.0) BEFORE this Maven build.
+    -->
+    <dependency>
+      <groupId>io.mctest</groupId>
+      <artifactId>mc-test-agent-core</artifactId>
+      <version>0.1.0</version>
+      <scope>provided</scope>
+    </dependency>
   </dependencies>
 
   <build>
