@@ -57,6 +57,20 @@ export interface MatrixTarget {
   server?: Source;
   plugins?: Source[];
   /**
+   * SUT mods to inject into a rendered client (M4 `driver: inprocess`). Each is a
+   * source resolver (typically a `path:` to the built mod jar); the in-process
+   * driver drops them into the launched client's `mods/` alongside the client
+   * agent. Mirrors `plugins` for the mod/client-GUI form of a target.
+   */
+  mods?: Source[];
+  /**
+   * Display backend for a rendered client (M4 `driver: inprocess`): `xvfb` for
+   * headless Linux CI (Mesa/llvmpipe), `desktop` for a native runner. Omitted →
+   * the driver auto-selects by platform (`desktop` on win32/darwin, `xvfb` on
+   * linux). ENVIRONMENTS.md `display ∈ {xvfb, desktop}`.
+   */
+  display?: "xvfb" | "desktop";
+  /**
    * Co-selected server agents (M3): names of agents to provision alongside the
    * driver, e.g. `["server-bukkit"]`. Each is built, dropped into `plugins/`,
    * and given a second MCTP port; the runner connects them so truth/fixture/

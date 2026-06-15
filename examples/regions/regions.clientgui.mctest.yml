@@ -1,0 +1,38 @@
+name: regions-clientgui-open-testregion
+# The CLIENT-GUI variant of the canonical regions test. Same semantic flow as
+# regions.mctest.yml, but it drives a REAL client Screen (the mod SUT) instead of a
+# server-driven chest menu — so it requires `clientScreens`, which ONLY the in-process
+# client driver advertises. On a headless target this whole test honestly SKIPS with
+# unmet:["clientScreens"] (capability negotiation), never a false green.
+requires:
+  command: true
+  chat: true
+  clientScreens: true
+target: ${matrix} # filled by the mc-test.yml row selected with --target (fabric-1.21-client)
+steps:
+  - join: { host: localhost, port: 25565, username: Tester }
+  - command: "or" # runs /or — opens the client RegionsScreen
+  # The client Screen's title is "Regions" (titleContains tolerates decoration).
+  - waitForScreen: { titleContains: "Regions" }
+  # Select by testId (the colon-form canonical id the widget exposes via TestIdHolder),
+  # the most robust selector for cooperating SUTs we control.
+  - click: { testId: "regions:root:regions" }
+  - click: { testId: "regions:entry:TestRegion" }
+  - assertChat: { contains: "Region loaded" }
+  # Capture the framebuffer as an artifact. The in-process driver advertises `screenshot`
+  # (it always launches a real rendered client under a display), so on this target the step
+  # RUNS. (The Java agent gates pixel capture on a live framebuffer at session.create; on a
+  # genuinely render-less client it would refuse screenshot — surfaced as a step failure, not
+  # yet an honest skip, since the runner's per-step union reads the static driver descriptor.
+  # Aligning the union with the live grant is a documented follow-up — CAPABILITIES.md §4.)
+  - screenshot:
+      requires: { screenshot: true }
+  # The server-truth half. The in-process client driver CANNOT author plugin state, so this
+  # pairs with a co-selected server agent (server-fabric, M5). With no agent it honestly
+  # SKIPS with unmet:[pluginState] — the chat half above still proves the GUI flow.
+  - assertPluginState:
+      requires: { pluginState: true }
+      plugin: "OpenRegions"
+      query: "regions.exists"
+      args: { name: "TestRegion" }
+      expect: true

@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@mc-test/driver-headless": "0.1.0",
+    "@mc-test/driver-inprocess": "0.1.0",
     "@mc-test/protocol": "0.1.0",
     "ws": "^8.18.0",
     "yaml": "^2.6.1"

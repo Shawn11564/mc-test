@@ -34,9 +34,23 @@ public final class Dispatch {
         }
     }
 
+    /**
+     * Optional per-agent override for {@code world.join}/{@code world.leave} (ADDITIVE, PROTOCOL.md §7.1).
+     * A server agent sets no hook → the built-in no-op runs (playerName null + serverBrand). A client
+     * agent sets a hook that connects/disconnects the real client via its {@code ClientBridge} and may
+     * merge extra fields (e.g. {@code playerName}) into the result.
+     */
+    public interface WorldHook {
+        com.google.gson.JsonObject onWorld(McTestSession s, com.google.gson.JsonObject p)
+                throws McTestException;
+    }
+
     private final Map<String, Registration> handlers = new LinkedHashMap<>();
     private final Map<String, McTestSession> sessions = new ConcurrentHashMap<>();
     private final AtomicLong sessionCounter = new AtomicLong();
+
+    private WorldHook joinHook;  // nullable; null = built-in server no-op.
+    private WorldHook leaveHook; // nullable; null = built-in server no-op.
 
     private Capabilities capabilities = new Capabilities();
     private String agentName = "mc-test-agent";
@@ -77,6 +91,18 @@ public final class Dispatch {
         if (log != null) {
             this.log = log;
         }
+        return this;
+    }
+
+    /** Installs the {@code world.join} override (ADDITIVE); {@code null} keeps the built-in no-op. */
+    public Dispatch setJoinHook(WorldHook h) {
+        this.joinHook = h;
+        return this;
+    }
+
+    /** Installs the {@code world.leave} override (ADDITIVE); {@code null} keeps the built-in no-op. */
+    public Dispatch setLeaveHook(WorldHook h) {
+        this.leaveHook = h;
         return this;
     }
 
@@ -243,9 +269,23 @@ public final class Dispatch {
 
     // --- world.join / world.leave group ---
 
-    private JsonObject worldJoin(JsonObject p, McTestSession session) {
-        // Server-side agent: world.join is a no-op that transitions Ready → Connected.
+    private JsonObject worldJoin(JsonObject p, McTestSession session) throws McTestException {
+        // Transition Ready → Connected either way (PROTOCOL.md §4.1).
         session.state = McTestSession.STATE_CONNECTED;
+        if (joinHook != null) {
+            // Client agent: connect the real client, then merge any returned fields (e.g. playerName)
+            // over the base result.
+            JsonObject result = new JsonObject();
+            result.addProperty("ok", true);
+            JsonObject extra = joinHook.onWorld(session, p);
+            if (extra != null) {
+                for (Map.Entry<String, JsonElement> e : extra.entrySet()) {
+                    result.add(e.getKey(), e.getValue());
+                }
+            }
+            return result;
+        }
+        // Server-side agent (no hook): world.join is a no-op (playerName null + serverBrand).
         JsonObject result = new JsonObject();
         result.addProperty("ok", true);
         result.add("playerName", com.google.gson.JsonNull.INSTANCE);
@@ -253,7 +293,10 @@ public final class Dispatch {
         return result;
     }
 
-    private JsonObject worldLeave(JsonObject p, McTestSession session) {
+    private JsonObject worldLeave(JsonObject p, McTestSession session) throws McTestException {
+        if (leaveHook != null) {
+            leaveHook.onWorld(session, p);
+        }
         session.state = McTestSession.STATE_READY;
         JsonObject result = new JsonObject();
         result.addProperty("ok", true);

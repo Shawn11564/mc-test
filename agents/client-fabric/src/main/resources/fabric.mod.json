@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "mc-test-client-fabric",
+  "version": "${version}",
+  "name": "mc-test client agent (Fabric)",
+  "description": "Thin Fabric client shim for the mc-test in-process driver: hosts an MCTP WebSocket server and exposes the client's Screen/widget tree, keyboard, and framebuffer as MCTP primitives. All wire logic lives in io.mctest:mc-test-agent-core; this mod only supplies the entrypoint and the Yarn-mapped ClientBridge (mappings/Names.java).",
+  "authors": [
+    "mc-test"
+  ],
+  "license": "Apache-2.0",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "io.mctest.agent.clientfabric.McTestClientMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loaderVersion}",
+    "minecraft": "~${minecraftVersion}",
+    "fabric-api": "*",
+    "java": ">=21"
+  }
+}

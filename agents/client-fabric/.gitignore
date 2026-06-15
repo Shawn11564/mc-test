@@ -1,0 +1,4 @@
+# Fabric Loom build output + caches + dev run dir (acceptance-only build; never committed).
+build/
+.gradle/
+run/

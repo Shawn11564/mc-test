@@ -1,8 +1,9 @@
-# mc-test.yml — minimal M2 matrix for the canonical "regions" example.
+# mc-test.yml — minimal matrix for the canonical "regions" example.
 # Run:  npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
 #
-# See mc-test.example.yml for the full multi-loader matrix (M3+). This file is
-# the small, runnable slice M2 ships: one Paper target driven by the headless bot.
+# See mc-test.example.yml for the full multi-loader matrix. This file carries the
+# small, runnable Paper/headless slice (M2/M3) PLUS one acceptance-only M4 in-process
+# (rendered-client) target for the client-GUI variant.
 version: 1
 
 provision:
@@ -31,4 +32,28 @@ targets:
     # MCTP port, it answers the truth/fixture/player half so the canonical
     # assertPluginState RUNS (not skips) once the agent jar is built.
     agents: [ server-bukkit ]
+    world: { ref: regions-world }
+
+  # ACCEPTANCE-ONLY (M4). This target drives the CLIENT-GUI variant
+  # (examples/regions/regions.clientgui.mctest.yml) against the mod SUT's real client
+  # Screens — the case the headless bot provably cannot see. It needs (a) a built client
+  # mod jar + the client-fabric agent jar and (b) a rendered client under a display
+  # (Xvfb in CI / desktop runner), so it does NOT run in this repo's offline CI. The
+  # in-process driver launches the rendered client; the Paper server below is just the
+  # connect target (the SUT is a client-side mod, so a vanilla/Paper server suffices; a
+  # Fabric/vanilla server source via `mojang:` is M5 — the provisioner currently boots Paper).
+  # clientScreens-gated steps run; on the headless paper row above, the same suite honestly
+  # SKIPS (unmet:["clientScreens"]).
+  - id: fabric-1.21-client
+    loader: fabric
+    mc: "1.21.1"
+    driver: inprocess # Rendered client agent — the ONLY driver that sees client Screens.
+    server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    mods:
+      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+    display: xvfb # Linux CI headless surface; "desktop" on a windowed runner.
+    # server-fabric (the server-truth agent) is M5; until then assertPluginState honestly
+    # skips here. The client-fabric agent jar is injected into the client's mods/ by the
+    # in-process driver (not listed here — it is a driver-provisioned client agent).
+    agents: [ ]
     world: { ref: regions-world }

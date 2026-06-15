@@ -1,0 +1,33 @@
+{
+  "name": "@mc-test/driver-inprocess",
+  "version": "0.1.0",
+  "description": "mc-test in-process driver — runner-side adapter that launches/babysits a rendered Minecraft client hosting the client MCTP agent (client-fabric et al.). Advertises clientScreens/containerGui/chat/command/typeText/pressKey/testIdTags + screenshot/rendering.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "import": "./dist/capabilities.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mc-test/protocol": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -97,7 +97,8 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `client` | `Source` \| `{ref}` | cond | — | The client artifact / launch profile for rendered-client targets. REQUIRED when `side` includes `client` and `driver: inprocess|pixel`. See §5.2. |
 | `loaderInstaller` | `Source` \| `{ref}` | cond | — | For mod loaders, the loader installer (e.g. Fabric installer jar, NeoForge installer). REQUIRED for `fabric`/`forge`/`neoforge`/`quilt` unless `server`/`client` already points at a pre-installed server jar. |
 | `plugins` | list<`Source`\|`{ref}`> | — | `[]` | Bukkit/Spigot/Paper **plugins** to install (the SUT and its deps). Dropped into `plugins/`. The regions plugin is one of these. |
-| `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. |
+| `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. For an `inprocess` (rendered-client) target these mods are installed into the **rendered client's** `mods/` (§5.2) alongside the client agent (§2.4.2). The regions client-GUI mod is one of these. |
+| `display` | `Display` enum | — | from `provision.display` | Per-target display backend for a rendered (`inprocess`/`pixel`) client: `xvfb` (Linux headless / CI) or `desktop` (a real display). Overrides the global `provision.display.backend` (§5.1) for this target only. Ignored for headless/server-side targets (no rendered client). |
 | `agents` | list<`AgentId`> | — | inferred from `driver`/`side` | The set of mc-test agents co-installed and **co-selected** for this target. Each entry is a known agent id — `server-bukkit`, `server-fabric`, `client-fabric`, `client-forge`, `client-neoforge` (resolved via `agentResolver`, §2.4); a per-agent artifact override may be supplied out-of-band via `agentSources` (keyed by agent id). When `agents` is omitted the runner infers them from `driver`/`side`. Listing `server-bukkit` on a Paper target installs the server agent and gives the test the server-owned capabilities (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`) over a **second MCTP connection** (§2.4.1, §4). Example: `agents: [ server-bukkit ]`. A client target typically lists both a client and a server agent, e.g. `agents: [ client-fabric, server-fabric ]`. |
 | `world` | `World`\|`{ref}` | — | `flat-void` builtin | The world snapshot copied **fresh per test** (§3). May be a named ref. |
 | `serverProps` | map<string,scalar> | — | see §2.6 | Overrides merged into `server.properties` after the framework-enforced keys. Cannot override `online-mode`, `query.port`, `server-port` (those are owned by the runner). |
@@ -405,6 +406,47 @@ configures it as follows (M3):
 > [`DRIVERS.md`](./DRIVERS.md) §3.2.1 and [`ROADMAP.md`](./ROADMAP.md) §4.3. Provisioning does
 > not need to know those names; it only drops the jars and wires the port.
 
+### 2.4.2 The client agent (`client-fabric`) — install, launch, and port discovery
+
+When a target uses `driver: inprocess` (a **rendered client**), provisioning installs and
+discovers the **client agent** (`/agents/client-fabric`, MCTP `agent.kind: clientMod`) as
+follows (M4). This mirrors §2.4.1 but the agent runs **inside the rendered client**, not the
+server, and the runner **launches and babysits** that client via `/packages/driver-inprocess`:
+
+1. **Install (into the client's `mods/`).** Resolve the client agent via the `agentResolver`
+   (§2.4) — `agents/client-fabric/build/libs/agent-client-fabric-<mc>.jar` (the
+   `agent-<variant>-<mc>.jar` convention) — and drop it into the **rendered client's** `mods/`
+   directory **alongside the SUT's client mod** (`Target.mods`, materialized via the client
+   launch profile `Target.client.mods`, §5.2). The client agent carries the per-`mc`
+   Yarn mappings (the only per-version artifact); if none exists for `(fabric, mc, client)`
+   the instance is **skipped** with `AGENT_NOT_AVAILABLE` (§8).
+2. **Launch & babysit the client.** Unlike the server agent (which only *listens* inside the
+   already-booted server JVM), the rendered client is **started by `driver-inprocess`**: it
+   selects the display backend (`Target.display` → `xvfb` / `desktop`, §5.1), builds an
+   **offline** client launch (no Microsoft auth: `--username Tester --uuid <…> --accessToken 0`),
+   injects the SUT mod + client agent jar and the `MCTEST_AGENT_PORT` environment variable, and
+   spawns the client into that display. The client then auto-`connect`s to the instance's server
+   `gamePort` (§5.2).
+3. **Discover the port from the client log.** On start the client agent logs
+   **`MCTP listening on :PORT`** to the client's stdout/`client.log`. `driver-inprocess`
+   **scrapes** that line (`/MCTP listening on :(\d+)/`) to learn the agent's WebSocket port and
+   dials `ws://<bindHost>:PORT` to complete `session.create` (TCP connect + handshake within
+   `Target.timeoutSec`, else `BOOT_TIMEOUT`). The agent port may be pinned via
+   `MCTEST_AGENT_PORT` / `PortRequest.mctpPort` or left to the pool allocator (§2.5).
+4. **Co-selected two-connection session.** Exactly as in §2.4.1: a client-GUI test that also
+   needs server truth runs over **two MCTP connections** behind one logical session — the runner
+   fans `screen.*` / chat / command steps to the **client-agent** connection and
+   `truth.*` / `fixture.*` / `player.*` steps to a co-installed **server** agent
+   (`server-bukkit`/`server-fabric`). The negotiator reasons about the **union** of both
+   connections' advertised caps (§4). With no server agent listed, the server-owned steps
+   **skip with a reason** (§4) rather than pass.
+
+> The SUT's cooperating client mod stamps stable widget `testId`s the client agent reads via the
+> `TestIdHolder` marker shipped in `/agents/core` (the client analog of the server SPIs) — see
+> [`PROTOCOL.md`](./PROTOCOL.md) §7.3.2, [`DRIVERS.md`](./DRIVERS.md) §2.2, and
+> [`ROADMAP.md`](./ROADMAP.md) §5.3. Provisioning does not need to know those ids; it only drops
+> the jars, launches the client, and scrapes the port.
+
 ### 2.5 Allocate ports (parallelism)
 
 Each instance needs ≥2 free TCP ports: `gamePort` (Minecraft `server-port`) and `mctpPort`
@@ -586,6 +628,13 @@ provision:
     softwareGl: true     # LIBGL_ALWAYS_SOFTWARE for Xvfb/Mesa
     xvfbArgs: ["-ac", "+extension", "GLX"]
 ```
+
+A per-target `display: xvfb|desktop` (§1.2) **overrides** `provision.display.backend` for that
+target only — the common case for an `inprocess` row (e.g. `display: xvfb` on a Linux-CI mod
+target). As of **M4**, `/packages/driver-inprocess` owns the backend selection (Linux→`xvfb` with
+`DISPLAY` + `LIBGL_ALWAYS_SOFTWARE`; win32/macOS→`desktop`; an explicit `display` wins) and the
+client **launch + log-scrape**: it spawns the offline client into the chosen display and learns the
+client agent's MCTP port from the client-log line `MCTP listening on :PORT` (§2.4.2).
 
 ### 5.2 Client launch profile (`Target.client`)
 

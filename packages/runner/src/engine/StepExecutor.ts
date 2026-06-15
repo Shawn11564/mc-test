@@ -14,23 +14,32 @@ import { Session } from "./Session.js";
 import { withSelectorWaits } from "./SelectorWaits.js";
 
 /**
+ * A step verb's capability requirement: a single key, an **anyOf** group (the
+ * union is satisfied if it advertises ANY member), or `null` (no requirement).
+ * The three screen-navigation verbs are anyOf groups so they route to EITHER a
+ * `containerGui` (headless) driver OR a `clientScreens` (in-process) driver.
+ */
+export type StepCapReq = CapabilityKey | readonly CapabilityKey[] | null;
+
+/**
  * Capability each step verb implies (checked against the driver's advertised set).
  *
- * NOTE: ROADMAP §3.4 gates the screen verbs on `containerGui` **or**
- * `clientScreens`. M2 ships only the `containerGui` (headless) surface, so the
- * single-key mapping is exact here; when an M4 `clientScreens`-only driver lands,
- * these three entries become an anyOf group.
+ * ROADMAP §3.4 gates the screen-navigation verbs on `containerGui` **or**
+ * `clientScreens` — so `waitForScreen`/`listElements`/`click` are **anyOf** groups
+ * (M4): they route to whichever driver advertises either key. `type`/`press`/
+ * `screenshot` stay single-keyed — both GUI drivers advertise `typeText`/
+ * `pressKey`; only the in-process/pixel drivers advertise `screenshot`.
  */
-export const VERB_CAPABILITY: Record<StepVerb, CapabilityKey | null> = {
+export const VERB_CAPABILITY: Record<StepVerb, StepCapReq> = {
   join: null,
   leave: null,
   chat: "chat",
   command: "command",
   waitForChat: "chat",
   assertChat: "chat",
-  waitForScreen: "containerGui",
-  listElements: "containerGui",
-  click: "containerGui",
+  waitForScreen: ["containerGui", "clientScreens"],
+  listElements: ["containerGui", "clientScreens"],
+  click: ["containerGui", "clientScreens"],
   type: "typeText",
   press: "pressKey",
   screenshot: "screenshot",
@@ -50,10 +59,11 @@ export interface ExecContext {
 
 /**
  * Resolves the connection a verb's MCTP calls go to, keyed by the capability
- * the verb implies (`VERB_CAPABILITY[verb]`). `null` → the primary/driver
- * session. A `SessionGroup` satisfies this contract directly via `route`.
+ * requirement the verb implies (`VERB_CAPABILITY[verb]`). `null` → the
+ * primary/driver session; a single key or an anyOf group → the first connection
+ * advertising it. A `SessionGroup` satisfies this contract directly via `route`.
  */
-export type SessionRouter = (cap: CapabilityKey | null) => Session | undefined;
+export type SessionRouter = (cap: StepCapReq) => Session | undefined;
 
 /** A single-connection router (M2 back-compat / unit tests): every verb → one session. */
 export function singleSessionRouter(session: Session): SessionRouter {

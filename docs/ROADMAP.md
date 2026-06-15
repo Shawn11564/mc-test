@@ -646,25 +646,80 @@ fan-out re-implements only that file.
 
 ### 5.4 Acceptance criteria (M4 is "done" when…)
 
+> **M4 status note (2026-06-15).** The M4 build landed the `/agents/core` **client layer** (the
+> loader-neutral `screen.*` + client-side `world.*` handlers behind a stable **`ClientBridge`**
+> façade, plus `ClientCapabilities`, `KeyNames`, `ScreenHandlers`, `ClientAgent`, the `TestIdHolder`
+> marker, and an additive `Dispatch` world-hook), the thin **`/agents/client-fabric`** shim, the
+> **`/packages/driver-inprocess`** adapter, the runner's verb-level **`anyOf`** capability gating +
+> **inprocess** driver registration, and the example regions **mod** + an `inprocess` matrix row,
+> with the design docs synced to the shipped names/shapes (this change). **§5.1 reconciliation:**
+> per Prime Directive 2 and `DRIVERS.md` §2.3, the screen-walking/click/type/key/screenshot logic
+> does **not** live in `client-fabric`; it lives in `/agents/core` behind `ClientBridge` (so it is
+> testable with **no Minecraft**), and `/agents/client-fabric` ships **only** the entrypoint
+> (`McTestClientMod`) + `mappings/Names.java` (the Yarn `ClientBridge` impl) + `fabric.mod.json` —
+> which is exactly what lets M5 fan-out re-implement only `Names.java` (§6.1 "core … unchanged").
+> The §5.1 file list above is the original sketch; the shipped layout follows this reconciliation.
+> The boxes ticked below are the ones proven by the CI build and the runner's no-boot M4 test suite
+> (`/agents/core` `ScreenConformanceTest` replays the M1 `screen.*` golden fixtures against a real
+> `MctpServer` driven by a **`FakeClientBridge`** — no Minecraft, no framebuffer; the runner
+> `packages/runner/test/m4.test.ts` against `mockClientAgent.ts` + `mockServerAgent.ts` proves
+> capability-driven inprocess-vs-headless **mixed selection**, the screen-verb **anyOf** routing, a
+> **combined client+server** two-connection session, the honest skips, and the import-scan that Yarn
+> names stay in `Names.java`). The boxes that remain **unticked** require a **real rendered Minecraft
+> client** (a live `Screen`/widget tree, a real PNG framebuffer, an Xvfb/desktop launch, and the
+> Fabric-Loom mod build) — which this environment does not run — and their no-boot mock equivalents
+> are noted inline and do pass. See §7.3 ("testing the tester"), §8.2 (headless rendering), and §9.
+
 - [ ] A **mod** version of the regions example (a Fabric mod whose `/or` opens a real client `Screen`
       with a "Regions" button and a "TestRegion" entry) is driven end-to-end: `command("or")` →
       `waitForScreen` → `click({label:"Regions"})` → `click({label:"TestRegion"})` →
       `assertChat({contains:"Region loaded"})` — **passing against pixels-real client UI** that the
       headless bot provably cannot see (the same test on the headless driver **skips** with
       `unmet:["clientScreens"]`).
+      *(Real-boot acceptance — needs the Loom-built regions mod + a rendered client. The no-boot
+      equivalent — the same `screen.*` flow driven over MCTP against a `FakeClientBridge` / a mock
+      client agent advertising `clientScreens`, plus the headless honest-skip `unmet:["clientScreens"]`
+      — is covered by `/agents/core` `ScreenConformanceTest` and the runner M4 tests.)*
 - [ ] `screen.screenshot` returns a valid PNG of the open screen; on failure the runner attaches it as
       an artifact. A baseline screenshot diff is wired (informational, not gating in M4).
+      *(Real-boot acceptance — needs a live framebuffer. The no-boot equivalent — `screen.screenshot`
+      returns the canonical nested `{ image: { format:"png", width, height, encoding:"base64", data:<base64> } }`
+      (matching the `screen.screenshot` golden fixture) from `FakeClientBridge` PNG bytes — is covered by the
+      core `ScreenConformanceTest`.)*
 - [ ] The client launches **headlessly under Xvfb** in Linux CI with `online-mode=false`/offline auth,
       and on a desktop CI runner natively — both selected automatically by `Display.ts`.
-- [ ] `clientScreens`-requiring tests select `driver-inprocess`; `containerGui`-only tests still pick
+      *(Real-boot acceptance — needs a real client process + Xvfb. The no-boot equivalent — `Display.ts`
+      backend selection (win32/darwin→desktop, linux→xvfb with `DISPLAY`/`LIBGL_ALWAYS_SOFTWARE`,
+      explicit pref wins) and `buildClientLaunch` offline flags (`--accessToken 0`, no Microsoft auth),
+      mods+client-agent jar injection, `MCTEST_AGENT_PORT`, and display env — is unit-tested in
+      `/packages/driver-inprocess`; the launch+log-scrape path is exercised via an injected spawn stub.)*
+- [x] `clientScreens`-requiring tests select `driver-inprocess`; `containerGui`-only tests still pick
       headless. The runner can run a **mixed suite** picking the right driver per test from one
       `mc-test.yml`.
-- [ ] **All** Yarn/obfuscation references are confined to `mappings/Names.java`; a CI check (import
+      *(Proven with no boot by the runner M4 tests: a populated `DriverRegistry` (headless cost 2 +
+      inprocess cost 3) selects `headless` for a `containerGui` test and `inprocess` for a
+      `clientScreens` test; a `clientScreens` test with only headless registered **skips**
+      `unmet:["clientScreens"]`. The live-pairing against a real rendered client is the stronger
+      real-boot form.)*
+- [x] **All** Yarn/obfuscation references are confined to `mappings/Names.java`; a CI check (import
       scan) fails if mapped names leak into any other file.
-- [ ] The client agent passes the **M1 conformance fixtures** for `screen.*`.
-- [ ] A combined session works: client agent for `screen.*` **and** the M3 Bukkit agent for
+      *(Proven by the runner M4 import-scan test, which reads `agents/client-fabric/src` and asserts no
+      `net.minecraft.*` / Yarn-mapped import appears outside `mappings/Names.java`.)*
+- [x] The client agent passes the **M1 conformance fixtures** for `screen.*`.
+      *(Proven: `/agents/core` `ScreenConformanceTest` boots a real `MctpServer` with the
+      `ScreenHandlers` registered against a `FakeClientBridge` and replays the golden `screen.*`
+      fixtures — `gradle :core:test` green — covering `screen.get`, `screen.listElements`
+      (selector filter + empty), `screen.clickElement` (success + `ELEMENT_NOT_FOUND` + `AMBIGUOUS_SELECTOR`),
+      `screen.typeText`, `screen.pressKey`, `screen.screenshot` (base64), `screen.waitForScreen`
+      (match + `TIMEOUT`), `screen.close`, plus client-side `world.runCommand`/`world.waitForChat`.)*
+- [x] A combined session works: client agent for `screen.*` **and** the M3 Bukkit agent for
       `assertPluginState` in the **same** test (client GUI proves the click; server truth proves the
       region) — the full-fidelity regions story.
+      *(Proven with no boot by the runner M4 combined-session test: an inprocess mock client agent
+      (`clientScreens`) co-driven with a mock `serverPlugin` agent (`pluginState`) over a `SessionGroup`
+      — GUI verbs route to the client connection, `assertPluginState` routes to the server connection
+      (the server agent receives `truth.assertPluginState` and **not** `screen.clickElement`). The live
+      two-connection pairing against a real rendered client + Paper agent is the stronger real-boot form.)*
 
 ### 5.5 What M4 unlocks
 
@@ -897,8 +952,26 @@ Every milestone that ships runnable code must also satisfy:
 > synced (this change) and each new agent dir ships a `README.md`. Boxes left unticked are gated on
 > the integration build/boot, not on missing design.
 
+> **M4 status note (2026-06-15).** For M4 these hold as follows. The **conformance** box extends to
+> `screen.*` via the `/agents/core` `ScreenConformanceTest` (golden `screen.*` fixtures replayed
+> against a real `MctpServer` + `FakeClientBridge`, no Minecraft) — `gradle :core:test` green. The
+> **negative controls** and **capability-driven selection** are proven with no boot by the runner M4
+> tests: the **capability-skip** control (§7.3) — the same authored regions client-GUI test **runs**
+> on `inprocess` and **skips** `unmet:["clientScreens"]` on `headless` — plus per-step honest skips
+> for `screenshot`/`pluginState`, and the screen-verb **`anyOf`** routing (a `click` step runs on a
+> connection advertising only `clientScreens`). **Capability-driven selection** picks `inprocess` vs
+> `headless` per test by advertised caps via `DriverRegistry` cost order (no hard-coded driver
+> branch). **Reproducible provisioning** of the rendered client (client agent jar into the client's
+> `mods/`, client launched/babysat by `driver-inprocess`, MCTP port scraped from the client log
+> `MCTP listening on :PORT`) is specified in `ENVIRONMENTS.md` §2.4.2 / §5.2 and wired in the runner;
+> the live client launch is acceptance-only here. **Docs** are synced (this change) and
+> `/agents/client-fabric`, `/packages/driver-inprocess`, and the regions mod each ship a `README.md`.
+> Boxes left unticked are gated on the rendered-client launch (and the Loom mod build), not on
+> missing design.
+
 - [x] Green against the **M1 conformance fixtures** for all advertised methods. *(Core `ConformanceTest`
-      replays the M1 fixtures against a real `MctpServer` — `gradle :core:test` green.)*
+      replays the M1 fixtures against a real `MctpServer` — `gradle :core:test` green. M4 adds
+      `ScreenConformanceTest` covering `screen.*` against a `FakeClientBridge` — also green.)*
 - [x] At least one **negative control** wired into CI (a designed red and a designed skip) per §7.3.
       *(Proven by the runner M3 mock-agent tests — divergence→red and no-agent→skip — with no boot.)*
 - [ ] JUnit XML + on-failure artifacts (logs always; screenshot when `screenshot` is advertised).

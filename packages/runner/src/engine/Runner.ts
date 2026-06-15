@@ -4,15 +4,18 @@
  * `TestResult`. Driver selection flows through `DriverRegistry` +
  * `matchCapabilities` — there is no hard-coded "use headless" branch.
  */
-import { matchCapabilities, type Capabilities } from "@mc-test/protocol";
+import { type Capabilities } from "@mc-test/protocol";
 import { MctpRpcError } from "../drivers/MctpClient.js";
-import { DriverRegistry, type DriverDescriptor } from "../drivers/DriverRegistry.js";
-import type { NormalizedTest, NormalizedStep } from "../model/Step.js";
+import {
+  DriverRegistry,
+  type DriverDescriptor,
+  type DriverLaunchContext,
+} from "../drivers/DriverRegistry.js";
+import type { NormalizedTest } from "../model/Step.js";
 import type { Outcome, StepResult, TestResult, SkipInfo } from "../model/result.js";
 import { SessionGroup, type ConnDef } from "./SessionGroup.js";
 import { executeStep, VERB_CAPABILITY, type ExecContext } from "./StepExecutor.js";
-import { advertisedKeys, requiredKeys } from "./CapabilityMatch.js";
-import type { RequiredCapabilities } from "@mc-test/protocol";
+import { advertisedKeys, requiredKeys, stepCapMatch } from "./CapabilityMatch.js";
 
 /** A live, provisioned target (the server the bot will join). */
 export interface ProvisionHandle {
@@ -36,6 +39,14 @@ export interface TargetMeta {
   mc?: string;
   /** Optional driver pin (target.driver). */
   driverPin?: string;
+  /**
+   * Launch context for drivers that spawn an external process (M4: the
+   * in-process driver launches a rendered client). Threaded into
+   * `descriptor.create(meta.launch)`; ignored by drivers that need no launch
+   * (e.g. headless). Built by the CLI from the target row (`mc`/`loader`/
+   * `mods`/`display`/client-agent jar).
+   */
+  launch?: DriverLaunchContext;
 }
 
 /**
@@ -53,14 +64,6 @@ export interface AgentConn {
 }
 
 const errMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
-
-/** Capabilities a single step needs (verb-implied + its own `requires`). */
-function stepRequired(step: NormalizedStep): RequiredCapabilities {
-  const req: RequiredCapabilities = { ...(step.requires ?? {}) };
-  const cap = VERB_CAPABILITY[step.verb];
-  if (cap) req[cap] = true;
-  return req;
-}
 
 function renderSystemOut(steps: StepResult[]): string {
   return steps
@@ -166,7 +169,7 @@ export class Runner {
         const union = group.unionAdvertised();
         for (const step of test.steps) {
           const sStart = Date.now();
-          const match = matchCapabilities(stepRequired(step), union);
+          const match = stepCapMatch(step.requires ?? {}, VERB_CAPABILITY[step.verb], union);
           if (!match.ok) {
             steps.push({
               index: step.index,
@@ -262,7 +265,7 @@ export class Runner {
     let driver: Awaited<ReturnType<DriverDescriptor["create"]>> | undefined;
     try {
       provisioned = await provision();
-      driver = await descriptor.create();
+      driver = await descriptor.create(meta.launch);
       const exec: ExecContext = {
         host: provisioned.host,
         port: provisioned.port,

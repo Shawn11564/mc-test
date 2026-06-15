@@ -13,6 +13,7 @@ export {
   defaultRegistry,
   type DriverDescriptor,
   type DriverHandle,
+  type DriverLaunchContext,
   type SelectionResult,
 } from "./drivers/DriverRegistry.js";
 export { MctpClient, MctpRpcError } from "./drivers/MctpClient.js";
@@ -31,7 +32,9 @@ export {
   singleSessionRouter,
   type ExecContext,
   type SessionRouter,
+  type StepCapReq,
 } from "./engine/StepExecutor.js";
+export { stepCapMatch } from "./engine/CapabilityMatch.js";
 export { loadSteps, parseStepDocument } from "./config/loadSteps.js";
 export { loadMatrix, parseMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 export { renderJUnit, writeJUnit } from "./report/JUnitReporter.js";

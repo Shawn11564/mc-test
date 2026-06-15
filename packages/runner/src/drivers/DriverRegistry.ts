@@ -8,11 +8,27 @@
  */
 import { matchCapabilities, type Capabilities, type RequiredCapabilities } from "@mc-test/protocol";
 import { HEADLESS_CAPABILITIES } from "@mc-test/driver-headless/capabilities";
+import { INPROCESS_CAPABILITIES } from "@mc-test/driver-inprocess/capabilities";
 
 /** A started driver: its MCTP endpoint URL and a teardown hook. */
 export interface DriverHandle {
   url: string;
   stop: () => Promise<void>;
+}
+
+/**
+ * Launch context for drivers that spawn an external process (M4). The in-process
+ * driver uses it to launch the rendered client: which MC/loader, the display
+ * backend (Xvfb in CI / desktop locally), the SUT mods + the client-agent jar to
+ * inject. Drivers that need no launch (e.g. headless) ignore it.
+ */
+export interface DriverLaunchContext {
+  mc?: string;
+  loader?: string;
+  display?: "xvfb" | "desktop";
+  mods?: string[];
+  clientAgentJar?: string;
+  windowSize?: string;
 }
 
 /** A registered driver candidate. */
@@ -22,7 +38,12 @@ export interface DriverDescriptor {
   /** Cost order (cheapest first): server < headless < inprocess < pixel. */
   cost: number;
   advertised: Capabilities;
-  create: () => Promise<DriverHandle>;
+  /**
+   * Start the driver, returning its MCTP endpoint + teardown. `ctx` carries the
+   * launch context for process-spawning drivers (M4 in-process); back-compat
+   * drivers (headless) take no argument and ignore it.
+   */
+  create: (ctx?: DriverLaunchContext) => Promise<DriverHandle>;
 }
 
 export interface SelectionResult {
@@ -66,8 +87,15 @@ export class DriverRegistry {
 }
 
 const HEADLESS_COST = 2; // server(1) < headless(2) < inprocess(3) < pixel(4)
+const INPROCESS_COST = 3;
 
-/** The default registry for M2: just the headless driver. */
+/**
+ * The default registry (M2 + M4): the headless driver (cost 2) and the in-process
+ * driver (cost 3). Selection is by cost — a `containerGui`-only test still picks
+ * the cheaper headless; only a `clientScreens` test pulls in the costlier
+ * in-process (rendered-client) driver. Both implementations are lazy-imported in
+ * `create()` so registering pulls in neither heavy dependency.
+ */
 export function defaultRegistry(): DriverRegistry {
   const registry = new DriverRegistry();
   registry.register({
@@ -78,6 +106,18 @@ export function defaultRegistry(): DriverRegistry {
     create: async () => {
       const { HeadlessDriver } = await import("@mc-test/driver-headless");
       const driver = new HeadlessDriver();
+      const { url } = await driver.start();
+      return { url, stop: () => driver.stop() };
+    },
+  });
+  registry.register({
+    id: "inprocess",
+    kind: "clientMod",
+    cost: INPROCESS_COST,
+    advertised: INPROCESS_CAPABILITIES,
+    create: async (ctx) => {
+      const { InProcessDriver } = await import("@mc-test/driver-inprocess");
+      const driver = new InProcessDriver({ ...(ctx ?? {}) });
       const { url } = await driver.start();
       return { url, stop: () => driver.stop() };
     },

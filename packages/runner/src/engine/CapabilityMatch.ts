@@ -10,6 +10,7 @@ import {
   type CapabilityKey,
   type RequiredCapabilities,
 } from "@mc-test/protocol";
+import type { StepCapReq } from "./StepExecutor.js";
 
 export { matchCapabilities };
 export type { Capabilities, RequiredCapabilities, CapabilityKey };
@@ -33,4 +34,40 @@ export function capsFromKeys(keys: readonly string[]): RequiredCapabilities {
     }
   }
   return out;
+}
+
+/**
+ * Does `union` satisfy a step's combined requirement — its explicit `requires`
+ * (ANDed) **and** the verb's capability requirement (a single key, or an anyOf
+ * group where ANY member suffices)? The anyOf-aware companion of
+ * `matchCapabilities` used for per-step honest skips (M4).
+ *
+ * - explicit part: every required key must be advertised (standard AND match).
+ * - verbCap part: `null` → ok; a single key → the union must advertise it; an
+ *   array → ok iff the union advertises **any** member, else the unmet token is
+ *   the joined group (e.g. `"containerGui|clientScreens"`) so the skip reason
+ *   names the whole anyOf choice.
+ * - combine: ok iff both; `unmet` = the concatenation (deduped, order-stable).
+ */
+export function stepCapMatch(
+  explicit: RequiredCapabilities,
+  verbCap: StepCapReq,
+  union: Capabilities,
+): { ok: boolean; unmet: string[] } {
+  const explicitMatch = matchCapabilities(explicit, union);
+  const unmet: string[] = [...explicitMatch.unmet];
+
+  if (verbCap !== null) {
+    if (Array.isArray(verbCap)) {
+      const anyAdvertised = verbCap.some((k) => matchCapabilities({ [k]: true }, union).ok);
+      if (!anyAdvertised) unmet.push(verbCap.join("|"));
+    } else {
+      const single = matchCapabilities({ [verbCap as CapabilityKey]: true }, union);
+      unmet.push(...single.unmet);
+    }
+  }
+
+  // Dedupe while preserving first-seen order.
+  const deduped = unmet.filter((k, i) => unmet.indexOf(k) === i);
+  return { ok: deduped.length === 0, unmet: deduped };
 }

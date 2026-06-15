@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "openregions",
+  "version": "${version}",
+  "name": "OpenRegions",
+  "description": "Canonical mc-test 'regions' SUT in client-GUI (mod) form: /or opens a real client Screen with a 'Regions' button leading to a 'TestRegion' entry.",
+  "authors": [ "mc-test" ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.example.openregions.client.OpenRegionsClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "fabric-api": "*"
+  }
+}

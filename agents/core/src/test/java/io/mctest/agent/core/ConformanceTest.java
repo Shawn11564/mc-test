@@ -69,6 +69,12 @@ class ConformanceTest {
         server = new MctpServer("127.0.0.1", port, dispatch, (level, message) -> {
         });
         server.start();
+        // start() binds the port asynchronously; wait for onStart() before connecting so the client
+        // connect doesn't race the bind (readiness probe, never a fixed sleep).
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (!server.isStarted() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+        }
 
         client = new TestClient(URI.create("ws://127.0.0.1:" + port + MctpProtocol.PATH));
         assertTrue(client.connectBlocking(5, TimeUnit.SECONDS), "client must connect");

@@ -13,7 +13,7 @@ import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
 import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
-import { defaultRegistry } from "./drivers/DriverRegistry.js";
+import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
 import { collectArtifacts } from "./report/Artifacts.js";
@@ -40,6 +40,19 @@ const KNOWN_AGENTS: Record<string, { jarPath: string; advertised: Capabilities }
   "server-bukkit": {
     jarPath: "agents/server-bukkit/build/libs/mc-test-agent-bukkit.jar",
     advertised: SERVER_BUKKIT_CAPABILITIES,
+  },
+};
+
+/**
+ * Known **client** agents (M4): the in-game mod jar the in-process driver injects
+ * into the rendered client. Built externally (Fabric Loom) — acceptance-only in
+ * this repo's CI (build-artifact `agent-client-fabric-<mc>.jar`, ENVIRONMENTS.md).
+ * The client agent is paired implicitly by `driver: inprocess`; for M4 a single
+ * known client agent (`client-fabric`) suffices.
+ */
+const KNOWN_CLIENT_AGENTS: Record<string, { jarPath: string }> = {
+  "client-fabric": {
+    jarPath: "agents/client-fabric/build/libs/agent-client-fabric.jar",
   },
 };
 
@@ -79,19 +92,60 @@ function pluginSpecs(target: MatrixTarget): { path: string; as?: string }[] {
     .map((p) => ({ path: resolve(p.path!), ...(p.as ? { as: p.as } : {}) }));
 }
 
-/** Resolve the configured server agents into install specs (M3). Unknown agent
- *  names throw with a clear message; a missing built jar is reported at boot. */
+/** Resolve the configured **server** agents into install specs (M3). Client
+ *  agents (M4) are launched by the in-process driver, not the provisioner, so
+ *  they are skipped here. Unknown agent names throw with a clear message; a
+ *  missing built jar is reported at boot. */
 function resolveAgentJars(target: MatrixTarget): { name: string; jarPath: string; advertised: Capabilities }[] {
-  return (target.agents ?? []).map((name) => {
-    const known = KNOWN_AGENTS[name];
-    if (!known) throw new Error(`unknown agent '${name}' (target '${target.id}'); known: ${Object.keys(KNOWN_AGENTS).join(", ")}`);
-    const override = target.agentSources?.[name]?.path;
-    return {
-      name,
-      jarPath: resolve(override ?? known.jarPath),
-      advertised: known.advertised,
-    };
-  });
+  return (target.agents ?? [])
+    .filter((name) => !(name in KNOWN_CLIENT_AGENTS))
+    .map((name) => {
+      const known = KNOWN_AGENTS[name];
+      if (!known) {
+        const known2 = [...Object.keys(KNOWN_AGENTS), ...Object.keys(KNOWN_CLIENT_AGENTS)].join(", ");
+        throw new Error(`unknown agent '${name}' (target '${target.id}'); known: ${known2}`);
+      }
+      const override = target.agentSources?.[name]?.path;
+      return {
+        name,
+        jarPath: resolve(override ?? known.jarPath),
+        advertised: known.advertised,
+      };
+    });
+}
+
+/**
+ * Resolve the client-agent jar the in-process driver injects into the rendered
+ * client (M4). Prefers a `client-*` agent named in `target.agents` (honoring a
+ * `target.agentSources` path override); defaults to `client-fabric` for an
+ * inprocess target. Returns an absolute jar path — built externally
+ * (acceptance-only); a missing jar is reported when the driver launches.
+ */
+function resolveClientAgentJar(target: MatrixTarget): string {
+  const named = (target.agents ?? []).find((name) => name in KNOWN_CLIENT_AGENTS) ?? "client-fabric";
+  const known = KNOWN_CLIENT_AGENTS[named]!;
+  const override = target.agentSources?.[named]?.path;
+  return resolve(override ?? known.jarPath);
+}
+
+/**
+ * Build the in-process driver's launch context from an `inprocess` target (M4):
+ * which MC/loader, the display backend, the SUT mod jars to inject, and the
+ * client-agent jar. The Paper provisioner still boots the SERVER the client
+ * connects to; the rendered client itself is launched by the driver via this
+ * context. (For M4's no-boot CI this path is wired but not exercised.)
+ */
+function buildLaunchContext(target: MatrixTarget): DriverLaunchContext {
+  const mods = (target.mods ?? [])
+    .filter((m) => m.path)
+    .map((m) => resolve(m.path!));
+  return {
+    ...(target.mc ? { mc: target.mc } : {}),
+    ...(target.loader ? { loader: target.loader } : {}),
+    ...(target.display ? { display: target.display } : {}),
+    ...(mods.length ? { mods } : {}),
+    clientAgentJar: resolveClientAgentJar(target),
+  };
 }
 
 function buildProvision(
@@ -191,11 +245,16 @@ async function cmdRun(args: Args): Promise<number> {
   const test = loadSteps(resolve(stepFile));
   const outDir = resolve(args.flags["out"] ?? "mc-test-report");
 
+  // An `inprocess` target launches a rendered client: thread a launch context
+  // (mc/loader/display, SUT mods, client-agent jar) to the driver. The server is
+  // still provisioned (M3 wiring intact) for the client to connect to and for any
+  // co-listed server agent (pluginState).
   const meta: TargetMeta = {
     target: target.id,
     loader: target.loader,
     mc: target.mc,
     ...(target.driver && target.driver !== "auto" ? { driverPin: target.driver } : {}),
+    ...(target.driver === "inprocess" ? { launch: buildLaunchContext(target) } : {}),
   };
 
   console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc})…`);

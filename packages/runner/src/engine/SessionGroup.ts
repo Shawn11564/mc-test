@@ -15,6 +15,7 @@ import { PROTOCOL_VERSION, matchCapabilities, type Capabilities, type Capability
 import { MctpClient, MctpRpcError } from "../drivers/MctpClient.js";
 import { Session } from "./Session.js";
 import { advertisedKeys } from "./CapabilityMatch.js";
+import type { StepCapReq } from "./StepExecutor.js";
 
 /** One connection to open and negotiate within the group. */
 export interface ConnDef {
@@ -117,16 +118,21 @@ export class SessionGroup {
   }
 
   /**
-   * Route a capability to the connection that advertises it. `null` (capability-
-   * free verbs like `join`/`leave`) → the primary/driver session. `worldTruth`,
-   * `pluginState`, `fixtures`, `fakePlayers` → the server-agent session; the
-   * driver surface (`chat`, `containerGui`, …) → the driver. Returns `undefined`
-   * if no connected session advertises the cap (the step was already skipped
-   * upstream, so this is defensive).
+   * Route a capability requirement to the connection that advertises it. `null`
+   * (capability-free verbs like `join`/`leave`) → the primary/driver session. A
+   * single key (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers` → the
+   * server-agent session; `chat`, `screenshot`, … → the driver) routes to the
+   * first connection advertising it. An **anyOf group** (e.g. the screen verbs'
+   * `["containerGui","clientScreens"]`) routes to the first connection advertising
+   * ANY member — and because connections are pushed driver-first, a GUI verb
+   * lands on the driver. Returns `undefined` only if nothing routes (the step was
+   * already skipped upstream, so this is defensive).
    */
-  route(cap: CapabilityKey | null): Session | undefined {
+  route(cap: StepCapReq): Session | undefined {
     if (cap === null) return this.primary;
-    const owner = this.conns.find((c) => matchCapabilities({ [cap]: true }, c.def.advertised).ok);
+    const keys = Array.isArray(cap) ? cap : [cap as CapabilityKey];
+    // Driver-first ordering (conns pushed driver-first): first conn advertising ANY key.
+    const owner = this.conns.find((c) => keys.some((k) => matchCapabilities({ [k]: true }, c.def.advertised).ok));
     return owner?.session ?? this.primary;
   }
 
