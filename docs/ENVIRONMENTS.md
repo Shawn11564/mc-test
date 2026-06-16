@@ -131,7 +131,7 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 ### 1.3 `Source` (artifact descriptor)
 
 A `Source` tells the provisioner **how to obtain one artifact** and **how to verify it**.
-Exactly one of `url` / `path` / `maven` / `paper` / `mojang` / `modrinth` / `github`
+Exactly one of `url` / `path` / `maven` / `paper` / `mojang` / `spigot` / `modrinth` / `github`
 **must** be set (the *resolver* discriminator).
 
 | Key | Type | Req | Meaning |
@@ -142,6 +142,7 @@ Exactly one of `url` / `path` / `maven` / `paper` / `mojang` / `modrinth` / `git
 | `maven` | `MavenCoord` | one-of | `{ repo, group, artifact, version, classifier?, ext? }` — resolved to a download URL. |
 | `paper` | `PaperRef` | one-of | `{ project: paper|folia|velocity, version: <mc>, build: latest\|<int> }` — resolved via the **PaperMC v2 fill API** (§2.1). |
 | `mojang` | `MojangRef` | one-of | `{ version: <mc>\|latest-release\|latest-snapshot, artifact: server\|client }` — resolved via the **Mojang version manifest** (§2.2). |
+| `spigot` | `SpigotRef` | one-of | `{ version?: <mc> }` (defaults to the target's `mc`) — **built from source with Spigot BuildTools**. The automatable way to obtain a plugin-capable **legacy** server (e.g. 1.8.x) the Paper API can't serve; runs BuildTools under the version's JDK (multi-JDK) and needs `git`. Cached as `spigot-<mc>.jar`. |
 | `modrinth` | `ModrinthRef` | one-of | `{ project: <slug>, version?: <id>, loader?, gameVersion? }` — resolved via the Modrinth API to a primary file. Good for third-party plugin/mod deps. |
 | `github` | `GithubRef` | one-of | `{ repo: owner/name, release: latest\|<tag>, asset: <glob> }` — resolved to a release asset. |
 | `sha256` | string (hex) | — | Expected digest, verified after resolve; mismatch ⇒ `ARTIFACT_CHECKSUM_MISMATCH`. **Required for `url` plugin/mod sources** — an unverified network download is refused with `INTEGRITY_REQUIRED`. Optional (recommended) for `path`. |

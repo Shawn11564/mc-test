@@ -63,6 +63,22 @@ targets:
     agents: [ server-bukkit ]
     world: { ref: regions-world }
 
+  # RUNNABLE old-version row (v2): the counterpart to paper-1.8.9 above. Spigot 1.8.9 is BUILT
+  # from source with BuildTools (the PaperMC fill API can't serve 1.8.x) and booted under a Java 8
+  # toolchain the provisioner fetches automatically (multi-JDK). The headless bot speaks 1.8.9
+  # natively — no proxy. The one-time BuildTools build needs `git` + network (cached after). NOTE:
+  # a fully green regions run also needs the regions plugin + server-bukkit agent to load on the
+  # 1.8 Bukkit API.
+  - id: spigot-1.8.9
+    loader: spigot
+    mc: "1.8.9"
+    driver: headless
+    server: { spigot: { version: "1.8.9" } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    agents: [ server-bukkit ]
+    world: { ref: regions-world }
+
   # ACCEPTANCE-ONLY (M4). This target drives the CLIENT-GUI variant
   # (examples/regions/regions.clientgui.mctest.yml) against the mod SUT's real client
   # Screens — the case the headless bot provably cannot see. It needs (a) a built client
