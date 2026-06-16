@@ -235,6 +235,7 @@ function buildProvision(
       ...(worldSnapshotPath ? { worldSnapshotPath } : {}),
       ...(world?.levelName ? { levelName: world.levelName } : {}),
       ...(target.serverProps ? { serverProps: target.serverProps } : {}),
+      ...(target.ops ? { ops: target.ops } : {}),
       eulaAccepted: prov.eulaAccepted ?? false,
       onLog: () => {},
     });

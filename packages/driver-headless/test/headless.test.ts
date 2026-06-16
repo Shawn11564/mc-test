@@ -16,7 +16,7 @@ import {
   type MethodName,
 } from "@mc-test/protocol";
 import { resolveSelector, type ResolvedElement } from "../src/primitives/selectorResolve.js";
-import { normalize, flattenText } from "../src/normalize.js";
+import { normalize, flattenText, toPlainComponent } from "../src/normalize.js";
 import { HEADLESS_CAPABILITY_KEYS } from "../src/capabilities.js";
 import { HeadlessDriver } from "../src/HeadlessDriver.js";
 
@@ -44,6 +44,42 @@ describe("flattenText", () => {
   });
   it("passes through a plain string", () => {
     expect(flattenText("TestRegion")).toBe("TestRegion");
+  });
+  it("flattens a 1.20.5+ NBT-tagged custom_name component (real Paper 1.21.1 shape)", () => {
+    // prismarine-item surfaces item.customName as prismarine-nbt tags on MC 1.20.5+:
+    // the visible text lives in extra[].text, nested under tagged list/compound nodes
+    // the old flattener could not follow (it expected `extra` to be a plain JS array).
+    const taggedName = {
+      type: "compound",
+      value: {
+        text: { type: "string", value: "" },
+        extra: {
+          type: "list",
+          value: {
+            type: "compound",
+            value: [
+              { color: { type: "string", value: "green" }, text: { type: "string", value: "Regions" } },
+            ],
+          },
+        },
+      },
+    };
+    expect(flattenText(taggedName)).toBe("Regions");
+  });
+  it("simplifies a tagged lore list into independently-flattenable lines", () => {
+    const taggedLore = {
+      type: "list",
+      value: {
+        type: "compound",
+        value: [
+          { text: { type: "string", value: "Line one" } },
+          { text: { type: "string", value: "Line two" } },
+        ],
+      },
+    };
+    const plain = toPlainComponent(taggedLore) as unknown[];
+    expect(Array.isArray(plain)).toBe(true);
+    expect(plain.map((l) => flattenText(l))).toEqual(["Line one", "Line two"]);
   });
 });
 

@@ -5,7 +5,7 @@
  */
 import type { Bot } from "mineflayer";
 import type { Element, ScreenSnapshot, ScreenMatch } from "@mc-test/protocol";
-import { flattenText, normalize } from "../normalize.js";
+import { flattenText, normalize, toPlainComponent } from "../normalize.js";
 import type { ResolvedElement } from "./selectorResolve.js";
 
 // Mineflayer's prismarine-window/-item types don't surface every field we read,
@@ -40,7 +40,9 @@ export function itemLabel(item: RawItem): string | undefined {
 }
 
 export function itemLore(item: RawItem): string[] | undefined {
-  const cl = item.customLore;
+  // MC 1.20.5+ surfaces the `lore` component as a tagged NBT value (a list of text
+  // components, or a single one); simplify so each line flattens independently.
+  const cl = toPlainComponent(item.customLore);
   if (!cl) return undefined;
   const arr = Array.isArray(cl) ? cl : [cl];
   const lines = arr.map((l) => flattenText(l)).filter((l) => l.length > 0);

@@ -91,6 +91,14 @@ export interface MatrixTarget {
   agentSources?: Record<string, Source>;
   world?: WorldDef | { ref: string };
   serverProps?: Record<string, string | number | boolean>;
+  /**
+   * Usernames granted operator on boot (written to `ops.json` with each name's
+   * **offline** UUID, since servers run `online-mode=false`). The headless bot
+   * runs commands AS the joined player, so a plugin command gated by a Bukkit
+   * permission (e.g. ACF `@CommandPermission`) needs the bot op'd — list its
+   * join username here. Omitted → no ops.json is written (M2 behavior).
+   */
+  ops?: string[];
   timeoutSec?: number;
   "online-mode"?: boolean;
 }

@@ -39,7 +39,48 @@ export function flattenComponent(c: unknown): string {
   return out;
 }
 
-/** Flatten a value that may be a plain string, a `§`-coded string, or a JSON component. */
+/** prismarine-nbt tag-type names — used to detect a tagged node `{ type, value }`. */
+const NBT_TYPES = new Set([
+  "compound", "list", "string", "byte", "short", "int", "long",
+  "float", "double", "byteArray", "shortArray", "intArray", "longArray",
+]);
+
+/** A prismarine-nbt tagged value: `{ type: <nbtType>, value: … }`. */
+function isNbtTag(v: unknown): v is { type: string; value: unknown } {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  return typeof o["type"] === "string" && NBT_TYPES.has(o["type"]) && "value" in o;
+}
+
+function nbtTransform(value: unknown, type: string): unknown {
+  if (type === "compound") {
+    const out: Record<string, unknown> = {};
+    for (const [k, child] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = isNbtTag(child) ? nbtTransform(child.value, child.type) : child;
+    }
+    return out;
+  }
+  if (type === "list") {
+    const inner = value as { type?: string; value?: unknown[] };
+    return (inner.value ?? []).map((el) => nbtTransform(el, inner.type ?? ""));
+  }
+  return value; // scalar (string/number/bool) used as-is
+}
+
+/**
+ * Convert a value to a plain chat component, simplifying it first if it is a
+ * prismarine-nbt tagged node (mirrors prismarine-nbt's `simplify`): compounds →
+ * objects, lists → arrays, scalars → their value. MC 1.20.5+ serializes item
+ * display-name / lore components (`minecraft:custom_name`, `minecraft:lore`) as NBT,
+ * which Mineflayer surfaces in this tagged form; simplifying turns it back into the
+ * plain `{ text, extra, translate }` shape {@link flattenComponent} understands.
+ * Non-tagged input (plain components, strings) passes through untouched.
+ */
+export function toPlainComponent(raw: unknown): unknown {
+  return isNbtTag(raw) ? nbtTransform(raw.value, raw.type) : raw;
+}
+
+/** Flatten a value that may be a plain string, a `§`-coded string, a JSON component, or NBT-tagged. */
 export function flattenText(raw: unknown): string {
   if (raw == null) return "";
   if (typeof raw === "string") {
@@ -53,7 +94,7 @@ export function flattenText(raw: unknown): string {
     }
     return s;
   }
-  return flattenComponent(raw);
+  return flattenComponent(toPlainComponent(raw));
 }
 
 const SECTION_CODES = /[§&][0-9A-FK-ORa-fk-or]/g;

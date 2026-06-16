@@ -56,6 +56,8 @@ export interface PaperProvisionOptions {
   worldSnapshotPath?: string;
   levelName?: string;
   serverProps?: Record<string, string | number | boolean>;
+  /** Usernames to grant operator on boot (written to ops.json with their offline UUID). */
+  ops?: string[];
   eulaAccepted: boolean;
   javaPath?: string;
   bootTimeoutMs?: number;
@@ -221,6 +223,34 @@ function writeServerProperties(opts: PaperProvisionOptions): void {
   writeFileSync(join(opts.instanceDir, "server.properties"), text);
 }
 
+/**
+ * Bukkit's offline-player UUID for `name`: `UUID.nameUUIDFromBytes("OfflinePlayer:" + name)`
+ * — an MD5 (type-3) UUID over UTF-8 bytes. Servers boot `online-mode=false` (§2.7), so this is
+ * the UUID the bot actually joins with; ops.json must carry it for the op grant to apply.
+ */
+export function offlineUuid(name: string): string {
+  const h = createHash("md5").update(`OfflinePlayer:${name}`, "utf8").digest();
+  h[6] = (h[6]! & 0x0f) | 0x30; // version 3
+  h[8] = (h[8]! & 0x3f) | 0x80; // IETF variant
+  const s = h.toString("hex");
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`;
+}
+
+/**
+ * Write `ops.json` granting operator (level 4) to each name. The headless bot runs commands AS
+ * the joined player, so a command gated by a Bukkit permission (e.g. ACF `@CommandPermission`)
+ * requires the bot op'd. Written before boot so it is read on first start — race-free.
+ */
+function writeOps(instanceDir: string, ops: string[]): void {
+  const entries = ops.map((name) => ({
+    uuid: offlineUuid(name),
+    name,
+    level: 4,
+    bypassesPlayerLimit: false,
+  }));
+  writeFileSync(join(instanceDir, "ops.json"), `${JSON.stringify(entries, null, 2)}\n`);
+}
+
 function hasWorldData(dir: string): boolean {
   try {
     return existsSync(join(dir, "level.dat")) || readdirSync(dir).some((f) => f !== "README.md");
@@ -352,6 +382,7 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
 
   writeFileSync(join(opts.instanceDir, "eula.txt"), "eula=true\n");
   writeServerProperties(opts);
+  if (opts.ops?.length) writeOps(opts.instanceDir, opts.ops);
 
   const level = opts.levelName ?? "world";
   if (opts.worldSnapshotPath && existsSync(opts.worldSnapshotPath) && hasWorldData(opts.worldSnapshotPath)) {
