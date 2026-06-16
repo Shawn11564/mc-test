@@ -2,20 +2,28 @@
 /**
  * `mc-test` CLI — `run`, `list`, `doctor`.
  *
- *   mc-test run <stepfile.mctest.yml> --target <id> [--matrix mc-test.yml] [--out dir]
+ *   mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all]
+ *           [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir]
  *   mc-test list   [--matrix mc-test.yml]
  *   mc-test doctor [--matrix mc-test.yml]
+ *
+ * `--plugin` overrides each target's SUT jar with a build-graph artifact (used by
+ * the Gradle front door so the freshly-built jar is tested without editing the
+ * matrix). Multiple step files run as (test × target), aggregated into one JUnit.
  */
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
 import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
+import { resolveArtifact } from "./provision/sources.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
+import { writeHtml } from "./report/HtmlReporter.js";
 import { renderSkipMatrix } from "./report/SkipMatrix.js";
 import { collectArtifacts } from "./report/Artifacts.js";
 import type { MatrixFile, MatrixTarget } from "./model/Target.js";
@@ -52,6 +60,14 @@ const SERVER_FABRIC_CAPABILITIES: Capabilities = {
   testIdTags: true,
   loader: ["fabric", "neoforge", "quilt"],
 };
+
+/**
+ * Monorepo root, derived from the runner's own location (…/packages/runner/dist/
+ * cli.js → up 3). Built-in agent jar paths resolve from here so the runner finds
+ * them regardless of the caller's CWD — e.g. when the Gradle front door invokes it
+ * from a SUT project directory rather than the monorepo root.
+ */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 /** Known server agents: how to find their built jar (ROADMAP §4 / DRIVERS.md). */
 const KNOWN_AGENTS: Record<string, { jarPath: string; advertised: Capabilities }> = {
@@ -118,12 +134,6 @@ function expandHome(p: string): string {
   return p.startsWith("~") ? join(homedir(), p.slice(1)) : p;
 }
 
-function pluginSpecs(target: MatrixTarget): { path: string; as?: string }[] {
-  return (target.plugins ?? [])
-    .filter((p) => p.path)
-    .map((p) => ({ path: resolve(p.path!), ...(p.as ? { as: p.as } : {}) }));
-}
-
 /** Resolve the configured **server** agents into install specs (M3). Client
  *  agents (M4) are launched by the in-process driver, not the provisioner, so
  *  they are skipped here. Unknown agent names throw with a clear message; a
@@ -140,7 +150,8 @@ function resolveAgentJars(target: MatrixTarget): { name: string; jarPath: string
       const override = target.agentSources?.[name]?.path;
       return {
         name,
-        jarPath: resolve(override ?? known.jarPath),
+        // A user-supplied override is CWD-relative; the built-in path is monorepo-relative.
+        jarPath: override ? resolve(override) : resolve(REPO_ROOT, known.jarPath),
         advertised: known.advertised,
       };
     });
@@ -157,7 +168,7 @@ function resolveClientAgentJar(target: MatrixTarget): string {
   const named = (target.agents ?? []).find((name) => name in KNOWN_CLIENT_AGENTS) ?? "client-fabric";
   const known = KNOWN_CLIENT_AGENTS[named]!;
   const override = target.agentSources?.[named]?.path;
-  return resolve(override ?? known.jarPath);
+  return override ? resolve(override) : resolve(REPO_ROOT, known.jarPath);
 }
 
 /**
@@ -189,6 +200,9 @@ function buildProvision(
   const [from, to] = prov.portRange ?? [25700, 25899];
   const cacheDir = expandHome(prov.cacheDir ?? "~/.mc-test/cache");
   const workDir = prov.workDir ?? ".mc-test/run";
+  // Retain the per-instance work dir on failure (default true) for log/artifact
+  // triage; on success it is deleted so .mc-test/run/ does not grow unbounded.
+  const keepOnFailure = prov.keepOnFailure ?? true;
   const world = resolveWorld(matrix, target);
   const worldSnapshotPath = world?.snapshot?.path ? resolve(world.snapshot.path) : undefined;
   const agentJars = resolveAgentJars(target);
@@ -204,6 +218,11 @@ function buildProvision(
       portCursor = agentPort + 1;
     }
     const instanceDir = resolve(join(workDir, `${target.id}-${gamePort}-${process.pid}`));
+    // Resolve + integrity-check each plugin source (path, or url+sha256) to a local jar.
+    const resolvedPlugins: { path: string; as?: string }[] = [];
+    for (const p of target.plugins ?? []) {
+      resolvedPlugins.push({ path: await resolveArtifact(p, cacheDir), ...(p.as ? { as: p.as } : {}) });
+    }
     const server = await provisionPaper({
       mc: target.mc,
       build: target.server?.paper?.build ?? "latest",
@@ -211,7 +230,7 @@ function buildProvision(
       gamePort,
       instanceDir,
       cacheDir,
-      plugins: pluginSpecs(target),
+      plugins: resolvedPlugins,
       ...(agentSpecs.length ? { agents: agentSpecs } : {}),
       ...(worldSnapshotPath ? { worldSnapshotPath } : {}),
       ...(world?.levelName ? { levelName: world.levelName } : {}),
@@ -230,6 +249,18 @@ function buildProvision(
       logPath: server.logPath,
       ...(agentConns.length ? { agents: agentConns } : {}),
       stop: server.stop,
+      cleanup: async (failed: boolean) => {
+        if (failed && keepOnFailure) return; // retain failed instance dir for triage
+        // Best-effort: on Linux/CI (where disk growth actually matters) the dir is
+        // removed promptly. On Windows, Paper's world region files + session.lock are
+        // released slowly after JVM exit, so the dir may persist until a later run —
+        // a dev-only annoyance, not a CI concern. retryDelay rides out the transient.
+        try {
+          rmSync(server.instanceDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        } catch {
+          /* a still-held handle simply leaves the dir behind */
+        }
+      },
     };
   };
 }
@@ -267,6 +298,35 @@ function targetMetaFor(target: MatrixTarget): TargetMeta {
   };
 }
 
+/**
+ * v1.0 honest preflight (F2). A `via: true` target requests ViaProxy protocol
+ * bridging, which this build does NOT implement (the headless path connects to a
+ * server at its native version directly). Rather than boot the wrong/plugin-
+ * incapable server or fake a pass, skip with a precise, machine-readable reason
+ * surfaced in the skip matrix. Returns a skipped `TestResult`, or undefined to run.
+ */
+function preflightSkip(test: ReturnType<typeof loadSteps>, target: MatrixTarget): TestResult | undefined {
+  if (target.via) {
+    const message =
+      `via:true target '${target.id}' (mc ${target.mc}) skipped: ViaProxy protocol bridging is not ` +
+      `implemented in this build (v1.0 ships the direct-connect headless path). Legacy servers the ` +
+      `PaperMC fill API cannot serve (e.g. 1.8.x) are out of scope for v1.0 — see docs/ENVIRONMENTS.md ` +
+      `(version spanning). Skipping rather than booting a plugin-incapable server or emitting a dubious pass.`;
+    return {
+      name: test.name,
+      target: target.id,
+      ...(target.loader ? { loader: target.loader } : {}),
+      ...(target.mc ? { mc: target.mc } : {}),
+      outcome: "skipped",
+      durationMs: 0,
+      steps: [],
+      skip: { category: "environment", reason: "VIA_BRIDGE_UNAVAILABLE", unmet: [], message },
+      systemOut: message,
+    };
+  }
+  return undefined;
+}
+
 /** Run one target and print its per-test result. */
 async function runOneTarget(
   runner: Runner,
@@ -274,16 +334,24 @@ async function runOneTarget(
   target: MatrixTarget,
   test: ReturnType<typeof loadSteps>,
 ): Promise<TestResult> {
-  console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc}${target.via ? ", via ViaProxy" : ""})…`);
+  const pre = preflightSkip(test, target);
+  if (pre) {
+    console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc}, via)…`);
+    printResult(pre);
+    return pre;
+  }
+  console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc})…`);
   const result = await runner.runTarget(test, targetMetaFor(target), buildProvision(matrix, target));
   printResult(result);
   return result;
 }
 
 async function cmdRun(args: Args): Promise<number> {
-  const stepFile = args._[1];
-  if (!stepFile) {
-    console.error("usage: mc-test run <stepfile.mctest.yml> [--target <id> | --target all | --all]");
+  const stepFiles = args._.slice(1);
+  if (stepFiles.length === 0) {
+    console.error(
+      "usage: mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all] [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir]",
+    );
     return 2;
   }
   const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
@@ -296,39 +364,62 @@ async function cmdRun(args: Args): Promise<number> {
   // Target selection: a single `--target <id>`, or the WHOLE matrix when
   // `--target all` / `--all` is given (ROADMAP §6.3 — author once, run across the
   // matrix, aggregate into one JUnit + a skip matrix).
-  const targetId = args.flags["target"];
-  const runAll = args.flags["all"] === "true" || targetId === "all" || targetId === undefined;
+  const targetSel = args.flags["target"];
+  const runAll = args.flags["all"] === "true" || targetSel === "all" || targetSel === undefined;
   let targets: MatrixTarget[];
   if (runAll) {
     targets = matrix.targets;
-    if (targetId === undefined) {
-      console.log(`No --target given → running the whole matrix (${targets.length} targets). Pass --target <id> for one.`);
+    if (targetSel === undefined) {
+      console.log(`No --target given → running the whole matrix (${targets.length} targets). Pass --target <id[,id...]> for a subset.`);
     }
   } else {
-    const target = findTarget(matrix, targetId!);
-    if (!target) {
-      console.error(`target '${targetId}' not found in ${matrixPath}`);
-      return 2;
+    // Accept a single id or a comma-separated subset (the Gradle front door passes
+    // its configured `targets` this way).
+    const ids = targetSel!.split(",").map((s) => s.trim()).filter(Boolean);
+    targets = [];
+    for (const id of ids) {
+      const target = findTarget(matrix, id);
+      if (!target) {
+        console.error(`target '${id}' not found in ${matrixPath}`);
+        return 2;
+      }
+      targets.push(target);
     }
-    targets = [target];
   }
 
-  const test = loadSteps(resolve(stepFile));
+  // --plugin <jar>: override each target's SUT plugin with a build-graph artifact
+  // (the Gradle front door passes the freshly-built jar so it is tested without
+  // hand-editing mc-test.yml). Replaces the target's `plugins` with the one jar.
+  const pluginOverride = args.flags["plugin"] ? resolve(args.flags["plugin"]) : undefined;
+  if (pluginOverride) {
+    if (!existsSync(pluginOverride)) {
+      console.error(`--plugin jar not found: ${pluginOverride} (build the SUT first)`);
+      return 2;
+    }
+    targets = targets.map((t) => ({ ...t, plugins: [{ path: pluginOverride }] }));
+  }
+
+  const tests = stepFiles.map((f) => loadSteps(resolve(f)));
   const outDir = resolve(args.flags["out"] ?? "mc-test-report");
   const runner = new Runner(defaultRegistry());
 
   // Per-target isolation (distinct leased ports + per-instance world copies, see
   // PaperProvisioner) makes the targets independent; we run them sequentially for
   // deterministic, readable output. Each `buildProvision` is a fresh closure, so a
-  // future bounded-concurrency pool is a drop-in.
+  // future bounded-concurrency pool is a drop-in. Multiple step files run as
+  // (target × test) and aggregate into one JUnit.
   const results: TestResult[] = [];
   for (const target of targets) {
-    results.push(await runOneTarget(runner, matrix, target, test));
+    for (const test of tests) {
+      results.push(await runOneTarget(runner, matrix, target, test));
+    }
   }
 
-  // One aggregated JUnit (one <testsuite> per target) + per-result artifacts.
+  // One aggregated JUnit (one <testsuite> per target) + a human HTML report + artifacts.
   const junitPath = join(outDir, "junit", "results.xml");
   writeJUnit(junitPath, results);
+  const htmlPath = join(outDir, "report.html");
+  writeHtml(htmlPath, results);
   let artifactCount = 0;
   for (const result of results) {
     const bundle = collectArtifacts(outDir, result);
@@ -340,6 +431,7 @@ async function cmdRun(args: Args): Promise<number> {
     console.log(`\n${renderSkipMatrix(results)}`);
   }
   console.log(`\nJUnit: ${junitPath}`);
+  console.log(`HTML:  ${htmlPath}`);
   if (artifactCount) console.log(`Artifacts: ${join(outDir, "artifacts")}`);
 
   const failOnSkip = args.flags["fail-on-skip"] === "true";
@@ -362,21 +454,113 @@ function cmdList(args: Args): number {
   return 0;
 }
 
+const INIT_MATRIX = `# mc-test.yml — environment matrix.
+# Run: npx mc-test run src/mctest/example.mctest.yml --target paper-1.20.4
+version: 1
+provision:
+  eulaAccepted: true   # you accept Mojang's EULA by setting this (required to boot a server)
+  bindHost: 127.0.0.1  # loopback only
+targets:
+  - id: paper-1.20.4
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { build: latest } }
+    plugins:
+      - { path: ./build/libs/your-plugin.jar }   # <-- point at your built plugin jar (or use the Gradle plugin)
+    agents: [server-bukkit]                        # server-truth: assertPluginState / fixtures
+`;
+
+const INIT_TEST = `# yaml-language-server: $schema=https://mc-test.dev/schema/mctest-stepfile.schema.json
+name: example
+requires:
+  command: true
+  containerGui: true
+steps:
+  - join: { username: Tester }
+  - command: "your-command"          # e.g. the command that opens your plugin's GUI
+  - waitForScreen: { titleContains: "Your GUI Title" }
+  - click: { label: "Some Button" }
+  - assertChat: { contains: "expected message" }
+  # Prove it from real server state (requires agents: [server-bukkit]):
+  # - assertPluginState: { plugin: "YourPlugin", query: "your.query", args: {}, expect: true }
+`;
+
+/** Write a file only if absent; report which happened (never overwrites user files). */
+function scaffold(path: string, content: string, label: string): string {
+  if (existsSync(path)) return `exists   ${label}`;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, "utf8");
+  return `created  ${label}`;
+}
+
+/** `mc-test init` — scaffold a matrix + a sample step file in `--dir` (default cwd). */
+function cmdInit(args: Args): number {
+  const dir = resolve(args.flags["dir"] ?? ".");
+  console.log("mc-test init:");
+  console.log(`  ${scaffold(join(dir, "mc-test.yml"), INIT_MATRIX, "mc-test.yml")}`);
+  console.log(
+    `  ${scaffold(join(dir, "src", "mctest", "example.mctest.yml"), INIT_TEST, "src/mctest/example.mctest.yml")}`,
+  );
+  console.log("\nNext:");
+  console.log("  1. Edit mc-test.yml → point plugins[].path at your built plugin jar.");
+  console.log("  2. Edit src/mctest/example.mctest.yml → your command/GUI/assertions.");
+  console.log("  3. npx mc-test doctor   # check Java, ports, downloads");
+  console.log("  4. npx mc-test run src/mctest/example.mctest.yml --target paper-1.20.4");
+  console.log("\nSee docs/GETTING_STARTED.md and docs/AUTHORING.md.");
+  return 0;
+}
+
+/** `mc-test doctor` — environment + config readiness checks. */
 async function cmdDoctor(args: Args): Promise<number> {
   console.log("mc-test doctor:");
+  let hardFail = false;
+  const line = (ok: boolean | "warn", label: string, detail = ""): void => {
+    const mark = ok === true ? "✓" : ok === "warn" ? "!" : "✗";
+    console.log(`  ${mark} ${label}${detail ? `: ${detail}` : ""}`);
+    if (ok === false) hardFail = true;
+  };
+
+  line(true, "node", process.version);
+
   const java = await checkCommand("java", ["-version"]);
-  console.log(`  java: ${java ? "ok" : "MISSING (needed to boot a server)"}`);
+  line(java, "java", java ? "present" : "MISSING — needed to boot a server");
+
   let net = false;
   try {
-    const res = await fetch("https://fill.papermc.io/v3/projects/paper");
-    net = res.ok;
+    net = (await fetch("https://fill.papermc.io/v3/projects/paper")).ok;
   } catch {
     net = false;
   }
-  console.log(`  PaperMC API reachable: ${net ? "ok" : "no"}`);
+  line(net ? true : "warn", "PaperMC fill API", net ? "reachable" : "unreachable (offline? server jars can't download)");
+
+  try {
+    const p = await findFreePort("127.0.0.1", 25700, 25899);
+    line(true, "ports", `free port available (e.g. ${p})`);
+  } catch {
+    line("warn", "ports", "no free port in 25700–25899");
+  }
+
   const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
-  console.log(`  matrix file (${matrixPath}): ${existsSync(matrixPath) ? "found" : "not found"}`);
-  return java ? 0 : 1;
+  if (existsSync(matrixPath)) {
+    try {
+      const matrix = loadMatrix(matrixPath);
+      line(true, "matrix", `${matrixPath} (${matrix.targets.length} target(s))`);
+    } catch (err) {
+      line(false, "matrix", `${matrixPath} — parse error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else {
+    line("warn", "matrix", `${matrixPath} not found (run \`mc-test init\`)`);
+  }
+
+  const agentJar = resolve(REPO_ROOT, KNOWN_AGENTS["server-bukkit"]!.jarPath);
+  line(
+    existsSync(agentJar) ? true : "warn",
+    "server-bukkit agent jar",
+    existsSync(agentJar) ? "built" : "not built (assertPluginState/fixtures will skip)",
+  );
+
+  return hardFail ? 1 : 0;
 }
 
 function checkCommand(cmd: string, cmdArgs: string[]): Promise<boolean> {
@@ -400,11 +584,14 @@ async function main(): Promise<void> {
     case "list":
       code = cmdList(args);
       break;
+    case "init":
+      code = cmdInit(args);
+      break;
     case "doctor":
       code = await cmdDoctor(args);
       break;
     default:
-      console.error("usage: mc-test <run|list|doctor> [...]");
+      console.error("usage: mc-test <run|list|doctor|init> [...]");
       code = 2;
   }
   process.exit(code);

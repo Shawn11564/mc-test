@@ -1,0 +1,22 @@
+# Truth/UI-divergence control (F1). The GUI/chat flow succeeds exactly like the
+# canonical test (steps 1-6 green, chat says "Region loaded"), but we then assert a
+# region the UI NEVER created. The server agent reports real state (GhostRegion does
+# not exist), so assertPluginState must go RED — proving the truth half catches a UI
+# that "lies" rather than rubber-stamping the chat line.
+name: regions-truth-divergence
+requires:
+  command: true
+  containerGui: true
+steps:
+  - join: { host: localhost, port: 25565, username: Tester }
+  - command: "or"
+  - waitForScreen: { titleContains: "OpenRegions" }
+  - click: { label: "Regions" }
+  - click: { label: "TestRegion" }
+  - assertChat: { contains: "Region loaded" }
+  - assertPluginState:
+      requires: { pluginState: true }
+      plugin: "OpenRegions"
+      query: "regions.exists"
+      args: { name: "GhostRegion" } # never created by the UI → truth says false
+      expect: true # expecting true while truth is false ⇒ RED

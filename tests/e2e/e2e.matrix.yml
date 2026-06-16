@@ -1,0 +1,36 @@
+# Real-boot E2E matrix (F1). Self-contained: two Paper 1.20.4 targets that differ
+# ONLY by whether the server-bukkit truth agent is co-selected — the basis for the
+# positive run, the honest-skip control, the truth/UI-divergence control, and the
+# fixtures run. Driven by tests/e2e/run-real-boot.mjs.
+version: 1
+provision:
+  eulaAccepted: true
+  bindHost: 127.0.0.1
+  portRange: [25700, 25899]
+  cacheDir: ~/.mc-test/cache
+  workDir: .mc-test/run
+  keepOnFailure: true
+worlds:
+  regions-world:
+    snapshot: { path: ./examples/regions/world-snapshot }
+    levelName: world
+targets:
+  # Agent co-selected → truth/fixtures RUN (positive, divergence, fixtures scenarios).
+  - id: paper-agent
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    agents: [server-bukkit]
+    world: { ref: regions-world }
+  # NO agent → assertPluginState must honestly SKIP (the honest-skip control).
+  - id: paper-noagent
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    world: { ref: regions-world }

@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w @mc-test/protocol && npm run build -w @mc-test/driver-headless && npm run build -w @mc-test/driver-inprocess && npm run build -w @mc-test/driver-pixel && npm run build -w @mc-test/runner",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://mc-test.dev/schema/mctest-stepfile.schema.json",
+  "title": "mc-test step file (.mctest.yml)",
+  "description": "A semantic mc-test test authored once and run across the matrix: the capabilities it requires plus an ordered list of steps. This authoring schema is hand-maintained (the wire/method schemas in this dir are generated); register it in IntelliJ/VS Code for *.mctest.yml autocomplete + validation.",
+  "type": "object",
+  "required": ["steps"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Test name (defaults to the file name)."
+    },
+    "target": {
+      "type": "string",
+      "description": "A target ref, or the ${matrix} placeholder filled by the mc-test.yml row selected with --target."
+    },
+    "requires": {
+      "$ref": "#/$defs/capabilities",
+      "description": "Capabilities the selected driver (plus any co-selected agents) MUST satisfy; otherwise the test is SKIPPED with a reason (never a false pass)."
+    },
+    "optional": {
+      "$ref": "#/$defs/capabilities",
+      "description": "Capabilities to use if available; never a cause to skip."
+    },
+    "steps": {
+      "type": "array",
+      "description": "Ordered steps. Each is a single-key mapping { <verb>: <args> }.",
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Capability keys (PROTOCOL.md §6). Values are booleans.",
+      "properties": {
+        "chat": { "type": "boolean", "description": "Send/receive chat." },
+        "command": { "type": "boolean", "description": "Run slash commands." },
+        "containerGui": { "type": "boolean", "description": "Operate server-driven inventory/chest GUIs (headless bot)." },
+        "clientScreens": { "type": "boolean", "description": "Operate client-rendered mod Screens/widgets (in-process client)." },
+        "screenshot": { "type": "boolean", "description": "Capture pixels (rendered client only)." },
+        "rendering": { "type": "boolean", "description": "A real GPU/framebuffer client is present." },
+        "worldTruth": { "type": "boolean", "description": "Read authoritative server world/block/entity state (server agent)." },
+        "pluginState": { "type": "boolean", "description": "Assert on plugin internal state via truth.assertPluginState (server agent)." },
+        "fixtures": { "type": "boolean", "description": "Apply/reset fixtures (server agent)." },
+        "fakePlayers": { "type": "boolean", "description": "Spawn/despawn fake players (server agent + Carpet backend)." },
+        "typeText": { "type": "boolean", "description": "Type into fields." },
+        "pressKey": { "type": "boolean", "description": "Send semantic key presses." },
+        "testIdTags": { "type": "boolean", "description": "Target emits invisible testId tags the driver can resolve." }
+      }
+    },
+    "step": {
+      "type": "object",
+      "description": "Exactly one step verb → its args.",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "propertyNames": {
+        "enum": [
+          "join",
+          "leave",
+          "chat",
+          "command",
+          "waitForChat",
+          "assertChat",
+          "waitForScreen",
+          "listElements",
+          "click",
+          "type",
+          "press",
+          "screenshot",
+          "getBlock",
+          "getEntities",
+          "assertPluginState",
+          "fixture",
+          "spawnFakePlayer"
+        ]
+      }
+    }
+  }
+}

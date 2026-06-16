@@ -1,0 +1,31 @@
+# Fixtures + fake-player control (F1). Exercises deterministic setup/reset against
+# real server state, and the honest-skip of fake players on plain Paper.
+#
+#   - fixture regions.createRegion → assertPluginState true   (SUT provider mutates RegionStore)
+#   - fixture gamerule                                         (built-in, Bukkit-API only)
+#   - spawnFakePlayer → honest SKIP (unmet:[fakePlayers])      (no Carpet /player on plain Paper)
+#   - fixture reset → assertPluginState false                  (reversal restores pristine state)
+name: regions-fixtures
+requires:
+  command: true
+  containerGui: true
+steps:
+  - join: { host: localhost, port: 25565, username: Tester }
+  # Deterministic setup via the SUT's fixture provider (no GUI needed).
+  - fixture: { name: "regions.createRegion", args: { name: "FixtureRegion" } }
+  - assertPluginState:
+      plugin: "OpenRegions"
+      query: "regions.exists"
+      args: { name: "FixtureRegion" }
+      expect: true
+  # Built-in fixture (Bukkit API): determinism knob, no SUT provider required.
+  - fixture: { name: "gamerule", args: { rule: "doDaylightCycle", value: false } }
+  # Fake players need a Carpet /player backend, absent on plain Paper → honest SKIP.
+  - spawnFakePlayer: { name: "Bot2" }
+  # Revert all session fixtures and confirm the region is gone (reversal works).
+  - fixture: { reset: true }
+  - assertPluginState:
+      plugin: "OpenRegions"
+      query: "regions.exists"
+      args: { name: "FixtureRegion" }
+      expect: false

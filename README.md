@@ -48,25 +48,35 @@ in-game agents stay tiny, dumb, and cheap to port to each `(loader × version)`.
 > `docs/ROADMAP.md` for the build order and per-milestone status.
 
 ```bash
-# install (npm workspaces monorepo)
-npm install
+# build the framework (Node 18+; builds @mc-test/* in dependency order)
+npm install && npm run build
 
-# list what would run from the matrix
-npx mc-test list
+# build the example SUT + the server-truth agent (one-time, until artifacts are published)
+gradle -p agents :core:publishToMavenLocal :server-bukkit:jar
+mvn -f examples/regions/plugin/pom.xml package
 
-# run the canonical regions test against a local Paper target
+# run the canonical regions test on a real Paper server
 npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
 
-# environment doctor (checks Java, ports, downloads, EULA, display backend)
-npx mc-test doctor
+# other commands
+npx mc-test doctor    # check Java, ports, downloads, matrix
+npx mc-test init      # scaffold mc-test.yml + a sample test in your own plugin project
 ```
 
-The environment matrix lives in `mc-test.yml` (see `mc-test.example.yml` for a fully worked example).
-JUnit XML + a per-failure artifacts bundle land under `./mc-test-report/`.
+> **New here? Follow [`docs/GETTING_STARTED.md`](./docs/GETTING_STARTED.md)** for the full, verified walkthrough.
+
+The environment matrix lives in `mc-test.yml`. An HTML report + JUnit XML (and a per-failure
+artifacts bundle) land under `./mc-test-report/`. JVM/IntelliJ users can instead run
+`./gradlew mcTest` — see [`gradle-plugin/README.md`](./gradle-plugin/README.md).
 
 ## Documentation
 
-Start with the design docs in [`/docs`](./docs):
+**User docs (start here):**
+
+- [`GETTING_STARTED.md`](./docs/GETTING_STARTED.md) — install → run the regions test → write your own.
+- [`AUTHORING.md`](./docs/AUTHORING.md) — step verbs, selectors, capabilities, fluent ↔ YAML.
+
+**Design docs** in [`/docs`](./docs):
 
 - [`ROADMAP.md`](./docs/ROADMAP.md) — build order (M1→M5), acceptance criteria, testing strategy.
 - [`ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — the narrow-waist model, the 4 drivers, diagrams.
@@ -81,4 +91,5 @@ repo layout, and the rules for working here.
 
 ## License
 
-TBD.
+[MIT](./LICENSE). (Public-vs-internal *distribution* is still TBD — see `docs/V1_PLAN.md`; the source
+license itself is MIT.)

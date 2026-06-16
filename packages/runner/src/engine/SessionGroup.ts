@@ -105,14 +105,23 @@ export class SessionGroup {
   unionAdvertised(): Capabilities {
     const union: Capabilities = {};
     for (const c of this.conns) {
+      if (c.def.role === "agent") {
+        // Reflect the agent's ACTUAL granted caps (its session.create response), NOT a
+        // runner-side assumption — so an agent that honestly advertises a subset (e.g.
+        // no `fakePlayers` without a Carpet backend) is represented truthfully and only
+        // its genuinely-present caps satisfy steps. Capability discovery, not hardcoding.
+        for (const key of c.session.granted) {
+          union[key as CapabilityKey] = true;
+        }
+        continue;
+      }
+      // The driver's advertised set is authoritative for routing GUI/chat verbs; carry
+      // its target descriptors (loader/mcVersionRange) for negotiation parity.
       for (const key of advertisedKeys(c.def.advertised)) {
         union[key] = true;
       }
-      // Carry the driver's target descriptors (loader/mcVersionRange) for negotiation parity.
-      if (c.def.role === "driver") {
-        if (c.def.advertised.loader !== undefined) union.loader = c.def.advertised.loader;
-        if (c.def.advertised.mcVersionRange !== undefined) union.mcVersionRange = c.def.advertised.mcVersionRange;
-      }
+      if (c.def.advertised.loader !== undefined) union.loader = c.def.advertised.loader;
+      if (c.def.advertised.mcVersionRange !== undefined) union.mcVersionRange = c.def.advertised.mcVersionRange;
     }
     return union;
   }

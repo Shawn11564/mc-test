@@ -1,0 +1,171 @@
+# mc-test — v1.0 Plan (the first usable product)
+
+> Status: active. This is the **scoped, sequenced plan for the first usable product**, derived from
+> `FINALIZATION.md` after the v1.0 scope was ratified (2026-06-16). `FINALIZATION.md` enumerates the full
+> path (phases F0–F7) and the open scope decisions; **this document locks the decisions and the build
+> order for v1.0** and is authoritative only for that. All wire names, capability keys, selector keys,
+> error codes, and `mc-test.yml` fields are defined canonically in `PROTOCOL.md` / `ENVIRONMENTS.md` /
+> `ROADMAP.md`; this doc defers to them.
+
+## Ratified scope decisions (2026-06-16)
+
+| Decision | Choice | Consequence |
+|----------|--------|-------------|
+| **D2 — product scope** | **Paper/Spigot PLUGIN slice only.** Headless bot + `server-bukkit` truth agent. | Rendered-client mods (`F3`) and the multi-loader matrix (`F4`) are **v2** — out of scope. ~70% of remaining engineering is deferred. |
+| **IDE front door** | **Include `F6`.** `./gradlew mcTest` from IntelliJ is part of v1.0. | The Gradle/IntelliJ front door is treated as "usable," not a nicety (user develops in IntelliJ). |
+| **D1 — distribution** | **Decide later.** Build the engineering now; defer the public-OSS-vs-internal publish call. | `F0` does CI + release *plumbing* + a `LICENSE`, but does **not** npm-publish publicly. A "release gate" at the end makes the call. |
+
+## What v1.0 ships
+
+> Author a plugin GUI test once — `join → /or → click "Regions" → click "TestRegion" → assert chat
+> contains "Region loaded" AND assert region "TestRegion" exists server-side` — run it on Paper across
+> versions via the headless bot + `server-bukkit` truth agent, and get a JUnit report. Runnable from the
+> **CLI** (`npx mc-test run …`) **or** **`./gradlew mcTest`** in IntelliJ.
+
+**Out of scope for v1.0 (→ v2):** the in-process client driver and client-* agents (rendered mod
+Screens), the Forge/NeoForge/Fabric `(loader × version)` matrix, the pixel/OCR driver, and the
+vanilla/Fabric/Forge/NeoForge **server** source resolvers (only needed for mods).
+
+## Build order
+
+```
+F0 ──► F1 ──► F6 ──► (release gate: decide OSS vs internal → publish or keep private)
+        │
+        ├──► F2 (Via)      ← parallelizable after F1
+        └──► F5 (docs)     ← runs alongside from F1; finalized last
+```
+
+| Phase | Theme | Size | Depends on |
+|-------|-------|------|-----------|
+| **F0** | CI + release foundation | S | — |
+| **F1** | Make the Paper/plugin product real | S–M | F0 |
+| **F6** | IntelliJ / Gradle front door | S–M | F1 (F0 ideally) |
+| **F2** | ViaProxy — old Paper versions only | S–M | F1 |
+| **F5** | User docs + DX | M | alongside F1+ |
+
+> F2 vs F6 ordering is flexible — both only need F1 and are independent of each other. F6 is placed first
+> because the IntelliJ front door is the stated v1.0 requirement.
+
+---
+
+## F0 — CI + release foundation
+
+The TS + Java suites are already green; F0 *enforces* them and makes the repo installable.
+
+- **Fast lane (free hosted runner, every push/PR):**
+  - `npm ci` → **protocol drift gate first** (`npm run test -w @mc-test/protocol`, source-only — must run
+    before any `gen:schema`/`build` regenerates the committed schema and masks drift) → `npm run build
+    --workspaces` → `npm run typecheck --workspaces` → `npm test --workspaces` (this already includes the
+    schema-sync drift gate, the M1 conformance replays, `validate-fixtures`, and the mappings import-scan
+    in `m4`/`m5.test.ts`).
+  - Java: `gradle -p agents :core:test :server-bukkit:test` on **JDK 21** (toolchain) / release 17. No
+    Gradle wrapper exists yet → CI uses `gradle/actions/setup-gradle` with a pinned Gradle version.
+- **Real-boot lane (`workflow_dispatch` + nightly):** boot Paper 1.20.4, run the canonical regions test,
+  assert green JUnit, upload `mc-test-report/` + server logs. In F0 this runs the M2 **headless-only**
+  payload (`assertPluginState` honestly skips); **F1 gives it the agent half**. Kept off the per-PR path
+  so PRs stay fast and the repo isn't red before F1 wires the full payload.
+- **Foundation:** add a `LICENSE` file (repo already declares MIT; resolves the README "TBD" — keeps the
+  OSS option open without committing to publish); commit `package-lock.json` so CI uses `npm ci`; document
+  the MCTP `protocolVersion` bump rules (`PROTOCOL.md` §15) as the release contract.
+- **Deferred to the release gate:** actual npm publish + GitHub Releases of agent jars.
+
+**Acceptance:** green fast-lane CI on `main`; `npx mc-test --help` works from a clean checkout following
+the README (note: requires a build first, since `bin` → `dist/cli.js`).
+
+## F1 — Make the Paper/plugin product real *(highest value; mostly wiring)*
+
+Closes the M3 real-boot boxes that are currently only mock-green (`ROADMAP.md` §4.5).
+
+- **Co-select the bukkit agent in a real boot:** drop `mc-test-agent-bukkit.jar` into `plugins/` on its
+  second MCTP port, run `--target paper-1.20.4`, confirm `assertPluginState regions.exists{TestRegion}`
+  goes **green against real server state** (not just chat).
+- **Negative controls in CI** (the "tester doesn't lie" checks): truth/UI-divergence (GUI says "loaded"
+  but the fixture creates no region → `assertPluginState` red) and honest-skip (no agent →
+  `unmet:[pluginState]`).
+- **Fixtures + fake players for real:** `fixture.set`/`reset` + `player.spawnFake` (Carpet) on a real
+  Paper(+Carpet) boot; verify the world-snapshot reset leaves pristine state.
+- **Harden the provisioner:** EULA/`server.properties` forcing, port leasing under concurrency, ordered
+  teardown, `keepOnFailure` artifact retention, boot-timeout/readiness probes (no fixed sleeps).
+- **Flake budget:** Paper E2E N=3 nightly with a nondeterminism alarm.
+
+**Acceptance:** `npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4` on a clean
+machine → green **including** `assertPluginState`; both negative controls behave in CI.
+
+## F6 — IntelliJ / Gradle front door
+
+A thin JVM front door over the Node engine — **do not reimplement the runner on the JVM**.
+
+- **`mc-test-gradle` plugin:** registers `mcTest` (+ per-target `mcTest<Target>`) that `dependsOn` the SUT
+  jar task (`jar`/`shadowJar`) → runs the runner against an ephemeral instance; surfaces in IntelliJ's
+  Gradle tool window (gutter ▶, auto run-configs).
+- **Node bootstrap:** the plugin provisions a pinned Node + `@mc-test/runner` so a JVM dev never touches
+  npm. *(Distribution deferred → vendor a runner tarball now; switch to the published package once F0's
+  release gate opens.)*
+- **Config + co-located tests:** a small `mcTest { targets, testDir, reportDir }` extension or
+  auto-discovery of `mc-test.yml` + a co-located test dir (`src/mctest/`); the SUT jar path is wired from
+  the build graph, never hand-edited.
+- **Authoring schema:** ship a **JSON Schema for the `.mctest.yml` step-file format** and register it for
+  IntelliJ YAML autocomplete + validation (mc-test ships wire/method schemas today but no *authoring*
+  schema).
+- **SPI scaffolding:** document + scaffold `McTestStateProvider` / `McTestFixtureProvider` registration
+  (Java or Kotlin) so `assertPluginState`/fixtures resolve against real state.
+- **CI wiring:** `mcTest` participates in `./gradlew check`; JUnit lands where IntelliJ/CI reporters
+  expect.
+- **Stretch (defer if tight):** `mcTestWatch` warm dev loop; JUnit 5 `TestEngine` for a native green/red
+  test tree; optional Kotlin/Java authoring DSL.
+
+**Acceptance:** in a sample Paper plugin project, applying the plugin + a co-located `.mctest.yml` →
+`./gradlew mcTest` (or ▶ in IntelliJ) builds the jar, boots an ephemeral server, runs the test, shows
+JUnit — with step-file autocomplete and **no manual Node setup**.
+
+## F2 — ViaProxy for old Paper versions *(scoped down)*
+
+Only the Via slice — the vanilla/Fabric/Forge/NeoForge **server** resolvers are v2 (mods only).
+
+- Make `via: true` real: stand up ViaProxy so modern Mineflayer speaks old protocols; prove `paper-1.8.9`
+  **or honest-skip with a precise reason** (never a dubious pass).
+- Pin Via/Mineflayer/minecraft-data per target; a Via bump is a matrix change gated by the golden E2E.
+- Modrinth/URL/sha256 source verification for third-party plugin deps.
+
+**Acceptance:** `paper-1.8.9` runs, or honest-skips with a reason visible in the skip matrix.
+
+## F5 — User docs + DX *(parallel from F1; finalized last)*
+
+- **Getting-Started + tutorial:** install → write a `.mctest.yml` for *your* plugin → run → read the
+  report. The current `/docs` are *design* docs; add *user* docs (authoring guide, selector cookbook,
+  troubleshooting).
+- **CLI ergonomics:** `mc-test init` (scaffold `mc-test.yml` + a sample test — note: only
+  `mc-test.example.yml` exists today, no `mc-test.yml`); a richer `doctor` (Java, ports, downloads, Via;
+  display/loader-toolchain checks deferred with mods); clear error messages.
+- **Reporting:** an HTML report (skip matrix + per-test timeline); JUnit stays the CI contract.
+  *(Screenshot gallery deferred — no rendered client in v1.0.)*
+- **Authoring surface:** confirm fluent-API ↔ YAML parity; add step verbs only as real tests demand.
+- **One real-world-style plugin example** beyond `regions`.
+
+**Acceptance:** an external dev, given only `/docs`, installs and runs the regions test on Paper without
+help.
+
+---
+
+## Definition of done (v1.0)
+
+1. **CI green on every push** (TS + Java + conformance + import-scan) **and** a real-boot E2E lane.
+2. The canonical regions test is **real-green including `assertPluginState`** on Paper, with the
+   truth/UI-divergence and honest-skip negative controls enforced in CI.
+3. The plugin product is runnable via **`npx mc-test`** *and* **`./gradlew mcTest` from IntelliJ**, with a
+   `LICENSE` + Getting-Started docs.
+4. The headless driver + `server-bukkit` agent are **green against the M1 conformance fixtures** for every
+   method they advertise.
+5. **No false greens:** every "can't run here" path is an honest skip or a loud failure, surfaced in the
+   skip matrix.
+6. **Docs match the shipped product** (Prime Directive 5) — no design-doc/implementation drift.
+7. **Release gate:** make the OSS-vs-internal call → publish (npm + agent jars) or keep private.
+
+## Practical prerequisites
+
+- **Real boots need a real host.** Per the M3/M4/M5 status notes in `ROADMAP.md`, everything past the M2
+  headless path is currently only *mock-green*. F1 and F6 acceptance require **Java (JDK 21) + network +
+  a host that can actually boot Paper** — a developer machine or a capable CI runner, **not** an offline
+  sandbox. No real-boot acceptance box is ticked without a genuine pass/fail JUnit + artifacts.
+- **No Gradle wrapper is committed yet.** Until one is added (`gradle wrapper`), CI provisions a pinned
+  Gradle via `gradle/actions/setup-gradle`, and `./gradlew` (F6) requires committing the wrapper.
