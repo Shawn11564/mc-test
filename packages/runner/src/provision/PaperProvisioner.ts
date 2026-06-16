@@ -329,8 +329,17 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
   try {
     jar = await resolvePaperJar(opts.mc, opts.build ?? "latest", opts.cacheDir);
   } catch (err) {
-    // Fall back to the Mojang version manifest when Paper has no build (ROADMAP §3.5).
     if (err instanceof Error && err.message.startsWith("ARTIFACT_NOT_AVAILABLE")) {
+      // A plugin target needs a Bukkit-capable server. The Mojang vanilla fallback CANNOT
+      // load plugins, so booting it would fail every plugin step with a confusing error
+      // (a near-false-negative). Signal an honest SKIP instead (F2). The vanilla fallback
+      // remains for plugin-free targets (e.g. a rendered-client target's connect server).
+      if (opts.plugins.length > 0) {
+        throw new Error(
+          `UNSUPPORTED_TARGET: no plugin-capable server for ${opts.mc} — PaperMC has no build and the ` +
+            `vanilla fallback cannot load Bukkit plugins (${err.message})`,
+        );
+      }
       jar = await resolveMojangServerJar(opts.mc, opts.cacheDir);
     } else {
       throw err;

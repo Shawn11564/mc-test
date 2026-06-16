@@ -21,6 +21,7 @@ import { loadSteps } from "./config/loadSteps.js";
 import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
+import { resolveArtifact } from "./provision/sources.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
 import { renderSkipMatrix } from "./report/SkipMatrix.js";
 import { collectArtifacts } from "./report/Artifacts.js";
@@ -132,12 +133,6 @@ function expandHome(p: string): string {
   return p.startsWith("~") ? join(homedir(), p.slice(1)) : p;
 }
 
-function pluginSpecs(target: MatrixTarget): { path: string; as?: string }[] {
-  return (target.plugins ?? [])
-    .filter((p) => p.path)
-    .map((p) => ({ path: resolve(p.path!), ...(p.as ? { as: p.as } : {}) }));
-}
-
 /** Resolve the configured **server** agents into install specs (M3). Client
  *  agents (M4) are launched by the in-process driver, not the provisioner, so
  *  they are skipped here. Unknown agent names throw with a clear message; a
@@ -222,6 +217,11 @@ function buildProvision(
       portCursor = agentPort + 1;
     }
     const instanceDir = resolve(join(workDir, `${target.id}-${gamePort}-${process.pid}`));
+    // Resolve + integrity-check each plugin source (path, or url+sha256) to a local jar.
+    const resolvedPlugins: { path: string; as?: string }[] = [];
+    for (const p of target.plugins ?? []) {
+      resolvedPlugins.push({ path: await resolveArtifact(p, cacheDir), ...(p.as ? { as: p.as } : {}) });
+    }
     const server = await provisionPaper({
       mc: target.mc,
       build: target.server?.paper?.build ?? "latest",
@@ -229,7 +229,7 @@ function buildProvision(
       gamePort,
       instanceDir,
       cacheDir,
-      plugins: pluginSpecs(target),
+      plugins: resolvedPlugins,
       ...(agentSpecs.length ? { agents: agentSpecs } : {}),
       ...(worldSnapshotPath ? { worldSnapshotPath } : {}),
       ...(world?.levelName ? { levelName: world.levelName } : {}),
@@ -297,6 +297,35 @@ function targetMetaFor(target: MatrixTarget): TargetMeta {
   };
 }
 
+/**
+ * v1.0 honest preflight (F2). A `via: true` target requests ViaProxy protocol
+ * bridging, which this build does NOT implement (the headless path connects to a
+ * server at its native version directly). Rather than boot the wrong/plugin-
+ * incapable server or fake a pass, skip with a precise, machine-readable reason
+ * surfaced in the skip matrix. Returns a skipped `TestResult`, or undefined to run.
+ */
+function preflightSkip(test: ReturnType<typeof loadSteps>, target: MatrixTarget): TestResult | undefined {
+  if (target.via) {
+    const message =
+      `via:true target '${target.id}' (mc ${target.mc}) skipped: ViaProxy protocol bridging is not ` +
+      `implemented in this build (v1.0 ships the direct-connect headless path). Legacy servers the ` +
+      `PaperMC fill API cannot serve (e.g. 1.8.x) are out of scope for v1.0 — see docs/ENVIRONMENTS.md ` +
+      `(version spanning). Skipping rather than booting a plugin-incapable server or emitting a dubious pass.`;
+    return {
+      name: test.name,
+      target: target.id,
+      ...(target.loader ? { loader: target.loader } : {}),
+      ...(target.mc ? { mc: target.mc } : {}),
+      outcome: "skipped",
+      durationMs: 0,
+      steps: [],
+      skip: { category: "environment", reason: "VIA_BRIDGE_UNAVAILABLE", unmet: [], message },
+      systemOut: message,
+    };
+  }
+  return undefined;
+}
+
 /** Run one target and print its per-test result. */
 async function runOneTarget(
   runner: Runner,
@@ -304,7 +333,13 @@ async function runOneTarget(
   target: MatrixTarget,
   test: ReturnType<typeof loadSteps>,
 ): Promise<TestResult> {
-  console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc}${target.via ? ", via ViaProxy" : ""})…`);
+  const pre = preflightSkip(test, target);
+  if (pre) {
+    console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc}, via)…`);
+    printResult(pre);
+    return pre;
+  }
+  console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc})…`);
   const result = await runner.runTarget(test, targetMetaFor(target), buildProvision(matrix, target));
   printResult(result);
   return result;

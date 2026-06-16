@@ -92,7 +92,7 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `mc` | `McVersion` (string) | ✅ | — | Target Minecraft version, e.g. `1.20.4`, `1.21.4`. Semver-ish `MAJOR.MINOR[.PATCH]`. Snapshots allowed as `24w39a`-style ids when `loader: vanilla`/`fabric`. |
 | `side` | `Side` enum | — | inferred | `server`, `client`, or `both`. Inferred from `driver` when omitted (`headless` or a `server` driver ⇒ `server`; `inprocess`/`pixel` ⇒ `client`+`server`). Controls whether a rendered client is launched (§5). |
 | `driver` | `DriverId` enum | — | auto | Preferred driver: `headless`, `inprocess`, `server`, `pixel`, or `auto` (the `DriverId` set in `@mc-test/protocol`). `auto` lets capability negotiation pick (§4). An explicit driver still must satisfy the suite's required caps or the target is **skipped with a reason**. The `pixel` driver (`@mc-test/driver-pixel`) is a selectable last-resort candidate as of **M5** (§4). Note: `server-bukkit`/`server-fabric` are **agent** ids (co-selected via `agents:`), not driver ids. |
-| `via` | bool | — | `false` | Route the headless bot through **ViaVersion/ViaProxy** so it can connect to an old MC server (e.g. `paper-1.8.9`) that its native protocol predates. Parsed by the runner as of **M5**; only meaningful for `headless`/`server-side` targets (the offline proxy sits in front of the server, §5.4). |
+| `via` | bool | — | `false` | **v1.0: declared but not yet honored — `via: true` honest-SKIPS** the target with reason `VIA_BRIDGE_UNAVAILABLE`. The headless path connects at the server's native version directly; ViaVersion/ViaProxy bridging of old protocols is **not implemented in this build**, so the runner skips (with a precise reason in the skip matrix) rather than emit a dubious pass. *Intended:* route the headless bot through an offline ViaProxy in front of an old MC server (e.g. `paper-1.8.9`). See the old-version note below the table. |
 | `useMatrix` | list<string> | — | `[]` | Names of `matrix` axes this target expands over. Empty ⇒ the target is taken verbatim (one instance). E.g. `[mc]` expands the target once per `matrix.mc` value. |
 | `server` | `Source` \| `{ref}` | cond | — | The server artifact (jar/installer) for server-side loaders (`paper`, `spigot`, `folia`, server-side `fabric`/`forge`/`neoforge`/`quilt`, `vanilla`). REQUIRED when `side` includes `server`. May be `{ ref: <sources key> }`. |
 | `client` | `Source` \| `{ref}` | cond | — | The client artifact / launch profile for rendered-client targets. REQUIRED when `side` includes `client` and `driver: inprocess|pixel`. See §5.2. |
@@ -115,6 +115,14 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 > `{ ref: <key> }` to point at an entry under top-level `sources:`. This keeps the big
 > URL/coordinate blobs in one place.
 
+> **Old-version targets (v1.0 honest skips).** A target whose `mc` the PaperMC fill API
+> cannot serve (e.g. `1.8.x`) **and** that lists `plugins:` is **skipped, not booted**: the
+> runner refuses to fall back to a vanilla server (which cannot load Bukkit plugins) and
+> reports `UNSUPPORTED_TARGET` rather than failing every plugin step. Combined with the `via`
+> skip above, old-version rows surface as honest `○` cells in the skip matrix with a precise
+> reason — never a false green. Real old-version coverage (legacy-Paper provisioning + Via GUI
+> bridging) is post-v1.0.
+
 ---
 
 ### 1.3 `Source` (artifact descriptor)
@@ -133,9 +141,16 @@ Exactly one of `url` / `path` / `maven` / `paper` / `mojang` / `modrinth` / `git
 | `mojang` | `MojangRef` | one-of | `{ version: <mc>\|latest-release\|latest-snapshot, artifact: server\|client }` — resolved via the **Mojang version manifest** (§2.2). |
 | `modrinth` | `ModrinthRef` | one-of | `{ project: <slug>, version?: <id>, loader?, gameVersion? }` — resolved via the Modrinth API to a primary file. Good for third-party plugin/mod deps. |
 | `github` | `GithubRef` | one-of | `{ repo: owner/name, release: latest\|<tag>, asset: <glob> }` — resolved to a release asset. |
-| `sha256` | string (hex) | — | Expected digest. Verified after download; mismatch ⇒ `ARTIFACT_CHECKSUM_MISMATCH`. Strongly recommended for `url`/`github`. |
+| `sha256` | string (hex) | — | Expected digest, verified after resolve; mismatch ⇒ `ARTIFACT_CHECKSUM_MISMATCH`. **Required for `url` plugin/mod sources** — an unverified network download is refused with `INTEGRITY_REQUIRED`. Optional (recommended) for `path`. |
 | `as` | string (filename) | — | Rename the installed file (e.g. `regions.jar`). Default keeps the source filename. |
 | `optional` | bool | — | If `true`, a resolve/download failure is a *warning*, not an error (e.g. an optional companion mod). Default `false`. |
+
+> **v1.0 resolver support.** The runner currently resolves **`path`** and **`url`** plugin/mod
+> sources (with `sha256` integrity, §2), plus **`paper`**/**`mojang`** for server jars. `maven`,
+> `modrinth`, and `github` are part of the documented schema but **not yet runner-consumed** —
+> use `url` + `sha256` for third-party deps until they land. Version pinning (Mineflayer +
+> minecraft-data, and a future ViaProxy build) is per-runner-release; a bump is gated by the
+> golden E2E so old-version behavior stays reproducible.
 
 ---
 

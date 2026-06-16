@@ -310,6 +310,24 @@ export class Runner {
       }
       return result;
     } catch (err) {
+      const msg = errMessage(err);
+      // A provisioner that cannot faithfully stand up this target (e.g. no plugin-capable
+      // server for an old version) signals an honest SKIP, not a failure (F2).
+      if (msg.startsWith("UNSUPPORTED_TARGET:")) {
+        failed = false;
+        return {
+          name: test.name,
+          target: meta.target,
+          ...(meta.loader ? { loader: meta.loader } : {}),
+          ...(meta.mc ? { mc: meta.mc } : {}),
+          driver: descriptor.id,
+          outcome: "skipped",
+          durationMs: 0,
+          steps: [],
+          skip: { category: "environment", reason: "UNSUPPORTED_TARGET", unmet: [], message: msg },
+          systemOut: msg,
+        };
+      }
       return {
         name: test.name,
         target: meta.target,
@@ -319,7 +337,7 @@ export class Runner {
         outcome: "failed",
         durationMs: 0,
         steps: [],
-        failure: { message: errMessage(err), type: "ProvisionError" },
+        failure: { message: msg, type: "ProvisionError" },
         ...(provisioned?.logPath ? { artifacts: [provisioned.logPath] } : {}),
       };
     } finally {
