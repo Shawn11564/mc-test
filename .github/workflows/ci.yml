@@ -1,0 +1,77 @@
+name: CI
+
+# Fast lane — runs on every push to main and every PR. Enforces the suites that
+# are already green (TS + Java unit/conformance/drift/import-scan). Real Paper
+# boots live in the separate e2e workflow so PRs stay fast. See docs/V1_PLAN.md (F0).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: TypeScript (protocol · drivers · runner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+
+      # The schema/TS drift gate MUST run before any build: `npm run build`
+      # regenerates the committed JSON Schema (gen:schema), which would overwrite
+      # the committed files and mask drift. Protocol tests are source-only, so
+      # they need no prior build.
+      - name: Schema/TS drift gate (protocol)
+        run: npm run test -w @mc-test/protocol
+
+      # npm --workspaces does NOT topologically sort, and the drivers/runner
+      # import @mc-test/protocol's built dist — so build in explicit dep order.
+      - name: Build (dependency order)
+        run: |
+          npm run build -w @mc-test/protocol
+          npm run build -w @mc-test/driver-headless
+          npm run build -w @mc-test/driver-inprocess
+          npm run build -w @mc-test/driver-pixel
+          npm run build -w @mc-test/runner
+
+      - name: Typecheck
+        run: npm run typecheck --workspaces --if-present
+
+      # Includes the M1 conformance replays, validate-fixtures, the mappings
+      # import-scan (m4/m5.test.ts), and the mock-agent E2E + mutation control.
+      - name: Test (conformance · import-scan · fixtures · mock E2E)
+        run: npm test --workspaces --if-present
+
+      - name: CLI smoke test
+        run: node packages/runner/dist/cli.js --help
+
+  jvm:
+    name: JVM agents (core · server-bukkit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'        # toolchain in agents/build.gradle.kts (release 17)
+      # No Gradle wrapper is committed yet; pin the version proven locally.
+      # Follow-up: commit a wrapper (`gradle wrapper`) and switch to ./gradlew.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      # Compiling server-bukkit against paper-api (compileOnly) is itself the
+      # "no NMS/Mojang-mapped symbols" gate; :core:test runs the Java conformance.
+      - name: Test core + server-bukkit
+        run: gradle -p agents :core:test :server-bukkit:test

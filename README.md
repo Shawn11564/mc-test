@@ -81,4 +81,5 @@ repo layout, and the rules for working here.
 
 ## License
 
-TBD.
+[MIT](./LICENSE). (Public-vs-internal *distribution* is still TBD — see `docs/V1_PLAN.md`; the source
+license itself is MIT.)

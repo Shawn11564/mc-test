@@ -1,0 +1,71 @@
+name: E2E (real Paper boot)
+
+# Real-boot lane: provisions a Paper server and runs the canonical regions test
+# for a GENUINE pass/fail + artifacts. Off the per-PR path (manual + nightly) so
+# PRs stay fast.
+#
+# Status: SCAFFOLD. In F0 this exercises the M2 headless-only payload
+# (assertPluginState honestly SKIPS). It goes fully green in F1, when the
+# server-bukkit agent is co-selected and assertPluginState asserts real state.
+# The build steps below follow the documented M3 sequence; F1 finishes the
+# wiring it depends on (mc-test.yml/target resolution, agent jar naming,
+# co-selection). See docs/V1_PLAN.md (F0 → F1).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * *'   # nightly ~07:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  paper-regions:
+    name: Paper · regions (headless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      - run: npm ci
+      - name: Build runner (dependency order)
+        run: |
+          npm run build -w @mc-test/protocol
+          npm run build -w @mc-test/driver-headless
+          npm run build -w @mc-test/driver-inprocess
+          npm run build -w @mc-test/driver-pixel
+          npm run build -w @mc-test/runner
+
+      # M3 build sequence: publish the agent core SPI to mavenLocal (the SUT
+      # compiles against it), then build the server-bukkit agent jar.
+      - name: Build agent core + server-bukkit jar
+        run: gradle -p agents :core:publishToMavenLocal :server-bukkit:jar
+
+      # Build the regions SUT plugin (Maven).
+      - name: Build regions plugin (SUT)
+        run: mvn -B -f examples/regions/plugin/pom.xml package
+
+      # The real boot. F1 reconciles target id / config resolution (README uses
+      # `--target paper-1.20.4`; the example matrix id is `regions-paper-headless`).
+      - name: Run regions E2E on Paper
+        run: npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
+
+      - name: Upload report + run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mc-test-report
+          path: |
+            mc-test-report/
+            .mc-test/run/
+          if-no-files-found: ignore
