@@ -1,6 +1,9 @@
 # mc-test — v1.0 Plan (the first usable product)
 
-> Status: active. This is the **scoped, sequenced plan for the first usable product**, derived from
+> Status: **v1.0 implemented** — F0–F5 are done on branch `f0-ci-foundation` (2026-06-16, **not yet
+> pushed**). See the **[Status](#status--v10-implemented--2026-06-16)** section below for exactly what's
+> done, what remains, and how to resume. This is the **scoped, sequenced plan for the first usable
+> product**, derived from
 > `FINALIZATION.md` after the v1.0 scope was ratified (2026-06-16). `FINALIZATION.md` enumerates the full
 > path (phases F0–F7) and the open scope decisions; **this document locks the decisions and the build
 > order for v1.0** and is authoritative only for that. All wire names, capability keys, selector keys,
@@ -45,6 +48,55 @@ F0 ──► F1 ──► F6 ──► (release gate: decide OSS vs internal →
 
 > F2 vs F6 ordering is flexible — both only need F1 and are independent of each other. F6 is placed first
 > because the IntelliJ front door is the stated v1.0 requirement.
+
+---
+
+## Status — v1.0 implemented ✅ (2026-06-16)
+
+**The locked order F0 → F1 → F6 → F2 → F5 is implemented and verified** on branch `f0-ci-foundation`
+(6 commits, **not yet pushed**). The Paper/Spigot plugin product is real: a real Paper boot drives the
+regions GUI and asserts server truth, runnable from the CLI **and** `gradle mcTest`. The per-phase
+sections below are the original spec; **this table is the source of truth for status.**
+
+| Phase | Status | Commit(s) | Delivered (verified on real boots) |
+|-------|--------|-----------|------------------------------------|
+| **F0** CI + foundation | ✅ scaffolded | `edf88ee` | `ci.yml` (TS + JVM gates) + `e2e.yml` (real-boot / `gradle mcTest`, nightly); `LICENSE` (MIT); `package-lock.json`. Both lanes validated locally. *Loose ends → Resume #1, #3.* |
+| **F1** Paper/plugin real | ✅ done | `9725e6c` | Real Paper boot: `assertPluginState` green vs real `RegionStore`; honest-skip + truth/UI-divergence controls; fixtures; `keepOnFailure` cleanup. Committed harness `tests/e2e/run-real-boot.mjs` (5/5) + N=3 flake budget. |
+| **F6** IntelliJ/Gradle | ✅ done | `8639284`, `7a6ff52` | `gradle-plugin/` (`io.mctest.mc-test`): `gradle mcTest` builds the jar → boots Paper → green (verified). Authoring JSON Schema; sample `examples/regions/plugin-gradle`; CI-wired. |
+| **F2** old-version honesty | ✅ done | `0ca0586` | `via:true` → honest skip `VIA_BRIDGE_UNAVAILABLE`; old plugin target w/o a Paper build → `UNSUPPORTED_TARGET` skip (no vanilla false-green); `sha256`-verified `path`/`url` sources. |
+| **F5** user docs + DX | ✅ done | `692800c` | `GETTING_STARTED.md` + `AUTHORING.md`; `mc-test init` / richer `doctor`; HTML report; dependency-ordered root `npm run build`. Documented flow verified green. |
+
+**Verified:** ~307 TS tests + the JVM agent tests green; `npx mc-test run examples/regions/regions.mctest.yml
+--target paper-1.20.4` → PASSED incl. `assertPluginState`, with `mc-test-report/report.html`. Real boots
+ran on the local Windows machine (JDK 21 / Gradle 9.4.0 / Maven 3.9.6).
+
+### Resume here — remaining for v1.0 "done"
+
+1. **Push `f0-ci-foundation` + open a PR.** CI has never run on GitHub (branch unpushed) → do this to get
+   the green **badge** (the one open F0 acceptance box). Locally both lanes pass.
+2. **Make the D1 distribution call** (public OSS vs internal). It unblocks, in order:
+   - npm publish of `@mc-test/*` + GitHub Releases of the agent jars (F0 release gate);
+   - **zero-Node-setup** for `gradle mcTest` (auto Node provisioning + resolving the published runner — the F6 deferral);
+   - flipping root `package.json` `private: true`.
+3. **Small F0 leftover:** document the MCTP `protocolVersion` bump policy (PROTOCOL.md §15) as the release contract.
+4. **(Optional) commit a Gradle wrapper** (`gradle wrapper` under `gradle-plugin/` and `agents/`) so `./gradlew`
+   works without a system Gradle; CI currently provisions Gradle via `gradle/actions/setup-gradle`.
+
+### Out of scope for v1.0 (→ v2)
+
+F3 (rendered-client mods), F4 (multi-loader matrix), genuine ViaProxy bridging, genuine fake players (needs
+Carpet), and the `maven`/`modrinth`/`github` source resolvers. These are scaffolded/coded but not built or
+run — they honestly **skip** today (never a false green).
+
+### Definition of done (v1.0) — checklist
+
+- [x] Canonical regions test real-green incl. `assertPluginState` on Paper; truth/UI-divergence + honest-skip controls enforced (committed in `tests/e2e/`).
+- [x] Runnable via `npx mc-test` **and** `gradle mcTest`; `LICENSE` + Getting-Started docs.
+- [x] Headless driver + `server-bukkit` agent green against the M1 conformance fixtures.
+- [x] No false greens — old-version / `via` / pixel paths honest-skip, surfaced in the skip matrix.
+- [x] Docs match the shipped product.
+- [ ] **CI green on every push** — needs the branch pushed (Resume #1).
+- [ ] **Release gate decided + executed** — needs the D1 call (Resume #2).
 
 ---
 

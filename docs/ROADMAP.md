@@ -1,6 +1,11 @@
 # mc-test — Build Roadmap
 
-> Status: planning. This document is the authoritative **build order** for mc-test. It defines the
+> Status: planning (architecture / build order). **The v1.0 finalization (F0–F5) is implemented** — see
+> `V1_PLAN.md` §Status and `FINALIZATION.md` §0 for the real-boot state. In particular, the M3 "real boot
+> not run here" status notes below are **superseded** (F1 ran them for real: `assertPluginState` is green on
+> a real Paper boot, with the negative controls enforced). M4/M5 remain deferred to v2.
+>
+> This document is the authoritative **build order** for mc-test. It defines the
 > milestone sequence (M1 → M5), concrete acceptance criteria, what each milestone unlocks, a
 > "testing the tester" strategy, and an honest "hard parts" register with mitigations.
 >

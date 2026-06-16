@@ -10,19 +10,27 @@
 
 ## 0. Where we actually are (verified state)
 
+> **Updated 2026-06-16:** the F0→F5 finalization (the v1.0 plugin slice) is **implemented** on branch
+> `f0-ci-foundation` (unpushed). The table below reflects the new state; see `V1_PLAN.md` §Status for the
+> per-phase commits + what remains.
+
 | Area | State | Evidence |
 |------|-------|----------|
-| M1 protocol (`@mc-test/protocol`) | **Done.** Types + JSON Schema + conformance fixtures, drift-gated. | 217 tests green; schema-sync gate. |
-| M2 runner + headless (Paper) | **Done & really runs.** A real Mineflayer bot booted Paper 1.20.4, ran `/or`, opened the GUI, clicked Regions→TestRegion, matched real chat → green JUnit. Negative controls (mutation→red, capability→skip) have fired for real. | `mc-test-report/junit/results.xml`; `.mc-test/run/paper-1.20.4-*/logs`. |
-| M3 server-bukkit (truth) | **Built + unit-green, but NEVER run for real.** No real boot has co-selected the agent jar; `assertPluginState` has only run against the mock. | `agents/server-bukkit/build/libs/mc-test-agent-bukkit.jar` exists; no `*agent*` jar in any `.mc-test/run/*/plugins/`. |
-| M4 client-fabric + inprocess | **Coded, never built or run.** No Loom mod jar, no client agent jar, no client ever launched. | `examples/regions/mod/build/libs/` empty; launcher path is acceptance-only. |
-| M5 fan-out (forge/neoforge/server-fabric + pixel) | **Scaffolded, never built.** Loader shims never compiled; pixel driver is a stub that throws. | No forge/neoforge build dirs; `PixelDriverNotImplementedError`. |
-| CI | **None.** | No `.github/workflows`. |
-| Provisioning | **Paper-only.** No Fabric/Forge/NeoForge/vanilla source resolvers; ViaProxy referenced only in comments. | `cli.ts` always calls `provisionPaper`; `via` parsed but unwired. |
-| Packaging | **Not shippable.** Root `private: true`; packages `0.1.0` unpublished; agent jars undistributed; `LICENSE` = "TBD". | `README.md`, `package.json`. |
+| M1 protocol (`@mc-test/protocol`) | **Done.** Types + JSON Schema + conformance fixtures, drift-gated; + a hand-maintained authoring schema for `.mctest.yml`. | 217 tests green; schema-sync gate; `schema/mctest-stepfile.schema.json`. |
+| M2 runner + headless (Paper) | **Done & really runs.** Real Mineflayer bot vs Paper 1.20.4 → green JUnit + HTML report. | `mc-test-report/report.html`, `junit/results.xml`. |
+| M3 server-bukkit (truth) | **Done — run for real (F1).** A real boot co-selects the agent jar; `assertPluginState` is green vs real `RegionStore`; honest-skip + truth/UI-divergence controls + fixtures verified. | `tests/e2e/run-real-boot.mjs` (5/5 + N=3); server.log `MCTP listening`/`Done`/`Tester joined`. |
+| M4 client-fabric + inprocess | **v2 (deferred).** Coded, never built/run; client-GUI tests honestly skip (`unmet:[clientScreens]`). | — |
+| M5 fan-out (forge/neoforge/server-fabric + pixel) | **v2 (deferred).** Scaffolded; pixel stub throws; old-version rows honest-skip. | — |
+| CI | **Present (F0).** `ci.yml` fast lane (TS + JVM gates) + `e2e.yml` (real-boot harness + `gradle mcTest`, nightly). Validated locally; **not yet run on GitHub** (branch unpushed → no badge). | `.github/workflows/`. |
+| Provisioning | **Paper, real + hardened.** `keepOnFailure` cleanup; honest old-version skip (`UNSUPPORTED_TARGET`); `via:true` honest-skip (`VIA_BRIDGE_UNAVAILABLE`); `sha256`-verified `path`/`url` sources. Non-Paper resolvers are v2. | `provision/sources.ts`, `cli.ts`, `PaperProvisioner.ts`. |
+| Gradle/IntelliJ (F6) | **Done.** `gradle mcTest` builds the SUT jar, boots Paper, runs the test — verified end-to-end. | `gradle-plugin/`, `examples/regions/plugin-gradle/`. |
+| Docs / DX (F5) | **Done.** `GETTING_STARTED.md` + `AUTHORING.md`; `mc-test init` / rich `doctor`; HTML report. | `docs/`. |
+| Packaging | **Licensed, not yet published.** `LICENSE` = MIT; root still `private: true`; publish deferred to the D1 distribution decision. | `LICENSE`, `package.json`. |
 
-**Usable today** for: testing **Spigot/Paper plugin GUIs** (chest/anvil/sign menus), chat, and commands via
-the headless bot. That is a credible product on its own (ROADMAP §4.6).
+**Usable now (v1.0):** testing **Spigot/Paper plugin GUIs** (chest/anvil/sign menus), chat, commands, **and
+server-side truth** (`assertPluginState` / fixtures) on a **real Paper boot** — from the CLI or
+`gradle mcTest`, with an HTML + JUnit report. The F0→F5 finalization is implemented on branch
+`f0-ci-foundation`; see `V1_PLAN.md` §Status for what remains (push/PR + the distribution decision).
 
 **Two scope decisions** that change the size of this plan — **✅ ratified 2026-06-16** (see `V1_PLAN.md`,
 which is authoritative for the locked v1.0 order):

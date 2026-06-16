@@ -40,12 +40,12 @@ in-game agents stay tiny, dumb, and cheap to port to each `(loader × version)`.
 
 ## Quickstart
 
-> Status: **M1–M5 landed.** The protocol (`@mc-test/protocol`), runner + headless driver, the
-> `server-bukkit` truth agent, the `client-fabric` + in-process driver, and the **M5 fan-out**
-> (`client-forge` / `client-neoforge` / `server-fabric` shims + the `pixel` last-resort driver) are in.
-> The TypeScript runner/protocol/driver suites and the Java `core` tests are green; the rendered-client
-> and loader-agent builds (Loom / ForgeGradle / NeoGradle + a display) are **acceptance-only**. See
-> `docs/ROADMAP.md` for the build order and per-milestone status.
+> Status: **v1.0 Paper/plugin product is real** (on branch `f0-ci-foundation`). A real Paper boot drives
+> the regions GUI and asserts server-side state (`assertPluginState`); runnable via the CLI **and**
+> `gradle mcTest`, with CI gates, an HTML + JUnit report, and user docs. Rendered-client **mod** GUIs and
+> the multi-loader matrix are **v2** — those targets honestly *skip*. See
+> [`docs/V1_PLAN.md`](./docs/V1_PLAN.md) for status + what remains, and
+> [`docs/GETTING_STARTED.md`](./docs/GETTING_STARTED.md) to run it.
 
 ```bash
 # build the framework (Node 18+; builds @mc-test/* in dependency order)
