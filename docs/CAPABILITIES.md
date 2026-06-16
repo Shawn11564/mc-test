@@ -121,6 +121,10 @@ Legend: **✅ yes (always advertised)** · **⚠️ conditional (advertised only
 Footnotes (conditions under which a ⚠️ becomes ✅ for that target):
 
 1. **`pixel` + `clientScreens`** — the pixel driver advertises `clientScreens` only in a *degraded* form: it can `screen.clickElement` by OCR/template match and `screen.get` returns OCR-derived text elements, but `screen.listElements` fidelity is best-effort and `screen.typeText`/`screen.pressKey` go through synthetic key events. It is the universal last resort; selection prefers any other driver that satisfies the same requirement (see [§7](#7-driver-selection-algorithm) cost ordering).
+
+> **Pixel driver status (M5): shipped as a selectable stub.** The pixel column above is no longer hypothetical — the driver exists as the package `@mc-test/driver-pixel` (`/packages/driver-pixel`, driver id `pixel`, MCTP `agent.kind: pixelOcr`), registered in the runner's `DriverRegistry` at **cost 4** (the last resort, per [§7](#7-driver-selection-algorithm)). The implemented stub **advertises** the boolean set `chat, command, containerGui, clientScreens, screenshot, rendering, typeText, pressKey` (plus all loaders and `mcVersionRange: ">=1.8"`) and additionally surfaces the advisory **`brittle`** descriptor (see the note below). It does **not** advertise `testIdTags`, `worldTruth`, `pluginState`, `fixtures`, or `fakePlayers`. The OCR/template + OS-input backend is **not implemented**: the driver is registered purely so capability negotiation can reason about it, and `start()` throws `PixelDriverNotImplementedError` — selection never *launches* it. Selection still prefers any cheaper structural driver; `pixel` is chosen only when nothing cheaper fits (or `driver: pixel` is pinned), so the stub is never actually started by the normal regions targets.
+
+> **The `brittle` advisory descriptor.** `brittle` is an **advisory quality descriptor** that the pixel/OCR driver advertises as `brittle: true` (its spelling and semantics are owned by `PROTOCOL.md`, which carries it on the protocol `Capabilities` object alongside `loader`/`mcVersionRange`). It is **deliberately excluded from the canonical capability-key set** — `brittle` is **not** a matchable capability, exactly like the `loader` and `mcVersionRange` *target descriptors*: a test can never `requires:` or `optional:` it, and it never participates in `satisfies(union, R)`. The runner reads it for **reporting only**: when a `brittle: true` driver is selected it emits a loud report note (console + a JUnit `<property name="brittle" value="true"/>`, see [§9](#9-skips-in-junit-xml-reports)). It is therefore omitted from the capability-key registry in [§3](#3-canonical-capability-keys) and [§13.1](#131-capability-keys-semantics-registry--spellings-defined-in-protocolmd) on purpose.
 2. **`inprocess` + `rendering`/`screenshot`** — advertised when the client agent is attached to a client with a live framebuffer (desktop CI runner or Linux under **Xvfb**). A headless/integrated-server client without a display advertises `clientScreens` but **not** `rendering`/`screenshot`.
 3. **`headless` + `worldTruth`** — the Mineflayer bot only has client-side world knowledge (loaded chunks around it). It advertises `worldTruth` **only when paired with the server agent in the same session** (co-driver), so authoritative reads go through `truth.getWorldBlock`/`truth.getEntities` on the server. Standalone, it does **not** advertise `worldTruth`.
 4. **`inprocess` + `worldTruth`** — same rule as headless: advertised only when co-driven by the server agent. The client agent never asserts world-truth on its own.
@@ -374,6 +378,8 @@ The runner emits standard **JUnit XML** (consumed by CI dashboards, GitHub Actio
 - One `<testcase>` is emitted **per (test × target)**. The target identity goes on attributes so a single test name appears once per matrix cell.
 - `time` is the wall time spent (for a skip this is the negotiation time, typically a few ms).
 - The structured skip JSON ([§8.3](#83-the-skip-reason-string)) is embedded verbatim inside the `<skipped>` text node (CDATA) so downstream tooling can recover `unmet`, `bestDriver`, etc.
+- **Brittle-driver flag.** When the cell ran on a driver advertising the advisory `brittle` descriptor (the pixel/OCR driver — see [§4](#4-driver--capability-matrix)), the runner additionally emits `<property name="brittle" value="true"/>` on the `<testcase>` (mirroring the loud console note). `brittle` is **not** a capability key and never appears in `required`/`granted`; this property is purely a reporting signal that the result leaned on a last-resort, flaky driver.
+- **Full-matrix skip matrix.** A full-matrix run (`mc-test run <file> --target all`, [§9.4](#94-full-matrix-runs-and-the-test--target-skip-matrix)) aggregates every cell into **one** JUnit document and, in addition, prints a `(test × target)` **skip matrix** to the console — which cells were skipped and why, rendered as the machine-readable capability reason strings from [§8.3](#83-the-skip-reason-string).
 
 ### 9.2 Example — regions client-GUI variant skipped on a Paper target
 
@@ -423,6 +429,24 @@ The runner emits standard **JUnit XML** (consumed by CI dashboards, GitHub Actio
 ```
 
 > The two `<testcase>` rows above are the **same authored test** resolved against two different target rows (one demanding a client GUI, one accepting the inventory GUI). This is the payoff of capability negotiation: write once, let the matrix + negotiation decide *run* vs *skip-with-reason*.
+
+### 9.4 Full-matrix runs and the (test × target) skip matrix
+
+`mc-test run <file> --target all` (or `--target` omitted) runs the file against **every** target in `mc-test.yml`, aggregates all `(test × target)` cells into **one** JUnit document (one `<testsuite>` per target, as usual), and additionally prints a `(test × target)` **skip matrix** to the console. Each cell shows whether the test `ran`/`skipped`/`failed` on that target, and for a skip carries the machine-readable reason string from [§8.3](#83-the-skip-reason-string) (`NO_COMPATIBLE_DRIVER` with `unmet[…]`, `skip[target]`, etc.) so an at-a-glance grid explains exactly which cells were skipped and why — the honest-skip principle made legible across the whole matrix.
+
+When a cell was served by a `brittle`-advertising driver (the pixel/OCR driver), its `<testcase>` carries the `<property name="brittle" value="true"/>` flag from [§9.1](#91-mapping):
+
+```xml
+<testcase classname="examples.regions.pixel"
+    name="open /or, click Regions, click TestRegion [paper/1.8.9]" time="9.204">
+  <properties>
+    <property name="driver"  value="pixel"/>
+    <property name="brittle" value="true"/>
+    <property name="granted" value="command,chat,clientScreens,screenshot,rendering"/>
+  </properties>
+  <!-- no failure/error/skipped child => passed (but flagged brittle) -->
+</testcase>
+```
 
 ---
 
@@ -686,7 +710,7 @@ Context: `ctx.granted` · `ctx.has(key)` · `ctx.driver` · `ctx.coDriver` · `c
 Typed key constants: `cap.command … cap.fakePlayers`; type `CapabilityKey` (string-literal union of the capability keys defined in `PROTOCOL.md`).
 
 ### 13.9 Runner CLI / report config (capability-related)
-`--fail-on-skip` (`reporting.failOnSkip`) · `--max-skip-ratio <0..1>` · JUnit `<skipped message="…">` with structured-JSON CDATA body · `<property>` keys: `loader`, `mc`, `driver`, `coDriver`, `required`, `granted`, `skipCategory`.
+`--fail-on-skip` (`reporting.failOnSkip`) · `--max-skip-ratio <0..1>` · `--target all` (full-matrix run → one aggregated JUnit + a printed `(test × target)` skip matrix, [§9.4](#94-full-matrix-runs-and-the-test--target-skip-matrix)) · JUnit `<skipped message="…">` with structured-JSON CDATA body · `<property>` keys: `loader`, `mc`, `driver`, `coDriver`, `required`, `granted`, `skipCategory`, and `brittle` (`"true"` when the cell ran on a `brittle`-advertising driver — advisory descriptor owned by `PROTOCOL.md`, never a capability key).
 
 ### 13.10 Canonical paths referenced
 `docs/CAPABILITIES.md` (this) · `docs/PROTOCOL.md` · `docs/DRIVERS.md` · `packages/protocol` (JSON Schema + TS types) · `packages/runner` (loader, selection, JUnit reporter) · `examples/regions/regions.portable.mc.yml` · `examples/regions/regions.clientgui.mc.yml` · `mc-test.yml`.

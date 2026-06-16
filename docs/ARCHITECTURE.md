@@ -196,7 +196,7 @@ semantic selectors in its own medium. Full matrix in §4; capability keys in §5
 | 1 | **Headless protocol bot** | `/packages/driver-headless` | Node process (Mineflayer) | chat/commands, inventory GUIs, world-truth (via server agent) |
 | 2 | **In-process client agent** | `/packages/driver-inprocess` + `/agents/client-*` | inside the **real** client | client `Screen`s/widgets, rendering, screenshots |
 | 3 | **Server-side companion agent** | `/agents/server-bukkit`, `/agents/server-fabric` | inside the server | native world-truth, plugin-state, fixtures, fake players |
-| 4 | **Pixel/OCR driver** | `/packages/driver-headless` (pixel module) | any rendered client | universal last resort; brittle |
+| 4 | **Pixel/OCR driver** | `/packages/driver-pixel` | any rendered client | universal last resort; brittle |
 
 Driver #3 is special: it is usually a **companion** that rides *alongside*
 another driver (it answers `world.*` / `assertPluginState` while the bot or
@@ -517,7 +517,8 @@ params/results/errors.
 ### 4.6 Driver 4 — Pixel/OCR driver
 
 - **Stack:** screen-capture + template-match / OCR over any rendered client
-  (module within `/packages/driver-headless`); a **universal last resort**.
+  (`/packages/driver-pixel`); a **universal last resort**. M5 ships it as a
+  selectable stub (cost 4; the OCR/template backend is not yet implemented).
 - **Resolves selectors** by OCR (`label`/`textContains`) and template (`itemType`,
   `role`), against pixels. No structural access, so **brittle**.
 - **Capabilities:** `screenshot`, `pressKey`/`typeText`, weak `chat`. Used only
@@ -592,6 +593,7 @@ the protocol. That is the narrow waist paying off.
 /packages/runner              TS CLI, orchestrator, MCTP client, YAML loader, JUnit reporter
 /packages/driver-headless     TS Mineflayer-based driver
 /packages/driver-inprocess    TS adapter that talks to the in-game client agent
+/packages/driver-pixel        TS pixel/OCR last-resort driver (M5; selectable stub)
 /agents/core                  Java shared agent core (MCTP server + primitive dispatch)
 /agents/client-fabric, /agents/client-forge, /agents/client-neoforge   thin client mods
 /agents/server-bukkit         Bukkit/Paper plugin agent

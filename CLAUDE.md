@@ -52,6 +52,7 @@ protocol.
 /packages/runner              @mc-test/runner (bin: mc-test) — CLI, orchestrator, MCTP client, YAML loader, JUnit reporter, fluent API
 /packages/driver-headless     @mc-test/driver-headless — Mineflayer + minecraft-data + ViaVersion/ViaProxy; hosts an MCTP WS server
 /packages/driver-inprocess    @mc-test/driver-inprocess — runner-side adapter that talks to the in-game client agent (launches/babysits a rendered client)
+/packages/driver-pixel        @mc-test/driver-pixel — pixel/OCR universal last-resort driver (M5 selectable stub; cost 4; OCR/template backend unimplemented)
 /agents/core                  Java shared agent core (MctpServer + Dispatch + PrimitiveHandler + SelectorMatch + ElementModel + Errors + Capabilities)
 /agents/client-fabric         thin Fabric client mod (Yarn-mapped)        — real client Screens/widgets
 /agents/client-forge          thin Forge client mod (MCP-SRG-mapped)

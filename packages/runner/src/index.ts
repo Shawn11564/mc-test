@@ -38,6 +38,12 @@ export { stepCapMatch } from "./engine/CapabilityMatch.js";
 export { loadSteps, parseStepDocument } from "./config/loadSteps.js";
 export { loadMatrix, parseMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 export { renderJUnit, writeJUnit } from "./report/JUnitReporter.js";
+export {
+  buildSkipMatrix,
+  renderSkipMatrix,
+  type SkipMatrix,
+  type SkipCell,
+} from "./report/SkipMatrix.js";
 export { collectArtifacts } from "./report/Artifacts.js";
 export {
   provisionPaper,

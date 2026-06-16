@@ -90,8 +90,9 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `id` | string | ✅ | — | Stable, unique target identifier (slug: `^[a-z0-9][a-z0-9._-]*$`). Appears in report names and instance dir paths. After matrix expansion the instance id is `<id>@<loader>-<mc>-<driver>` (collisions are an error). |
 | `loader` | `Loader` enum | ✅ | — | Server/client platform family. One of: `paper`, `spigot`, `folia`, `fabric`, `forge`, `neoforge`, `quilt`, `vanilla`. Determines which installer path §2.3 runs and which agent variant is required. |
 | `mc` | `McVersion` (string) | ✅ | — | Target Minecraft version, e.g. `1.20.4`, `1.21.4`. Semver-ish `MAJOR.MINOR[.PATCH]`. Snapshots allowed as `24w39a`-style ids when `loader: vanilla`/`fabric`. |
-| `side` | `Side` enum | — | inferred | `server`, `client`, or `both`. Inferred from `driver` when omitted (`headless`/`server-bukkit`/`server-fabric` ⇒ `server`; `inprocess`/`pixel` ⇒ `client`+`server`). Controls whether a rendered client is launched (§5). |
-| `driver` | `DriverId` enum | — | auto | Preferred driver: `headless`, `inprocess`, `server-bukkit`, `server-fabric`, `pixel`, or `auto`. `auto` lets capability negotiation pick (§4). An explicit driver still must satisfy the suite's required caps or the target is **skipped with a reason**. |
+| `side` | `Side` enum | — | inferred | `server`, `client`, or `both`. Inferred from `driver` when omitted (`headless` or a `server` driver ⇒ `server`; `inprocess`/`pixel` ⇒ `client`+`server`). Controls whether a rendered client is launched (§5). |
+| `driver` | `DriverId` enum | — | auto | Preferred driver: `headless`, `inprocess`, `server`, `pixel`, or `auto` (the `DriverId` set in `@mc-test/protocol`). `auto` lets capability negotiation pick (§4). An explicit driver still must satisfy the suite's required caps or the target is **skipped with a reason**. The `pixel` driver (`@mc-test/driver-pixel`) is a selectable last-resort candidate as of **M5** (§4). Note: `server-bukkit`/`server-fabric` are **agent** ids (co-selected via `agents:`), not driver ids. |
+| `via` | bool | — | `false` | Route the headless bot through **ViaVersion/ViaProxy** so it can connect to an old MC server (e.g. `paper-1.8.9`) that its native protocol predates. Parsed by the runner as of **M5**; only meaningful for `headless`/`server-side` targets (the offline proxy sits in front of the server, §5.4). |
 | `useMatrix` | list<string> | — | `[]` | Names of `matrix` axes this target expands over. Empty ⇒ the target is taken verbatim (one instance). E.g. `[mc]` expands the target once per `matrix.mc` value. |
 | `server` | `Source` \| `{ref}` | cond | — | The server artifact (jar/installer) for server-side loaders (`paper`, `spigot`, `folia`, server-side `fabric`/`forge`/`neoforge`/`quilt`, `vanilla`). REQUIRED when `side` includes `server`. May be `{ ref: <sources key> }`. |
 | `client` | `Source` \| `{ref}` | cond | — | The client artifact / launch profile for rendered-client targets. REQUIRED when `side` includes `client` and `driver: inprocess|pixel`. See §5.2. |
@@ -99,7 +100,7 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `plugins` | list<`Source`\|`{ref}`> | — | `[]` | Bukkit/Spigot/Paper **plugins** to install (the SUT and its deps). Dropped into `plugins/`. The regions plugin is one of these. |
 | `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. For an `inprocess` (rendered-client) target these mods are installed into the **rendered client's** `mods/` (§5.2) alongside the client agent (§2.4.2). The regions client-GUI mod is one of these. |
 | `display` | `Display` enum | — | from `provision.display` | Per-target display backend for a rendered (`inprocess`/`pixel`) client: `xvfb` (Linux headless / CI) or `desktop` (a real display). Overrides the global `provision.display.backend` (§5.1) for this target only. Ignored for headless/server-side targets (no rendered client). |
-| `agents` | list<`AgentId`> | — | inferred from `driver`/`side` | The set of mc-test agents co-installed and **co-selected** for this target. Each entry is a known agent id — `server-bukkit`, `server-fabric`, `client-fabric`, `client-forge`, `client-neoforge` (resolved via `agentResolver`, §2.4); a per-agent artifact override may be supplied out-of-band via `agentSources` (keyed by agent id). When `agents` is omitted the runner infers them from `driver`/`side`. Listing `server-bukkit` on a Paper target installs the server agent and gives the test the server-owned capabilities (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`) over a **second MCTP connection** (§2.4.1, §4). Example: `agents: [ server-bukkit ]`. A client target typically lists both a client and a server agent, e.g. `agents: [ client-fabric, server-fabric ]`. |
+| `agents` | list<`AgentId`> | — | inferred from `driver`/`side` | The set of mc-test agents co-installed and **co-selected** for this target. Each entry is a known agent id — `server-bukkit`, `server-fabric`, `client-fabric`, `client-forge`, `client-neoforge` (resolved via `agentResolver`, §2.4; per-agent build/scaffold status is the rightmost column of that §2.4 table — `server-fabric`/`client-forge`/`client-neoforge` are **scaffolded (M5, acceptance-only)**); a per-agent artifact override may be supplied out-of-band via `agentSources` (keyed by agent id). When `agents` is omitted the runner infers them from `driver`/`side`. Listing `server-bukkit` on a Paper target installs the server agent and gives the test the server-owned capabilities (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`) over a **second MCTP connection** (§2.4.1, §4). Example: `agents: [ server-bukkit ]`. A client target typically lists both a client and a server agent, e.g. `agents: [ client-fabric, server-fabric ]`. |
 | `world` | `World`\|`{ref}` | — | `flat-void` builtin | The world snapshot copied **fresh per test** (§3). May be a named ref. |
 | `serverProps` | map<string,scalar> | — | see §2.6 | Overrides merged into `server.properties` after the framework-enforced keys. Cannot override `online-mode`, `query.port`, `server-port` (those are owned by the runner). |
 | `online-mode` | bool | — | `false` | **Forced to `false`** by the framework for all booted servers (offline auth, §5.4). Exposed only so a suite can *assert* on it; setting `true` is rejected by the loader. |
@@ -352,13 +353,13 @@ the instance's `launch.json` so boot (§2.8) and teardown are loader-agnostic.
    - **`AgentResolver`** default: look up `agents/<variant>/build/libs/agent-<variant>-<mc>.jar`
      produced by the agent build (`/agents/*`), where `<variant>` maps from `(loader,side)`:
 
-     | loader | side | variant artifact | dir |
-     |--------|------|------------------|-----|
-     | paper/spigot/folia | server | `server-bukkit` | `/agents/server-bukkit` |
-     | fabric (server) | server | `server-fabric` | `/agents/server-fabric` |
-     | fabric (client) | client | `client-fabric` | `/agents/client-fabric` |
-     | forge (client) | client | `client-forge` | `/agents/client-forge` |
-     | neoforge (client) | client | `client-neoforge` | `/agents/client-neoforge` |
+     | loader | side | variant artifact | dir | status |
+     |--------|------|------------------|-----|--------|
+     | paper/spigot/folia | server | `server-bukkit` | `/agents/server-bukkit` | shipped (M3) |
+     | fabric (server) | server | `server-fabric` | `/agents/server-fabric` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-server-fabric.jar`) |
+     | fabric (client) | client | `client-fabric` | `/agents/client-fabric` | shipped (M4) |
+     | forge (client) | client | `client-forge` | `/agents/client-forge` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-client-forge.jar`) |
+     | neoforge (client) | client | `client-neoforge` | `/agents/client-neoforge` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-client-neoforge.jar`) |
 
    - The agent is the *only* per-version artifact (it carries the Yarn/MCP/Mojmap mappings
      for that `mc`). Resolution can be overridden with
@@ -585,7 +586,13 @@ can do*.
 3. The negotiator selects the **cheapest** driver whose advertised set ⊇ the required
    must-haves (cost order: `server-bukkit`/`server-fabric` < `headless` < `inprocess` <
    `pixel`; cost order is owned by [`CAPABILITIES.md`](./CAPABILITIES.md) §7). `Target.driver`
-   (if not `auto`) constrains the candidate set first.
+   (if not `auto`) constrains the candidate set first. As of **M5** the `pixel` driver
+   (`@mc-test/driver-pixel`, driver id `pixel`, **cost 4** — the last resort) is a real
+   selectable candidate that advertises a boolean cap set + the advisory `brittle: true`
+   descriptor (§6.1); selection prefers any cheaper structural driver and chooses `pixel`
+   **only** when nothing cheaper fits (or `driver: pixel` is pinned). Its OCR/template +
+   OS-input backend is a **stub** (registered purely for negotiation; selection never launches
+   it).
 3a. **Co-selection (multi-connection).** When the required set spans both UI capabilities and
    **server-owned** ones (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`), and the
    target's `agents:` includes a server agent (`server-bukkit`/`server-fabric`), the runner
@@ -700,6 +707,25 @@ Artifacts captured: `server.log`, `client.log` (rendered targets), `screenshot` 
 `screenshot` primitive at the moment of failure, rendered targets), `world-diff` (changed
 region files vs. pristine — invaluable for `worldTruth` assertion failures), and the agent's
 MCTP trace (`mctp.jsonl`).
+
+### 6.1 Full-matrix run & skip matrix (M5)
+
+`mc-test run <file> --target all` (or with `--target` omitted) runs the **whole matrix** — every
+expanded target instance — in one invocation, aggregates **one** JUnit document (the usual one
+`<testsuite>` per `(suite × target instance)`), and prints a `(test × target)` **skip matrix** to
+the console: a grid showing which `(test, target)` cells were **skipped** and **why**, as the
+machine-readable capability **reason strings** from §4 (e.g. the unmet-cap message naming the missing
+`clientScreens`). This makes the honest-skips story (§4, Prime Directive 4) legible at a glance across
+the matrix without scraping the XML.
+
+> **`brittle` report note (M5).** `brittle` is an **advisory quality descriptor** advertised by the
+> pixel/OCR driver (`@mc-test/driver-pixel`, driver id `pixel`), **not** a matchable capability — a
+> test cannot `require` it (it is deliberately excluded from the canonical capability-key set; see
+> [PROTOCOL.md](./PROTOCOL.md) → *Capabilities*, like the `loader`/`mcVersionRange` descriptors). When
+> the negotiator selects a driver advertising `brittle: true`, the runner emits a **loud report note**
+> — to the console and as a JUnit `<property name="brittle" value="true"/>` on the affected
+> `<testcase>` (under its `<properties>`, like `loader`/`mc`/`driver`) — flagging that the result came
+> from a fragile (pixel/OCR) backend.
 
 ---
 

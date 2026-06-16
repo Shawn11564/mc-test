@@ -34,11 +34,18 @@ in-game agents stay tiny, dumb, and cheap to port to each `(loader × version)`.
    screenshots, and rendering.
 3. **Server-side agent** (`/agents/server-bukkit` + `/agents/server-fabric`) — native world-truth +
    plugin-state assertions, fixtures, fake players. Rides alongside driver 1 or 2.
-4. **Pixel/OCR driver** — universal last resort; brittle.
+4. **Pixel/OCR driver** (`/packages/driver-pixel`) — universal last resort; brittle (OCR/template over
+   raw pixels). A **selectable stub** (M5): registered at the highest cost and chosen only when no
+   structural driver fits.
 
 ## Quickstart
 
-> Status: **design-complete; implementation starting at M1.** See `docs/ROADMAP.md` for the build order.
+> Status: **M1–M5 landed.** The protocol (`@mc-test/protocol`), runner + headless driver, the
+> `server-bukkit` truth agent, the `client-fabric` + in-process driver, and the **M5 fan-out**
+> (`client-forge` / `client-neoforge` / `server-fabric` shims + the `pixel` last-resort driver) are in.
+> The TypeScript runner/protocol/driver suites and the Java `core` tests are green; the rendered-client
+> and loader-agent builds (Loom / ForgeGradle / NeoGradle + a display) are **acceptance-only**. See
+> `docs/ROADMAP.md` for the build order and per-milestone status.
 
 ```bash
 # install (npm workspaces monorepo)

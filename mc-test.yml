@@ -1,9 +1,16 @@
-# mc-test.yml — minimal matrix for the canonical "regions" example.
-# Run:  npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
+# mc-test.yml — the canonical "regions" (loader × version) matrix.
+# Run one target:   npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
+# Run the matrix:   npx mc-test run examples/regions/regions.mctest.yml --target all
+#                   (aggregates one JUnit + prints the (test × target) skip matrix)
 #
-# See mc-test.example.yml for the full multi-loader matrix. This file carries the
-# small, runnable Paper/headless slice (M2/M3) PLUS one acceptance-only M4 in-process
-# (rendered-client) target for the client-GUI variant.
+# This is the M5 fan-out (ROADMAP §6.2/§6.3): the SAME authored test runs across the
+# whole matrix and each cell is GREEN or HONESTLY SKIPPED. Only the Paper/headless
+# rows are runnable in this repo's offline CI (M2/M3); the inprocess (rendered-client)
+# rows and their loader agents (client-fabric/forge/neoforge + server-fabric) are
+# ACCEPTANCE-ONLY (need a rendered client under a display + the Loom/Forge/NeoForge
+# agent jars). The pixel/OCR driver (driver: pixel) is the universal LAST RESORT,
+# selected only when no structural driver fits. See mc-test.example.yml for the
+# fuller multi-loader matrix.
 version: 1
 
 provision:
@@ -34,6 +41,23 @@ targets:
     agents: [ server-bukkit ]
     world: { ref: regions-world }
 
+  # OLD-VERSION headless row (ROADMAP §6.2/§8.4): the SAME test on MC 1.8.9, with the
+  # headless Mineflayer driver routed through ViaVersion/ViaProxy so a modern bot can
+  # speak the old protocol. The headless driver's wide mcVersionRange (>=1.8) covers
+  # it; the Via bridge itself is acceptance-only (provisioned in CI, not offline here).
+  # If Via cannot faithfully bridge a feature, the cell honestly skips with a precise
+  # reason rather than a dubious pass.
+  - id: paper-1.8.9
+    loader: paper
+    mc: "1.8.9"
+    driver: headless
+    via: true # route the headless bot through ViaProxy
+    server: { paper: { project: paper, version: "1.8.9", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    agents: [ server-bukkit ]
+    world: { ref: regions-world }
+
   # ACCEPTANCE-ONLY (M4). This target drives the CLIENT-GUI variant
   # (examples/regions/regions.clientgui.mctest.yml) against the mod SUT's real client
   # Screens — the case the headless bot provably cannot see. It needs (a) a built client
@@ -52,8 +76,25 @@ targets:
     mods:
       - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
     display: xvfb # Linux CI headless surface; "desktop" on a windowed runner.
-    # server-fabric (the server-truth agent) is M5; until then assertPluginState honestly
-    # skips here. The client-fabric agent jar is injected into the client's mods/ by the
-    # in-process driver (not listed here — it is a driver-provisioned client agent).
-    agents: [ ]
+    # M5: the client-fabric agent (Yarn) is injected into the rendered client by the
+    # in-process driver; the server-fabric truth agent is co-selected so the canonical
+    # assertPluginState RUNS (not skips). Both jars are Loom-built (acceptance-only).
+    agents: [ client-fabric, server-fabric ]
+    world: { ref: regions-world }
+
+  # ACCEPTANCE-ONLY (M5 fan-out). The NeoForge twin of the fabric client row: the SAME
+  # unchanged test, driven against the real client Screens via the in-process driver +
+  # the client-neoforge agent (Mojmap mappings), with server-fabric for the truth half.
+  # Differs from the fabric row ONLY by loader/agent — proving "add a loader = one new
+  # mappings/Names.java + a matrix row" (ROADMAP §6.3). The Forge twin (client-forge,
+  # MCP-SRG) is built identically and selectable via an analogous `loader: forge` row.
+  - id: neoforge-1.21-client
+    loader: neoforge
+    mc: "1.21.1"
+    driver: inprocess
+    server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    mods:
+      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+    display: xvfb
+    agents: [ client-neoforge, server-fabric ]
     world: { ref: regions-world }

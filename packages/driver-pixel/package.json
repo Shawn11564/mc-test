@@ -1,0 +1,33 @@
+{
+  "name": "@mc-test/driver-pixel",
+  "version": "0.1.0",
+  "description": "mc-test pixel/OCR driver (M5 stub) — the universal LAST-RESORT visual driver. Treats the screen as raw framebuffer pixels and resolves semantic selectors by OCR + template matching with OS-level input. Advertises clientScreens/containerGui/screenshot/rendering/typeText/pressKey/chat/command with the advisory `brittle` flag; selected only when no structural driver fits (cost 4). The OCR/template + OS-input backend is not implemented here — it is registered for capability negotiation.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "import": "./dist/capabilities.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mc-test/protocol": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -124,6 +124,19 @@ export class Runner {
     let failure: TestResult["failure"];
     let testSkip: SkipInfo | undefined;
 
+    // A driver advertising the advisory `brittle` flag (the pixel/OCR last
+    // resort) gets a loud report note so its result is never mistaken for a
+    // reliable one. `brittle` is NOT a matchable capability — it affects only the
+    // report (ROADMAP §6.3; PROTOCOL.md §6.1).
+    const brittle = descriptor.advertised.brittle === true;
+    const notes = brittle
+      ? [
+          `⚠ BRITTLE DRIVER: '${descriptor.id}' (${descriptor.kind}) was selected as the LAST-RESORT visual driver — ` +
+            `selectors are resolved by OCR/template over raw pixels, so results may be unreliable. ` +
+            `Prefer a structural driver (server/headless/inprocess) where one fits.`,
+        ]
+      : [];
+
     const required = requiredKeys(test.requires);
     const constraints = {
       ...(meta.mc ? { mcVersionRange: meta.mc } : {}),
@@ -219,6 +232,7 @@ export class Runner {
       await group.closeAll("testTeardown");
     }
 
+    const stepsOut = renderSystemOut(steps);
     return {
       name: test.name,
       target: meta.target,
@@ -230,7 +244,8 @@ export class Runner {
       steps,
       ...(failure ? { failure } : {}),
       ...(testSkip ? { skip: testSkip } : {}),
-      systemOut: renderSystemOut(steps),
+      ...(brittle ? { brittle: true, notes } : {}),
+      systemOut: brittle ? `${notes.join("\n")}\n${stepsOut}` : stepsOut,
     };
   }
 

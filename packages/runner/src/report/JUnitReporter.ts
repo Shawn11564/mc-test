@@ -55,6 +55,9 @@ export function renderJUnit(results: TestResult[]): string {
           ["loader", r.loader],
           ["mc", r.mc],
           ["driver", r.driver ?? "(none)"],
+          // Surface the advisory brittle-driver marker so CI dashboards can flag
+          // last-resort (pixel/OCR) results (ROADMAP §6.3).
+          ["brittle", r.brittle ? "true" : undefined],
         ] as [string, string | undefined][]
       )
         .filter(([, v]) => v !== undefined)

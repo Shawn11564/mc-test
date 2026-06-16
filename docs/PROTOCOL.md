@@ -394,7 +394,10 @@ The canonical capability-key set is exactly these flat keys:
 | `pressKey` | `screen.pressKey` | clientMod, pixelOcr |
 | `testIdTags` | `testId` selector resolution via the `testId` carriers (§7.3.2) | headlessBot, clientMod, serverMod (SUTs we control) |
 
-Two **target descriptors** accompany the capability set in negotiation (they describe the target, not a surface): `loader` (enum) and `mcVersionRange` (string).
+Three **advisory descriptors** accompany the capability set in negotiation; they describe the target or the driver, **not** a callable surface, and are deliberately **NOT** part of the canonical (flat) capability-key set above — so they **never participate in capability matching** (§5.1) and a test can never list them in `requiredCapabilities`/`optionalCapabilities`:
+- `loader` (enum) — target descriptor: which loader the agent serves.
+- `mcVersionRange` (string) — target descriptor: the Minecraft version range the agent serves.
+- `brittle` (boolean, optional) — **quality descriptor**: a self-declared warning that this driver resolves selectors by fragile means (OCR/template + OS input) rather than structural inspection, so results are flakier. Advertised by the `pixelOcr` driver (`brittle: true`). It is purely advisory: the runner **reads it solely to surface a report note** (a loud console warning + a JUnit `<property name="brittle" value="true"/>`) when a brittle driver is selected; it is **never** matched, required, or denied.
 
 > **Non-normative extension capabilities.** Some agents expose extra surfaces that are **not** part of the canonical set above and **not** part of the canonical method catalog (§13): world join/leave gating, click, item-use, movement, player-state reads, log reads, and screen-change streams (driving the extension methods `useItem`, `move`, `getWindow`, `getPlayerState`, `getLogs`, `subscribe`/`unsubscribe`). These are agent extensions; CAPABILITIES.md may register them, but they do not bump the canonical wire vocabulary. Clicking and waiting on screens are gated by `containerGui`/`clientScreens`; joining/leaving a world is available to any world-capable agent.
 
@@ -405,7 +408,7 @@ Drivers typically advertise these bundles; the runner may request them by listin
 - **headlessBot** → `command, chat, containerGui, typeText, testIdTags` (+ `worldTruth` when paired with a server agent over the same matrix target).
 - **clientMod** → everything in headlessBot **plus** `clientScreens, pressKey, screenshot, rendering`.
 - **serverPlugin / serverMod** → `worldTruth, pluginState, fixtures, fakePlayers, chat, testIdTags` (no client UI).
-- **pixelOcr** → `pressKey, typeText, screenshot, rendering` (selectors resolved by OCR/template; brittle, last resort).
+- **pixelOcr** → `chat, command, containerGui, clientScreens, screenshot, rendering, typeText, pressKey` (selectors resolved by OCR/template; last resort). It additionally advertises the advisory `brittle: true` quality descriptor (§6.1) — not a capability key, so it never affects matching, only the runner's report note.
 
 ### 6.3 Capability detail (value) objects
 
@@ -1264,7 +1267,7 @@ These notes keep both reference implementations honest against the same contract
 
 **Streams (extension `subscribe` `stream` values):** `chat`, `log`, `screenChanged`.
 
-**Capability keys (flat, canonical):** `chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`. Target descriptors: `loader` (enum), `mcVersionRange` (string).
+**Capability keys (flat, canonical):** `chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`. Advisory descriptors (NOT capability keys; never matched): `loader` (enum) and `mcVersionRange` (string) — target descriptors; `brittle` (boolean, advertised by `pixelOcr`) — quality descriptor surfaced by the runner as a report note (§6.1).
 
 **Selector keys (shape only; grammar in `SELECTORS.md`):** `label`, `text`, `textContains`, `loreContains`, `itemType`, `role`, `index`, `nth`, `within`, `testId`. Role enum: `button` | `slot` | `label` | `input` | `tab` | `list` | `listItem`.
 

@@ -77,6 +77,17 @@ export const Capabilities = Type.Object(
     loader: Type.Optional(Type.Union([LoaderSchema, Type.Array(LoaderSchema)])),
     /** Target descriptor: a semver-ish MC version range, e.g. `">=1.8 <=1.21.4"`. */
     mcVersionRange: Type.Optional(Type.String()),
+    /**
+     * Quality descriptor (advisory, NOT a matchable capability): the driver
+     * resolves selectors through a brittle/last-resort substrate (e.g. the
+     * pixel/OCR driver's screen-template + OCR matching). Like `loader`/
+     * `mcVersionRange`, it is deliberately **excluded from `CAPABILITY_KEYS`** so
+     * it never participates in `matchCapabilities` — a test cannot "require"
+     * brittleness and force a brittle driver. The runner reads an advertised
+     * `brittle: true` purely to emit a loud report note when such a driver is
+     * selected (ROADMAP §6.3; PROTOCOL.md §6.1).
+     */
+    brittle: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false, description: "Flat capability map + target descriptors." },
 );

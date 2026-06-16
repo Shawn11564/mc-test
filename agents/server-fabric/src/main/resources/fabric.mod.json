@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "mc-test-server-fabric",
+  "version": "${version}",
+  "name": "mc-test server agent (Fabric)",
+  "description": "Thin Fabric dedicated-server shim for the mc-test server-truth driver: hosts an MCTP WebSocket server and answers the world-truth / fixtures / fake-player / plugin-state half of the protocol as MCTP primitives. agent.kind=serverMod. All wire logic lives in io.mctest:mc-test-agent-core; this mod only supplies the entrypoint and the Yarn-mapped server facade (mappings/Names.java).",
+  "authors": [
+    "mc-test"
+  ],
+  "license": "Apache-2.0",
+  "environment": "server",
+  "entrypoints": {
+    "server": [
+      "io.mctest.agent.serverfabric.McTestServerMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loaderVersion}",
+    "minecraft": "~${minecraftVersion}",
+    "fabric-api": "*",
+    "java": ">=21"
+  }
+}

@@ -16,6 +16,7 @@ import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from ".
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
+import { renderSkipMatrix } from "./report/SkipMatrix.js";
 import { collectArtifacts } from "./report/Artifacts.js";
 import type { MatrixFile, MatrixTarget } from "./model/Target.js";
 import type { TestResult } from "./model/result.js";
@@ -35,24 +36,55 @@ const SERVER_BUKKIT_CAPABILITIES: Capabilities = {
   loader: ["paper", "spigot", "folia"],
 };
 
+/**
+ * The capabilities the Fabric server-mod agent advertises (M5): the same
+ * server-truth surface as the Bukkit agent (PROTOCOL.md §6.3: serverMod →
+ * `worldTruth, pluginState, fixtures, fakePlayers, chat, testIdTags`), but for
+ * the Fabric/NeoForge/Quilt **server** loaders. Used to build the `AgentConn` the
+ * runner co-selects alongside a rendered-client (`inprocess`) driver.
+ */
+const SERVER_FABRIC_CAPABILITIES: Capabilities = {
+  worldTruth: true,
+  pluginState: true,
+  fixtures: true,
+  fakePlayers: true,
+  chat: true,
+  testIdTags: true,
+  loader: ["fabric", "neoforge", "quilt"],
+};
+
 /** Known server agents: how to find their built jar (ROADMAP §4 / DRIVERS.md). */
 const KNOWN_AGENTS: Record<string, { jarPath: string; advertised: Capabilities }> = {
   "server-bukkit": {
     jarPath: "agents/server-bukkit/build/libs/mc-test-agent-bukkit.jar",
     advertised: SERVER_BUKKIT_CAPABILITIES,
   },
+  // M5: the Fabric/NeoForge server-mod truth agent (Loom build — acceptance-only
+  // in this repo's CI; build-artifact `agent-server-fabric-<mc>.jar`).
+  "server-fabric": {
+    jarPath: "agents/server-fabric/build/libs/agent-server-fabric.jar",
+    advertised: SERVER_FABRIC_CAPABILITIES,
+  },
 };
 
 /**
- * Known **client** agents (M4): the in-game mod jar the in-process driver injects
- * into the rendered client. Built externally (Fabric Loom) — acceptance-only in
- * this repo's CI (build-artifact `agent-client-fabric-<mc>.jar`, ENVIRONMENTS.md).
- * The client agent is paired implicitly by `driver: inprocess`; for M4 a single
- * known client agent (`client-fabric`) suffices.
+ * Known **client** agents (M4 + M5): the in-game mod jar the in-process driver
+ * injects into the rendered client. Built externally (Loom / ForgeGradle /
+ * NeoGradle) — acceptance-only in this repo's CI (build-artifact
+ * `agent-client-<loader>-<mc>.jar`, ENVIRONMENTS.md). The client agent is paired
+ * implicitly by `driver: inprocess`; the loader is selected by which `client-*`
+ * agent the target lists (default `client-fabric`).
  */
 const KNOWN_CLIENT_AGENTS: Record<string, { jarPath: string }> = {
   "client-fabric": {
     jarPath: "agents/client-fabric/build/libs/agent-client-fabric.jar",
+  },
+  // M5 fan-out: Forge (MCP-SRG mappings) and NeoForge (Mojmap mappings) client shims.
+  "client-forge": {
+    jarPath: "agents/client-forge/build/libs/agent-client-forge.jar",
+  },
+  "client-neoforge": {
+    jarPath: "agents/client-neoforge/build/libs/agent-client-neoforge.jar",
   },
 };
 
@@ -205,6 +237,7 @@ function buildProvision(
 function printResult(result: TestResult): void {
   const icon = result.outcome === "passed" ? "✓" : result.outcome === "skipped" ? "○" : "✗";
   console.log(`\n${icon} ${result.name} [${result.target}] — ${result.outcome.toUpperCase()} (${(result.durationMs / 1000).toFixed(1)}s, driver=${result.driver ?? "none"})`);
+  for (const note of result.notes ?? []) console.log(`  ${note}`);
   for (const s of result.steps) {
     const si = s.outcome === "passed" ? "  ✓" : s.outcome === "skipped" ? "  ○" : "  ✗";
     if (s.outcome === "skipped" && s.skip) {
@@ -219,10 +252,38 @@ function printResult(result: TestResult): void {
   if (result.failure) console.log(`  → failure: ${result.failure.message}`);
 }
 
+/** Build the `TargetMeta` for one matrix row (driver pin + inprocess launch ctx). */
+function targetMetaFor(target: MatrixTarget): TargetMeta {
+  // An `inprocess` target launches a rendered client: thread a launch context
+  // (mc/loader/display, SUT mods, client-agent jar) to the driver. The server is
+  // still provisioned (M3 wiring intact) for the client to connect to and for any
+  // co-listed server agent (pluginState).
+  return {
+    target: target.id,
+    loader: target.loader,
+    mc: target.mc,
+    ...(target.driver && target.driver !== "auto" ? { driverPin: target.driver } : {}),
+    ...(target.driver === "inprocess" ? { launch: buildLaunchContext(target) } : {}),
+  };
+}
+
+/** Run one target and print its per-test result. */
+async function runOneTarget(
+  runner: Runner,
+  matrix: MatrixFile,
+  target: MatrixTarget,
+  test: ReturnType<typeof loadSteps>,
+): Promise<TestResult> {
+  console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc}${target.via ? ", via ViaProxy" : ""})…`);
+  const result = await runner.runTarget(test, targetMetaFor(target), buildProvision(matrix, target));
+  printResult(result);
+  return result;
+}
+
 async function cmdRun(args: Args): Promise<number> {
   const stepFile = args._[1];
   if (!stepFile) {
-    console.error("usage: mc-test run <stepfile.mctest.yml> --target <id>");
+    console.error("usage: mc-test run <stepfile.mctest.yml> [--target <id> | --target all | --all]");
     return 2;
   }
   const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
@@ -231,47 +292,59 @@ async function cmdRun(args: Args): Promise<number> {
     return 2;
   }
   const matrix = loadMatrix(matrixPath);
+
+  // Target selection: a single `--target <id>`, or the WHOLE matrix when
+  // `--target all` / `--all` is given (ROADMAP §6.3 — author once, run across the
+  // matrix, aggregate into one JUnit + a skip matrix).
   const targetId = args.flags["target"];
-  if (!targetId) {
-    console.error("missing --target <id>");
-    return 2;
-  }
-  const target = findTarget(matrix, targetId);
-  if (!target) {
-    console.error(`target '${targetId}' not found in ${matrixPath}`);
-    return 2;
+  const runAll = args.flags["all"] === "true" || targetId === "all" || targetId === undefined;
+  let targets: MatrixTarget[];
+  if (runAll) {
+    targets = matrix.targets;
+    if (targetId === undefined) {
+      console.log(`No --target given → running the whole matrix (${targets.length} targets). Pass --target <id> for one.`);
+    }
+  } else {
+    const target = findTarget(matrix, targetId!);
+    if (!target) {
+      console.error(`target '${targetId}' not found in ${matrixPath}`);
+      return 2;
+    }
+    targets = [target];
   }
 
   const test = loadSteps(resolve(stepFile));
   const outDir = resolve(args.flags["out"] ?? "mc-test-report");
-
-  // An `inprocess` target launches a rendered client: thread a launch context
-  // (mc/loader/display, SUT mods, client-agent jar) to the driver. The server is
-  // still provisioned (M3 wiring intact) for the client to connect to and for any
-  // co-listed server agent (pluginState).
-  const meta: TargetMeta = {
-    target: target.id,
-    loader: target.loader,
-    mc: target.mc,
-    ...(target.driver && target.driver !== "auto" ? { driverPin: target.driver } : {}),
-    ...(target.driver === "inprocess" ? { launch: buildLaunchContext(target) } : {}),
-  };
-
-  console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc})…`);
   const runner = new Runner(defaultRegistry());
-  const result = await runner.runTarget(test, meta, buildProvision(matrix, target));
 
-  printResult(result);
+  // Per-target isolation (distinct leased ports + per-instance world copies, see
+  // PaperProvisioner) makes the targets independent; we run them sequentially for
+  // deterministic, readable output. Each `buildProvision` is a fresh closure, so a
+  // future bounded-concurrency pool is a drop-in.
+  const results: TestResult[] = [];
+  for (const target of targets) {
+    results.push(await runOneTarget(runner, matrix, target, test));
+  }
 
+  // One aggregated JUnit (one <testsuite> per target) + per-result artifacts.
   const junitPath = join(outDir, "junit", "results.xml");
-  writeJUnit(junitPath, [result]);
-  const bundle = collectArtifacts(outDir, result);
+  writeJUnit(junitPath, results);
+  let artifactCount = 0;
+  for (const result of results) {
+    const bundle = collectArtifacts(outDir, result);
+    artifactCount += bundle.files.length;
+  }
+
+  // The cross-target skip matrix: which (test × target) cells were skipped and why.
+  if (results.length > 1) {
+    console.log(`\n${renderSkipMatrix(results)}`);
+  }
   console.log(`\nJUnit: ${junitPath}`);
-  if (bundle.files.length) console.log(`Artifacts: ${bundle.dir}`);
+  if (artifactCount) console.log(`Artifacts: ${join(outDir, "artifacts")}`);
 
   const failOnSkip = args.flags["fail-on-skip"] === "true";
-  if (result.outcome === "failed") return 1;
-  if (result.outcome === "skipped" && failOnSkip) return 1;
+  if (results.some((r) => r.outcome === "failed")) return 1;
+  if (failOnSkip && results.some((r) => r.outcome === "skipped")) return 1;
   return 0;
 }
 

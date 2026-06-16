@@ -9,6 +9,7 @@
 import { matchCapabilities, type Capabilities, type RequiredCapabilities } from "@mc-test/protocol";
 import { HEADLESS_CAPABILITIES } from "@mc-test/driver-headless/capabilities";
 import { INPROCESS_CAPABILITIES } from "@mc-test/driver-inprocess/capabilities";
+import { PIXEL_CAPABILITIES } from "@mc-test/driver-pixel/capabilities";
 
 /** A started driver: its MCTP endpoint URL and a teardown hook. */
 export interface DriverHandle {
@@ -88,13 +89,16 @@ export class DriverRegistry {
 
 const HEADLESS_COST = 2; // server(1) < headless(2) < inprocess(3) < pixel(4)
 const INPROCESS_COST = 3;
+const PIXEL_COST = 4;
 
 /**
- * The default registry (M2 + M4): the headless driver (cost 2) and the in-process
- * driver (cost 3). Selection is by cost — a `containerGui`-only test still picks
- * the cheaper headless; only a `clientScreens` test pulls in the costlier
- * in-process (rendered-client) driver. Both implementations are lazy-imported in
- * `create()` so registering pulls in neither heavy dependency.
+ * The default registry (M2 + M4 + M5): the headless driver (cost 2), the
+ * in-process rendered-client driver (cost 3), and the pixel/OCR driver (cost 4 —
+ * the universal **last resort**). Selection is by cost — a `containerGui`-only
+ * test still picks the cheaper headless; a `clientScreens` test pulls in the
+ * in-process driver; and pixel is chosen **only** when nothing cheaper satisfies
+ * the test (or it is explicitly pinned via `driver: pixel`). Every implementation
+ * is lazy-imported in `create()` so registering pulls in no heavy dependency.
  */
 export function defaultRegistry(): DriverRegistry {
   const registry = new DriverRegistry();
@@ -119,6 +123,22 @@ export function defaultRegistry(): DriverRegistry {
       const { InProcessDriver } = await import("@mc-test/driver-inprocess");
       const driver = new InProcessDriver({ ...(ctx ?? {}) });
       const { url } = await driver.start();
+      return { url, stop: () => driver.stop() };
+    },
+  });
+  registry.register({
+    id: "pixel",
+    kind: "pixelOcr",
+    cost: PIXEL_COST,
+    advertised: PIXEL_CAPABILITIES,
+    create: async (ctx) => {
+      const { PixelDriver } = await import("@mc-test/driver-pixel");
+      const driver = new PixelDriver({
+        ...(ctx?.mc ? { mc: ctx.mc } : {}),
+        ...(ctx?.loader ? { loader: ctx.loader } : {}),
+        ...(ctx?.display ? { display: ctx.display } : {}),
+      });
+      const { url } = await driver.start(); // honest failure: the stub backend is unimplemented
       return { url, stop: () => driver.stop() };
     },
   });

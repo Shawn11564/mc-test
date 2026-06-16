@@ -79,7 +79,15 @@ describe("matchCapabilities", () => {
   it("only knows the closed set of capability keys", () => {
     expect(CAPABILITY_KEYS).toContain("containerGui");
     expect(CAPABILITY_KEYS).not.toContain("loader"); // loader is a target descriptor, not a boolean cap
+    expect(CAPABILITY_KEYS).not.toContain("brittle"); // brittle is an advisory quality descriptor, not a boolean cap
     expect(CAPABILITY_KEYS.length).toBe(13);
+  });
+
+  it("ignores the advisory `brittle` descriptor (it never participates in matching)", () => {
+    // A driver advertising `brittle` still satisfies a normal requirement…
+    expect(matchCapabilities({ clientScreens: true }, { clientScreens: true, brittle: true }).ok).toBe(true);
+    // …and a test cannot "require" brittleness to force a brittle driver — it is a no-op in `required`.
+    expect(matchCapabilities({ brittle: true } as never, { command: true })).toEqual({ ok: true, unmet: [] });
   });
 });
 

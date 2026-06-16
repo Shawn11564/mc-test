@@ -37,6 +37,15 @@ export interface TestResult {
   failure?: { message: string; type: string };
   systemOut?: string;
   artifacts?: string[];
+  /**
+   * The selected driver advertised the advisory `brittle` flag (e.g. the
+   * pixel/OCR last-resort driver). The runner sets this and emits a loud report
+   * note (`notes`) so a brittle result is never mistaken for a reliable one
+   * (ROADMAP §6.3). Advisory only — it does not affect outcome.
+   */
+  brittle?: boolean;
+  /** Loud, human-facing report notes (e.g. the brittle-driver warning). */
+  notes?: string[];
 }
 
 /** All test results for one (suite × target). */

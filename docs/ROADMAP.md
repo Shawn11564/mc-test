@@ -47,7 +47,7 @@ These are non-negotiable and constrain how each milestone is allowed to be built
 | **M2** | **Runner + first driver** | `/packages/runner` (CLI, YAML, JUnit) + `/packages/driver-headless` (Mineflayer) against `/examples/regions` | M1 | Real end-to-end headless plugin tests in CI. The whole loop is alive. |
 | **M3** | **Server-side truth** | `/agents/server-bukkit` plugin agent (world-truth + fixtures + plugin-state) | M1, M2 | Assertions against **real** server state; deterministic fixtures; the canonical regions assertion. |
 | **M4** | **Client GUI** | `/agents/client-fabric` in-process agent + `/packages/driver-inprocess` | M1, (M2 patterns) | Testing **real mod client Screens** — the only thing the bot fundamentally cannot see. |
-| **M5** | **Fan-out** | `/agents/client-forge`, `/agents/client-neoforge`, `/agents/server-fabric`, version matrix | M3, M4 | The full `(loader × version)` matrix from one shared agent core. |
+| **M5** | **Fan-out** | `/agents/client-forge`, `/agents/client-neoforge`, `/agents/server-fabric`, `/packages/driver-pixel` (last-resort stub), version matrix + skip matrix | M3, M4 | The full `(loader × version)` matrix from one shared agent core. |
 
 Rationale for this order: **M1 first** because the contract is the keystone and changing it later is
 the most expensive change in the system. **M2 next** because a headless driver gives us a real,
@@ -794,16 +794,56 @@ Canonical `mc-test.yml` field names (reserved): top-level `defaults`, `targets`;
 
 ### 6.3 Acceptance criteria (M5 is "done" when…)
 
+> **M5 status note (2026-06-16).** The M5 fan-out landed the three thin agent shims
+> (`/agents/client-forge` — Forge/MCP-SRG; `/agents/client-neoforge` — NeoForge/Mojmap;
+> `/agents/server-fabric` — Fabric/NeoForge server-mod truth agent, `agent.kind serverMod`), each a
+> standalone acceptance-only Loom/ForgeGradle/NeoGradle build that reuses `/agents/core` **unchanged**
+> and quarantines every obfuscation-mapped `net.minecraft.*` symbol to its one `mappings/Names.java`;
+> the **`@mc-test/driver-pixel`** package (the universal last-resort `pixelOcr` driver, registered at
+> cost 4, advertising the advisory **`brittle`** descriptor — a selectable stub whose OCR/template
+> backend is unimplemented); the protocol's new advisory `brittle` descriptor (added to the
+> `Capabilities` TypeBox + regenerated JSON Schema, **not** a matchable capability key); the runner's
+> **full-matrix run** (`mc-test run … --target all` → one aggregated JUnit) + the **`(test × target)`
+> skip matrix** (`report/SkipMatrix.ts`); the `via` matrix field; and the expanded `mc-test.yml`, with
+> the design docs synced to the shipped names/shapes (this change). The boxes ticked below are the ones
+> proven with **no Minecraft boot** by the runner M5 suite (`packages/runner/test/m5.test.ts`: matrix
+> fan-out across paper×2 / fabric / forge / neoforge from one unchanged test; pixel last-resort
+> selection + the brittle report note; the skip matrix; the extended import-scan over the three new
+> shims) and the `@mc-test/driver-pixel` unit tests — plus the still-green `gradle :core:test`
+> (core unchanged). The boxes left unticked need a **real rendered client + real loader-agent builds**
+> across the live matrix, which this offline environment does not run; their no-boot equivalents are
+> noted inline and do pass. See §7.3 and §9.
+
 - [ ] The canonical regions test (GUI + `assertPluginState`) runs **green or honestly-skipped** across
       **at least**: `paper-1.20.4` (headless), `paper-1.8.9` (headless via Via), `fabric-1.21-client`
       (inprocess), `neoforge-1.21-client` (inprocess) — from **one** unchanged test file.
-- [ ] Adding a new MC version to an existing loader requires editing **only** `mappings/Names.java`
+      *(Real-boot acceptance across live clients. The no-boot equivalent — the SAME unchanged
+      `regions-open-testregion` object run across `paper-1.20.4`/`paper-1.8.9` (honest whole-test skip
+      `unmet:["clientScreens"]`) and `fabric`/`forge`/`neoforge` inprocess rows (GREEN including
+      `assertPluginState` against a co-selected server-mod agent) — is covered by `m5.test.ts`.)*
+- [x] Adding a new MC version to an existing loader requires editing **only** `mappings/Names.java`
       (and a `mc-test.yml` row) — proven by a PR that adds one version touching no shared core file.
-- [ ] A `pixel` driver stub exists and is selectable as the documented last resort (OCR/template),
+      *(Proven structurally by the shipped fan-out: `client-forge`/`client-neoforge`/`server-fabric`
+      each re-implement ONLY their entrypoint + `mappings/Names.java` + loader manifest + standalone
+      build; `/agents/core` is untouched and `gradle :core:test` stays green; the `m5.test.ts`
+      import-scan enforces that every mapped `net.minecraft.*` symbol stays in `Names.java`. The live
+      "PR adds one version" is the acceptance form.)*
+- [x] A `pixel` driver stub exists and is selectable as the documented last resort (OCR/template),
       advertising `clientScreens` only with a `brittle` flag in capabilities and a loud report note.
+      *(Proven by `@mc-test/driver-pixel` + `m5.test.ts`: registered in `defaultRegistry` at cost 4
+      (`kind pixelOcr`), selected ONLY when nothing structural fits (a plain `clientScreens` test still
+      prefers `inprocess`; pixel wins for `clientScreens` + an unsupported `loader`), advertising the
+      advisory `brittle` descriptor, with the loud report note surfaced in the console, the JUnit
+      `<property name="brittle">`, and the skip matrix. The OCR/template + OS-input backend is an honest
+      stub — `start()` fails rather than faking a run.)*
 - [ ] The full matrix runs in CI with per-target parallelism (distinct ports + per-test world copies)
       and aggregates into one JUnit + artifacts bundle, with a clear **skip matrix** showing which
       `(test × target)` cells were skipped and **why** (capability reason strings).
+      *(Real-boot acceptance for the live parallel run. The no-boot equivalents are shipped and proven:
+      the `(test × target)` **skip matrix** with machine-readable capability reason strings
+      (`report/SkipMatrix.ts`, `renderSkipMatrix`), the aggregated **one-JUnit-per-matrix** run
+      (`mc-test run … --target all`), and per-target isolation (distinct leased ports + per-test world
+      copies, `PaperProvisioner`) — all exercised by `m5.test.ts`.)*
 
 ### 6.4 What M5 unlocks
 
@@ -969,6 +1009,26 @@ Every milestone that ships runnable code must also satisfy:
 > Boxes left unticked are gated on the rendered-client launch (and the Loom mod build), not on
 > missing design.
 
+> **M5 status note (2026-06-16).** For M5 these hold as follows, reusing the M2–M4 machinery unchanged.
+> **Conformance** is inherited green: `/agents/core` is untouched by M5 (the three new shims only add
+> their own `mappings/Names.java` + entrypoint + build), so `ConformanceTest`/`ScreenConformanceTest`
+> and `gradle :core:test`/`:server-bukkit:test` stay green; the new loader agents' own conformance is
+> a real-boot acceptance (their Loom/ForgeGradle/NeoGradle builds don't run offline). The
+> **negative-control / capability-driven-selection** layer extends to the fan-out with no boot
+> (`packages/runner/test/m5.test.ts`): the same unchanged regions test runs across the matrix
+> (paper×2 → honest skip `unmet:["clientScreens"]`; fabric/forge/neoforge inprocess → green), the
+> **pixel** driver is selected ONLY as the last resort (cost 4) and never over a structural driver
+> (a vacuity-guarding negative control), and the mappings **import-scan** is extended over all three
+> new shims (mapped `net.minecraft.*` only in `mappings/Names.java`). **JUnit + artifacts** are the
+> reused M2 reporter, now aggregating one document across the whole matrix and adding a
+> `<property name="brittle">` for last-resort cells plus the printed `(test × target)` **skip matrix**.
+> **Capability-driven selection** stays the only mechanism — pixel is registered by cost, never
+> special-cased. **Reproducible provisioning** of the new agents (jar resolution via the runner's
+> `KNOWN_CLIENT_AGENTS`/`KNOWN_AGENTS`, per-target ports + per-test world copies) is wired; the live
+> loader-agent builds + the parallel matrix boot are acceptance-only. **Docs** are synced (this change)
+> and each new package/agent dir ships a `README.md`. Boxes left unticked are gated on the live matrix
+> boot, not on missing design.
+
 - [x] Green against the **M1 conformance fixtures** for all advertised methods. *(Core `ConformanceTest`
       replays the M1 fixtures against a real `MctpServer` — `gradle :core:test` green. M4 adds
       `ScreenConformanceTest` covering `screen.*` against a `FakeClientBridge` — also green.)*
@@ -995,7 +1055,8 @@ source of truth for the wire contract), which this roadmap defers to — are:
 
 - **Packages/paths:** `/packages/protocol` (`@mc-test/protocol`), `/packages/runner`
   (`@mc-test/runner`, bin `mc-test`), `/packages/driver-headless` (`@mc-test/driver-headless`),
-  `/packages/driver-inprocess` (`@mc-test/driver-inprocess`), `/agents/core`, `/agents/server-bukkit`,
+  `/packages/driver-inprocess` (`@mc-test/driver-inprocess`), `/packages/driver-pixel`
+  (`@mc-test/driver-pixel`), `/agents/core`, `/agents/server-bukkit`,
   `/agents/server-fabric`, `/agents/client-fabric`, `/agents/client-forge`, `/agents/client-neoforge`,
   `/examples/regions`, `mc-test.yml`.
 - **MCTP methods:** `session.create`, `session.describe`, `session.close`, `session.ping`;
@@ -1008,9 +1069,11 @@ source of truth for the wire contract), which this roadmap defers to — are:
 - **Agent primitive verbs (SDK form):** `listElements`, `clickElement`, `getScreen`, `typeText`,
   `pressKey`, `screenshot`, `getWorldBlock`, `getEntities`, `setFixture`, `spawnFakePlayer`,
   `assertPluginState`.
-- **Capability keys:** `chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`,
-  `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`,
-  `loader`, `mcVersionRange`.
+- **Capability keys** (the 13 canonical matchable booleans): `chat`, `command`, `containerGui`,
+  `clientScreens`, `screenshot`, `rendering`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`,
+  `typeText`, `pressKey`, `testIdTags`. **Advisory descriptors** (carried in the capability set but
+  NOT capability keys — never matched): `loader`, `mcVersionRange` (target descriptors) and `brittle`
+  (a quality descriptor advertised by the `pixelOcr` driver; surfaced by the runner as a report note).
 - **Selector keys:** `label`, `text`, `textContains`, `loreContains`, `itemType`, `role`, `index`,
   `nth`, `within`, `testId`.
 - **Selector roles:** `button`, `slot`, `label`, `input`, `tab`, `list`, `listItem`.

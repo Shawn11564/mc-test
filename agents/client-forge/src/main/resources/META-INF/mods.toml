@@ -1,0 +1,38 @@
+# mc-test client agent (Forge) manifest. Forge uses mods.toml (NOT fabric.mod.json).
+# ${...} tokens are stamped by build.gradle.kts processResources expand(...).
+modLoader = "javafml"
+loaderVersion = "[${loaderRange},)"
+license = "Apache-2.0"
+issueTrackerURL = "https://github.com/mc-test/mc-test/issues"
+
+[[mods]]
+modId = "mc-test-client-forge"
+version = "${version}"
+displayName = "mc-test client agent (Forge)"
+# CLIENT-side only: hosts an MCTP WebSocket server and exposes the client's Screen/widget tree, keyboard,
+# and framebuffer as MCTP primitives. All wire logic lives in io.mctest:mc-test-agent-core; this mod only
+# supplies the entrypoint (io.mctest.agent.clientforge.McTestClientMod) and the MCP-SRG/official-name
+# ClientBridge (mappings/Names.java).
+displayTest = "IGNORE_ALL_VERSION"
+authors = "mc-test"
+description = '''
+Thin Forge client shim for the mc-test in-process driver: hosts an MCTP WebSocket server and exposes the
+client's Screen/widget tree, keyboard, and framebuffer as MCTP primitives. All wire logic lives in
+io.mctest:mc-test-agent-core; this mod only supplies the entrypoint and the MCP-SRG/official-name
+ClientBridge (mappings/Names.java).
+'''
+
+# Loader/MC bounds. minecraft is client-required; forge is the loader runtime.
+[[dependencies.mc-test-client-forge]]
+    modId = "forge"
+    mandatory = true
+    versionRange = "[${forgeRange},)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+[[dependencies.mc-test-client-forge]]
+    modId = "minecraft"
+    mandatory = true
+    versionRange = "[${minecraftVersion}]"
+    ordering = "NONE"
+    side = "CLIENT"

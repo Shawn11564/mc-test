@@ -54,6 +54,16 @@ export interface MatrixTarget {
   mc: string;
   /** `auto` lets capability negotiation pick (ENVIRONMENTS.md §1.2). */
   driver?: DriverId | "auto";
+  /**
+   * Route the headless driver through ViaVersion/ViaProxy so a modern Mineflayer
+   * can speak to an old-version server (ENVIRONMENTS.md; ROADMAP §8.4). Used by
+   * e.g. `paper-1.8.9`. The headless driver's wide `mcVersionRange` covers the old
+   * version; the Via bridge itself is acceptance-only (provisioned in CI, not in
+   * this offline build). If Via cannot faithfully bridge a feature, the driver
+   * narrows its range and the cell honestly skips rather than producing a dubious
+   * pass.
+   */
+  via?: boolean;
   server?: Source;
   plugins?: Source[];
   /**
