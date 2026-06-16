@@ -20,6 +20,15 @@ export interface MojangRef {
   artifact?: "server" | "client";
 }
 
+/** A `spigot:` source ref → built from source with Spigot BuildTools (legacy plugin-capable jars). */
+export interface SpigotRef {
+  /**
+   * The Spigot **BuildTools rev** to build; defaults to the target's `mc`. Note Spigot revs can
+   * differ from MC versions (e.g. MC 1.8.9 → Spigot rev `1.8.8`); see hub.spigotmc.org/versions/.
+   */
+  version?: string;
+}
+
 /** How to obtain one artifact (exactly one resolver). */
 export interface Source {
   ref?: string;
@@ -27,6 +36,7 @@ export interface Source {
   url?: string;
   paper?: PaperRef;
   mojang?: MojangRef;
+  spigot?: SpigotRef;
   sha256?: string;
   as?: string;
 }

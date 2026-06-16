@@ -22,8 +22,14 @@ All notable changes to this project are recorded here. The format is based on
   range; the host `java` is used when it fits, else a configured (`provision.jdks`) / installed JDK,
   else an Eclipse Temurin build fetched from Adoptium into the cache (`provision.downloadJdks`,
   default `true`) and spawned via `javaPath`. (`provision/jdk.ts`.) Validated end-to-end: Temurin 8
-  fetched + extracted + `java -version`-verified on Windows. Legacy real-boot still needs a
-  plugin-capable old-server jar source.
+  fetched + extracted + `java -version`-verified on Windows.
+- **Spigot BuildTools server source (v2):** `server: { spigot: { version } }` builds a plugin-capable
+  legacy server from source with Spigot BuildTools (the Paper API can't serve 1.8.x), run under the
+  version's JDK (multi-JDK supplies Java 8) — the automated counterpart to bring-your-own
+  `server: { url | path, sha256 }`. Needs `git` + network; cached as `spigot-<rev>.jar` (the Spigot rev
+  can differ from the MC version, e.g. 1.8.9 → 1.8.8; a bad rev fails fast `SPIGOT_VERSION_NOT_FOUND`).
+  Adds a runnable `spigot-1.8.8` target. Validated end-to-end on Windows: BuildTools built Spigot 1.8.8
+  from source under a fetched Temurin 8 → 21 MB jar in ~3 min. (`provision/buildtools.ts`.)
 
 ### Changed
 - **`via` is now advisory, not a blanket skip.** A `via: true` target only honest-skips
