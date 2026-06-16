@@ -14,7 +14,7 @@
 import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
@@ -23,6 +23,7 @@ import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegis
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
 import { resolveArtifact } from "./provision/sources.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
+import { writeHtml } from "./report/HtmlReporter.js";
 import { renderSkipMatrix } from "./report/SkipMatrix.js";
 import { collectArtifacts } from "./report/Artifacts.js";
 import type { MatrixFile, MatrixTarget } from "./model/Target.js";
@@ -414,9 +415,11 @@ async function cmdRun(args: Args): Promise<number> {
     }
   }
 
-  // One aggregated JUnit (one <testsuite> per target) + per-result artifacts.
+  // One aggregated JUnit (one <testsuite> per target) + a human HTML report + artifacts.
   const junitPath = join(outDir, "junit", "results.xml");
   writeJUnit(junitPath, results);
+  const htmlPath = join(outDir, "report.html");
+  writeHtml(htmlPath, results);
   let artifactCount = 0;
   for (const result of results) {
     const bundle = collectArtifacts(outDir, result);
@@ -428,6 +431,7 @@ async function cmdRun(args: Args): Promise<number> {
     console.log(`\n${renderSkipMatrix(results)}`);
   }
   console.log(`\nJUnit: ${junitPath}`);
+  console.log(`HTML:  ${htmlPath}`);
   if (artifactCount) console.log(`Artifacts: ${join(outDir, "artifacts")}`);
 
   const failOnSkip = args.flags["fail-on-skip"] === "true";
@@ -450,21 +454,113 @@ function cmdList(args: Args): number {
   return 0;
 }
 
+const INIT_MATRIX = `# mc-test.yml — environment matrix.
+# Run: npx mc-test run src/mctest/example.mctest.yml --target paper-1.20.4
+version: 1
+provision:
+  eulaAccepted: true   # you accept Mojang's EULA by setting this (required to boot a server)
+  bindHost: 127.0.0.1  # loopback only
+targets:
+  - id: paper-1.20.4
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { build: latest } }
+    plugins:
+      - { path: ./build/libs/your-plugin.jar }   # <-- point at your built plugin jar (or use the Gradle plugin)
+    agents: [server-bukkit]                        # server-truth: assertPluginState / fixtures
+`;
+
+const INIT_TEST = `# yaml-language-server: $schema=https://mc-test.dev/schema/mctest-stepfile.schema.json
+name: example
+requires:
+  command: true
+  containerGui: true
+steps:
+  - join: { username: Tester }
+  - command: "your-command"          # e.g. the command that opens your plugin's GUI
+  - waitForScreen: { titleContains: "Your GUI Title" }
+  - click: { label: "Some Button" }
+  - assertChat: { contains: "expected message" }
+  # Prove it from real server state (requires agents: [server-bukkit]):
+  # - assertPluginState: { plugin: "YourPlugin", query: "your.query", args: {}, expect: true }
+`;
+
+/** Write a file only if absent; report which happened (never overwrites user files). */
+function scaffold(path: string, content: string, label: string): string {
+  if (existsSync(path)) return `exists   ${label}`;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, "utf8");
+  return `created  ${label}`;
+}
+
+/** `mc-test init` — scaffold a matrix + a sample step file in `--dir` (default cwd). */
+function cmdInit(args: Args): number {
+  const dir = resolve(args.flags["dir"] ?? ".");
+  console.log("mc-test init:");
+  console.log(`  ${scaffold(join(dir, "mc-test.yml"), INIT_MATRIX, "mc-test.yml")}`);
+  console.log(
+    `  ${scaffold(join(dir, "src", "mctest", "example.mctest.yml"), INIT_TEST, "src/mctest/example.mctest.yml")}`,
+  );
+  console.log("\nNext:");
+  console.log("  1. Edit mc-test.yml → point plugins[].path at your built plugin jar.");
+  console.log("  2. Edit src/mctest/example.mctest.yml → your command/GUI/assertions.");
+  console.log("  3. npx mc-test doctor   # check Java, ports, downloads");
+  console.log("  4. npx mc-test run src/mctest/example.mctest.yml --target paper-1.20.4");
+  console.log("\nSee docs/GETTING_STARTED.md and docs/AUTHORING.md.");
+  return 0;
+}
+
+/** `mc-test doctor` — environment + config readiness checks. */
 async function cmdDoctor(args: Args): Promise<number> {
   console.log("mc-test doctor:");
+  let hardFail = false;
+  const line = (ok: boolean | "warn", label: string, detail = ""): void => {
+    const mark = ok === true ? "✓" : ok === "warn" ? "!" : "✗";
+    console.log(`  ${mark} ${label}${detail ? `: ${detail}` : ""}`);
+    if (ok === false) hardFail = true;
+  };
+
+  line(true, "node", process.version);
+
   const java = await checkCommand("java", ["-version"]);
-  console.log(`  java: ${java ? "ok" : "MISSING (needed to boot a server)"}`);
+  line(java, "java", java ? "present" : "MISSING — needed to boot a server");
+
   let net = false;
   try {
-    const res = await fetch("https://fill.papermc.io/v3/projects/paper");
-    net = res.ok;
+    net = (await fetch("https://fill.papermc.io/v3/projects/paper")).ok;
   } catch {
     net = false;
   }
-  console.log(`  PaperMC API reachable: ${net ? "ok" : "no"}`);
+  line(net ? true : "warn", "PaperMC fill API", net ? "reachable" : "unreachable (offline? server jars can't download)");
+
+  try {
+    const p = await findFreePort("127.0.0.1", 25700, 25899);
+    line(true, "ports", `free port available (e.g. ${p})`);
+  } catch {
+    line("warn", "ports", "no free port in 25700–25899");
+  }
+
   const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
-  console.log(`  matrix file (${matrixPath}): ${existsSync(matrixPath) ? "found" : "not found"}`);
-  return java ? 0 : 1;
+  if (existsSync(matrixPath)) {
+    try {
+      const matrix = loadMatrix(matrixPath);
+      line(true, "matrix", `${matrixPath} (${matrix.targets.length} target(s))`);
+    } catch (err) {
+      line(false, "matrix", `${matrixPath} — parse error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else {
+    line("warn", "matrix", `${matrixPath} not found (run \`mc-test init\`)`);
+  }
+
+  const agentJar = resolve(REPO_ROOT, KNOWN_AGENTS["server-bukkit"]!.jarPath);
+  line(
+    existsSync(agentJar) ? true : "warn",
+    "server-bukkit agent jar",
+    existsSync(agentJar) ? "built" : "not built (assertPluginState/fixtures will skip)",
+  );
+
+  return hardFail ? 1 : 0;
 }
 
 function checkCommand(cmd: string, cmdArgs: string[]): Promise<boolean> {
@@ -488,11 +584,14 @@ async function main(): Promise<void> {
     case "list":
       code = cmdList(args);
       break;
+    case "init":
+      code = cmdInit(args);
+      break;
     case "doctor":
       code = await cmdDoctor(args);
       break;
     default:
-      console.error("usage: mc-test <run|list|doctor> [...]");
+      console.error("usage: mc-test <run|list|doctor|init> [...]");
       code = 2;
   }
   process.exit(code);
