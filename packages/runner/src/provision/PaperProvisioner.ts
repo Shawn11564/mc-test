@@ -46,6 +46,13 @@ export interface AgentEndpoint {
 export interface PaperProvisionOptions {
   mc: string;
   build?: number | "latest";
+  /**
+   * A pre-resolved, integrity-checked server jar (F2 native old-version support). When set, it
+   * is booted as-is and the PaperMC fill API / Mojang fallback is bypassed — how a plugin-capable
+   * old server the Paper API cannot serve (e.g. a checksummed Spigot/legacy 1.8.x jar) is
+   * provisioned. Resolved by the CLI from a target's `server: { path | url, sha256 }`.
+   */
+  serverJar?: string;
   bindHost: string;
   gamePort: number;
   instanceDir: string;
@@ -356,23 +363,31 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
   }
 
   let jar: string;
-  try {
-    jar = await resolvePaperJar(opts.mc, opts.build ?? "latest", opts.cacheDir);
-  } catch (err) {
-    if (err instanceof Error && err.message.startsWith("ARTIFACT_NOT_AVAILABLE")) {
-      // A plugin target needs a Bukkit-capable server. The Mojang vanilla fallback CANNOT
-      // load plugins, so booting it would fail every plugin step with a confusing error
-      // (a near-false-negative). Signal an honest SKIP instead (F2). The vanilla fallback
-      // remains for plugin-free targets (e.g. a rendered-client target's connect server).
-      if (opts.plugins.length > 0) {
-        throw new Error(
-          `UNSUPPORTED_TARGET: no plugin-capable server for ${opts.mc} — PaperMC has no build and the ` +
-            `vanilla fallback cannot load Bukkit plugins (${err.message})`,
-        );
+  if (opts.serverJar) {
+    // F2 (native old-version): an explicit, integrity-checked server jar was supplied
+    // (a target's `server: { path | url, sha256 }`). Boot it as-is, bypassing the PaperMC
+    // fill API / Mojang fallback — this is how a plugin-capable old server the Paper API
+    // cannot serve (e.g. a checksummed Spigot/legacy 1.8.x jar) is provisioned.
+    jar = opts.serverJar;
+  } else {
+    try {
+      jar = await resolvePaperJar(opts.mc, opts.build ?? "latest", opts.cacheDir);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("ARTIFACT_NOT_AVAILABLE")) {
+        // A plugin target needs a Bukkit-capable server. The Mojang vanilla fallback CANNOT
+        // load plugins, so booting it would fail every plugin step with a confusing error
+        // (a near-false-negative). Signal an honest SKIP instead (F2). The vanilla fallback
+        // remains for plugin-free targets (e.g. a rendered-client target's connect server).
+        if (opts.plugins.length > 0) {
+          throw new Error(
+            `UNSUPPORTED_TARGET: no plugin-capable server for ${opts.mc} — PaperMC has no build and the ` +
+              `vanilla fallback cannot load Bukkit plugins (${err.message})`,
+          );
+        }
+        jar = await resolveMojangServerJar(opts.mc, opts.cacheDir);
+      } else {
+        throw err;
       }
-      jar = await resolveMojangServerJar(opts.mc, opts.cacheDir);
-    } else {
-      throw err;
     }
   }
 

@@ -19,9 +19,11 @@ import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
 import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
+import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPreflight.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
 import { resolveArtifact } from "./provision/sources.js";
+import { resolveJavaForMc } from "./provision/jdk.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
 import { writeHtml } from "./report/HtmlReporter.js";
 import { renderSkipMatrix } from "./report/SkipMatrix.js";
@@ -223,9 +225,28 @@ function buildProvision(
     for (const p of target.plugins ?? []) {
       resolvedPlugins.push({ path: await resolveArtifact(p, cacheDir), ...(p.as ? { as: p.as } : {}) });
     }
+    // F2 (native old-version): an explicit `server: { path | url, sha256 }` is resolved +
+    // integrity-checked to a local jar and booted directly (bypassing the PaperMC fill API).
+    // This is how a plugin-capable old server the Paper API cannot serve (e.g. a Spigot 1.8.x
+    // jar) is provisioned; `server.paper.build` still drives the default Paper-API path.
+    const serverSrc = target.server;
+    const serverJar =
+      serverSrc && (serverSrc.path || serverSrc.url) ? await resolveArtifact(serverSrc, cacheDir) : undefined;
+    // Multi-JDK: legacy MC needs an older Java than the host (e.g. 1.8.x needs Java 8, not 21).
+    // Map mc → an acceptable Java major and resolve a matching JDK — the host if it fits (modern
+    // targets boot unchanged with no download), else a configured/installed one, else a Temurin
+    // build fetched from Adoptium into the cache — and spawn the server with it.
+    const javaPath = await resolveJavaForMc(target.mc, {
+      cacheDir,
+      ...(prov.jdks ? { configured: prov.jdks } : {}),
+      ...(prov.downloadJdks !== undefined ? { download: prov.downloadJdks } : {}),
+      onLog: (line) => console.log(`  ${line}`),
+    });
     const server = await provisionPaper({
       mc: target.mc,
       build: target.server?.paper?.build ?? "latest",
+      ...(serverJar ? { serverJar } : {}),
+      javaPath,
       bindHost,
       gamePort,
       instanceDir,
@@ -300,19 +321,23 @@ function targetMetaFor(target: MatrixTarget): TargetMeta {
 }
 
 /**
- * v1.0 honest preflight (F2). A `via: true` target requests ViaProxy protocol
- * bridging, which this build does NOT implement (the headless path connects to a
- * server at its native version directly). Rather than boot the wrong/plugin-
- * incapable server or fake a pass, skip with a precise, machine-readable reason
- * surfaced in the skip matrix. Returns a skipped `TestResult`, or undefined to run.
+ * Honest preflight (F2, native old-version support). The headless bot speaks its advertised
+ * `mcVersionRange` NATIVELY (Mineflayer + minecraft-data), so an in-range target — including
+ * old versions like 1.8.9 — connects DIRECTLY; `via` is advisory and needs no proxy. We only
+ * honest-skip here when a `via: true` target's `mc` is OUTSIDE the native range: that genuinely
+ * needs ViaProxy protocol bridging, a deferred v2 follow-on, so emit a precise reason
+ * (`VIA_BRIDGE_UNAVAILABLE`) instead of a dubious pass. An out-of-range target WITHOUT `via` is
+ * skipped by capability negotiation (`NO_COMPATIBLE_DRIVER`, unmet `mcVersionRange`). Returns a
+ * skipped `TestResult`, or undefined to run.
  */
 function preflightSkip(test: ReturnType<typeof loadSteps>, target: MatrixTarget): TestResult | undefined {
-  if (target.via) {
+  if (needsDeferredViaBridge(target)) {
     const message =
-      `via:true target '${target.id}' (mc ${target.mc}) skipped: ViaProxy protocol bridging is not ` +
-      `implemented in this build (v1.0 ships the direct-connect headless path). Legacy servers the ` +
-      `PaperMC fill API cannot serve (e.g. 1.8.x) are out of scope for v1.0 — see docs/ENVIRONMENTS.md ` +
-      `(version spanning). Skipping rather than booting a plugin-incapable server or emitting a dubious pass.`;
+      `via:true target '${target.id}' (mc ${target.mc}) skipped: its version is outside the headless ` +
+      `bot's native range (${HEADLESS_NATIVE_MC_RANGE}), so it needs ViaProxy protocol bridging — a ` +
+      `deferred v2 follow-on. In-range versions (incl. legacy like 1.8.9) connect directly with no proxy; ` +
+      `pair them with a plugin-capable 'server: { url|path, sha256 }'. Skipping with a precise reason ` +
+      `rather than a dubious pass — see docs/ENVIRONMENTS.md (version spanning).`;
     return {
       name: test.name,
       target: target.id,

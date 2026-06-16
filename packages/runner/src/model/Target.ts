@@ -45,6 +45,17 @@ export interface ProvisionPolicy {
   cacheDir?: string;
   workDir?: string;
   keepOnFailure?: boolean;
+  /**
+   * Explicit JDK homes keyed by Java major (e.g. `{ "8": "C:/jdk8", "17": "/opt/jdk17" }`), used to
+   * boot servers whose MC version needs a different Java than the host (multi-JDK provisioning). A
+   * target's `mc` maps to a required major; the host JDK is preferred when it fits the range.
+   */
+  jdks?: Record<string, string>;
+  /**
+   * Fetch a matching Eclipse Temurin JDK from Adoptium into the cache when none is configured or
+   * installed for a target's required Java major. Default `true`; set `false` for fully offline runs.
+   */
+  downloadJdks?: boolean;
 }
 
 /** One matrix target (template). */
@@ -55,13 +66,14 @@ export interface MatrixTarget {
   /** `auto` lets capability negotiation pick (ENVIRONMENTS.md §1.2). */
   driver?: DriverId | "auto";
   /**
-   * Route the headless driver through ViaVersion/ViaProxy so a modern Mineflayer
-   * can speak to an old-version server (ENVIRONMENTS.md; ROADMAP §8.4). Used by
-   * e.g. `paper-1.8.9`. The headless driver's wide `mcVersionRange` covers the old
-   * version; the Via bridge itself is acceptance-only (provisioned in CI, not in
-   * this offline build). If Via cannot faithfully bridge a feature, the driver
-   * narrows its range and the cell honestly skips rather than producing a dubious
-   * pass.
+   * Advisory hint that a target may need protocol bridging (ENVIRONMENTS.md; ROADMAP §8.4).
+   * The headless bot speaks its advertised `mcVersionRange` NATIVELY (Mineflayer +
+   * minecraft-data span ~1.8–1.21), so an in-range target — including old versions like
+   * `1.8.9` — connects DIRECTLY and needs no proxy; pair it with a plugin-capable
+   * `server: { url|path, sha256 }` the PaperMC fill API cannot serve. `via: true` only
+   * changes behavior when `mc` is OUTSIDE the native range: that genuinely needs ViaProxy
+   * (a deferred v2 follow-on), so the cell honestly skips `VIA_BRIDGE_UNAVAILABLE` rather
+   * than emitting a dubious pass.
    */
   via?: boolean;
   server?: Source;

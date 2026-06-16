@@ -10,7 +10,26 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **F2 — native old-version support (v2):** old Minecraft versions now run on the headless path
+  *without* a proxy. The bot connects at the target's `mc` natively (Mineflayer + minecraft-data
+  span ~1.8–1.21), and the provisioner boots an explicit, integrity-checked
+  `server: { url | path, sha256 }` jar — so a plugin-capable old server the PaperMC fill API cannot
+  serve (e.g. a Spigot 1.8.x jar) is supported. (`engine/viaPreflight.ts`, `PaperProvisioner`
+  `serverJar`.)
+- **Multi-JDK provisioning (v2):** the provisioner selects/fetches the right Java for a target's MC
+  version, so legacy servers no longer fail on a modern host JDK. `mc` maps to an acceptable Java
+  range; the host `java` is used when it fits, else a configured (`provision.jdks`) / installed JDK,
+  else an Eclipse Temurin build fetched from Adoptium into the cache (`provision.downloadJdks`,
+  default `true`) and spawned via `javaPath`. (`provision/jdk.ts`.) Validated end-to-end: Temurin 8
+  fetched + extracted + `java -version`-verified on Windows. Legacy real-boot still needs a
+  plugin-capable old-server jar source.
+
 ### Changed
+- **`via` is now advisory, not a blanket skip.** A `via: true` target only honest-skips
+  `VIA_BRIDGE_UNAVAILABLE` when its `mc` is *outside* the bot's native range (genuinely needs
+  ViaProxy — a deferred follow-on); in-range versions (incl. legacy like 1.8.9) connect directly.
+  An out-of-range target without `via` is skipped by capability negotiation (`NO_COMPATIBLE_DRIVER`).
 - **Headless driver — improved handling of custom items** in selector resolution: richer
   display-name / NBT normalization (`packages/driver-headless/src/normalize.ts`) and container-GUI
   element mapping (`primitives/containerGui.ts`), with a new `Target` field + `PaperProvisioner`
