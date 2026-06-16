@@ -68,3 +68,49 @@ jobs:
             mc-test-report/
             .mc-test/run/
           if-no-files-found: ignore
+
+  # Full F6 path: publish the plugin + agent core locally, then `gradle mcTest` on
+  # the sample Paper plugin project — builds the SUT jar, boots an ephemeral server,
+  # runs the regions test (incl. assertPluginState), writes JUnit.
+  gradle-front-door:
+    name: Gradle front door (gradle mcTest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      - run: npm ci
+      - name: Build runner (dependency order)
+        run: |
+          npm run build -w @mc-test/protocol
+          npm run build -w @mc-test/driver-headless
+          npm run build -w @mc-test/driver-inprocess
+          npm run build -w @mc-test/driver-pixel
+          npm run build -w @mc-test/runner
+
+      # The SUT compiles against the agent-core SPI; the runner co-selects the agent jar.
+      - name: Publish agent core + build server-bukkit jar
+        run: gradle -p agents :core:publishToMavenLocal :server-bukkit:jar
+      - name: Publish the mc-test-gradle plugin (mavenLocal)
+        run: gradle -p gradle-plugin publishToMavenLocal
+
+      - name: gradle mcTest (sample plugin project)
+        run: gradle -p examples/regions/plugin-gradle mcTest
+
+      - name: Upload Gradle front-door report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-front-door-report
+          path: examples/regions/plugin-gradle/build/mc-test-report/
+          if-no-files-found: ignore

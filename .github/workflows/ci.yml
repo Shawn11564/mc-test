@@ -75,3 +75,7 @@ jobs:
       # "no NMS/Mojang-mapped symbols" gate; :core:test runs the Java conformance.
       - name: Test core + server-bukkit
         run: gradle -p agents :core:test :server-bukkit:test
+
+      # Compile-gate the Gradle front door plugin (F6) so it can't rot.
+      - name: Build mc-test-gradle plugin
+        run: gradle -p gradle-plugin build
