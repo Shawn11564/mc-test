@@ -53,3 +53,6 @@ agents/.gradle/
 **/.gradle/
 M3_PLAN.scratch.md
 M4_PLAN.scratch.md
+
+# --- Knowledge-graph tooling output (graphify) ---
+graphify-out/
