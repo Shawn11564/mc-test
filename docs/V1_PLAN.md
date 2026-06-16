@@ -80,10 +80,12 @@ ran on the local Windows machine (JDK 21 / Gradle 9.4.0 / Maven 3.9.6).
    on two real steps — CLI `--help` exited 2 (fast-lane "CLI smoke test") and `gradle -p gradle-plugin
    build` failed `validatePlugins`. Both are fixed on `fix/ci-v1-release`; merge it to `main` and confirm
    **one green CI run** there (the one open F0 acceptance box → the green **badge**).
-2. **Make the D1 distribution call** (public OSS vs internal). It unblocks, in order:
-   - npm publish of `@mc-test/*` + GitHub Releases of the agent jars (F0 release gate);
-   - **zero-Node-setup** for `gradle mcTest` (auto Node provisioning + resolving the published runner — the F6 deferral);
-   - flipping root `package.json` `private: true`. *(Keeping it private satisfies the gate's "or keep private" branch — no code change.)*
+2. ~~**Make the D1 distribution call**~~ ✅ **decided (2026-06-16): internal/private for v1.0.** Root
+   `package.json` stays `private: true`; **no** npm publish of `@mc-test/*`, **no** GitHub Releases of the
+   agent jars. This satisfies the release gate's "or keep private" branch with no code change and is fully
+   reversible. **Revisit for v2** — going public OSS would then unblock, in order: npm publish + agent-jar
+   Releases; **zero-Node-setup** for `gradle mcTest` (auto Node provisioning + the published runner — the
+   F6 deferral); flipping `private: true → false`.
 3. **Small F0 leftover:** the MCTP `protocolVersion` bump policy is documented in **PROTOCOL.md §10
    (Protocol versioning)**, now framed there as the release compatibility contract.
 4. ~~**(Optional) commit a Gradle wrapper**~~ ✅ **done** — wrappers pinned to Gradle 9.4.0 are committed
@@ -106,7 +108,8 @@ run — they honestly **skip** today (never a false green).
 - [x] Docs match the shipped product.
 - [ ] **CI green on every push** — F0–F5 merged to `main` but the first run was red; fixes on
       `fix/ci-v1-release` (Resume #1) — merge + confirm one green run on `main`.
-- [ ] **Release gate decided + executed** — needs the D1 call (Resume #2).
+- [x] **Release gate decided + executed** — D1 = **internal/private for v1.0** (root stays `private: true`;
+      no npm publish / Releases). Reversible; revisit for v2 (Resume #2).
 
 ---
 
@@ -222,6 +225,7 @@ help.
    skip matrix.
 6. **Docs match the shipped product** (Prime Directive 5) — no design-doc/implementation drift.
 7. **Release gate:** make the OSS-vs-internal call → publish (npm + agent jars) or keep private.
+   **Decided 2026-06-16: keep private** for v1.0 (root `private: true`; no publish). Reversible; revisit for v2.
 
 ## Practical prerequisites
 
