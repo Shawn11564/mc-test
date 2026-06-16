@@ -14,7 +14,7 @@
 plugins {
     java
     // Pin Loom; a real build resolves it from the Fabric maven (see settings.gradle.kts).
-    id("fabric-loom") version "1.7-SNAPSHOT"
+    id("fabric-loom") version "1.7.4"
 }
 
 group = "io.mctest"

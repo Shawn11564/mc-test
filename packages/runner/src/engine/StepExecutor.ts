@@ -12,6 +12,7 @@
 import { describeSelector, type Selector, type CapabilityKey, type StepVerb } from "@mc-test/protocol";
 import { Session } from "./Session.js";
 import { withSelectorWaits } from "./SelectorWaits.js";
+import { captureScreenshot, type ScreenshotArtifact } from "../report/screenshots.js";
 
 /**
  * A step verb's capability requirement: a single key, an **anyOf** group (the
@@ -55,6 +56,26 @@ export interface ExecContext {
   host: string;
   port: number;
   defaultUsername: string;
+  /**
+   * Directory the `screenshot` verb persists captured PNGs into (the same
+   * per-test artifacts dir the failure bundle uses). Absent → screenshots are
+   * captured over the wire but not written to disk (back-compat for callers that
+   * don't supply an output dir, e.g. unit tests that only assert `ok`).
+   */
+  artifactsDir?: string;
+  /**
+   * Optional baseline dir for the informational, NON-GATING screenshot diff.
+   * When set, the `screenshot` verb diffs against `<baselineDir>/<key>.png`
+   * (seeding it on first run). Never affects pass/fail (ROADMAP §5.4 / M4).
+   */
+  baselineDir?: string;
+  /**
+   * Sink for artifacts a step produces (e.g. the `screenshot` verb's PNG +
+   * baseline diff), so the Runner can attach them to the `StepResult` and the
+   * test's `artifacts[]` without the executor's `Promise<string>` contract
+   * changing. Called zero-or-more times per step.
+   */
+  onArtifact?: (artifact: ScreenshotArtifact) => void;
 }
 
 /**
@@ -221,8 +242,37 @@ export async function executeStep(
       return `pressed ${String(a["key"] ?? "")}`;
     }
     case "screenshot": {
-      await session.call("screen.screenshot", {});
-      return "captured screenshot";
+      // Build the MCTP params from the authored args (region / maxWidth / maxHeight);
+      // `format`/`return` are defaulted by captureScreenshot.
+      const params: Record<string, unknown> = {};
+      if (typeof a["region"] === "string") params["region"] = a["region"];
+      if (typeof a["maxWidth"] === "number") params["maxWidth"] = a["maxWidth"];
+      if (typeof a["maxHeight"] === "number") params["maxHeight"] = a["maxHeight"];
+      // A `name` arg labels the capture (filename + baseline key); else use the step verb.
+      const slot = typeof a["name"] === "string" && a["name"] ? String(a["name"]) : "step";
+      if (!ctx.artifactsDir) {
+        // No output dir wired (e.g. a unit harness): still call the primitive so the
+        // capability/round-trip is exercised, but there's nowhere to persist the PNG.
+        await session.call("screen.screenshot", params);
+        return "captured screenshot (not persisted: no artifacts dir)";
+      }
+      const artifact = await captureScreenshot(session, {
+        artifactsDir: ctx.artifactsDir,
+        slot,
+        ...(Object.keys(params).length ? { params } : {}),
+        ...(ctx.baselineDir ? { baselineDir: ctx.baselineDir, baselineKey: slot } : {}),
+      });
+      if (!artifact) return "captured screenshot (no inline image returned)";
+      ctx.onArtifact?.(artifact);
+      const b = artifact.baseline;
+      const diffNote = b
+        ? b.compared
+          ? b.unsupported
+            ? ` — baseline diff unsupported (${b.unsupported})`
+            : ` — baseline diff ${(b.ratio! * 100).toFixed(2)}% (${b.diffPixels}/${b.totalPixels}px)`
+          : " — baseline seeded"
+        : "";
+      return `screenshot → ${artifact.path}${diffNote}`;
     }
     case "getBlock": {
       const result = await session.call<{ block?: { type?: string } }>("truth.getWorldBlock", {

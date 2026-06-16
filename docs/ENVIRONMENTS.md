@@ -437,20 +437,31 @@ discovers the **client agent** (`/agents/client-fabric`, MCTP `agent.kind: clien
 follows (M4). This mirrors §2.4.1 but the agent runs **inside the rendered client**, not the
 server, and the runner **launches and babysits** that client via `/packages/driver-inprocess`:
 
-1. **Install (into the client's `mods/`).** Resolve the client agent via the `agentResolver`
+1. **Provision the client + install into its `mods/`.** As of **F3**, `/packages/driver-inprocess`
+   provisions the rendered client itself (a real launcher, not a fictional external CLI):
+   **`ClientProvisioner.ts`** resolves the **Mojang version manifest** (§2.2) → the per-version JSON →
+   downloads the **client jar + libraries** and (when `client.downloadAssets` is enabled) the **asset
+   bundle**, then fetches the **Fabric loader profile** from `meta.fabricmc.net` → the **loader
+   libraries** (the resolved loader version is **pinned** per run), and extracts the **LWJGL natives**
+   via a dependency-free ZIP reader. All of this is keyed into a **content-addressed cache shared
+   across runs** (the same `provision.cacheDir` discipline as server jars, §1.8). It then stages a
+   per-instance `gameDir/mods/` with the **SUT's client mod(s)** (`Target.mods`, via the launch
+   profile `Target.client.mods`, §5.2) **alongside the client agent** resolved by the `agentResolver`
    (§2.4) — `agents/client-fabric/build/libs/agent-client-fabric-<mc>.jar` (the
-   `agent-<variant>-<mc>.jar` convention) — and drop it into the **rendered client's** `mods/`
-   directory **alongside the SUT's client mod** (`Target.mods`, materialized via the client
-   launch profile `Target.client.mods`, §5.2). The client agent carries the per-`mc`
-   Yarn mappings (the only per-version artifact); if none exists for `(fabric, mc, client)`
+   `agent-<variant>-<mc>.jar` convention; built via Loom as of F3). The client agent carries the
+   per-`mc` Yarn mappings (the only per-version artifact); if none exists for `(fabric, mc, client)`
    the instance is **skipped** with `AGENT_NOT_AVAILABLE` (§8).
 2. **Launch & babysit the client.** Unlike the server agent (which only *listens* inside the
    already-booted server JVM), the rendered client is **started by `driver-inprocess`**: it
-   selects the display backend (`Target.display` → `xvfb` / `desktop`, §5.1), builds an
-   **offline** client launch (no Microsoft auth: `--username Tester --uuid <…> --accessToken 0`),
-   injects the SUT mod + client agent jar and the `MCTEST_AGENT_PORT` environment variable, and
-   spawns the client into that display. The client then auto-`connect`s to the instance's server
-   `gamePort` (§5.2).
+   selects the display backend (`Target.display` → `xvfb` / `desktop`, §5.1) and runs `Display.ts`'s
+   real `startDisplay` lifecycle (reuse an ambient `DISPLAY`, else spawn a managed Xvfb learned via
+   `-displayfd`; desktop is a no-op), then builds a real **offline** launch — `java
+   -Djava.library.path=<natives> -cp <all jars> net.fabricmc.loader.impl.launch.knot.KnotClient` with
+   no Microsoft auth (username `Tester`, zero UUID, `--accessToken 0`) — injects the SUT mod + client
+   agent jar and the `MCTEST_AGENT_PORT` environment variable, and spawns the client into that display.
+   The client then auto-`connect`s to the instance's server `gamePort` (§5.2). *(This provision+launch
+   path is verified on a real Windows/Java-21 machine; the actual rendered frame runs in the GL-capable
+   `e2e.yml` `fabric-rendered-client` lane / `Dockerfile.rendered`, ROADMAP §5.4.)*
 3. **Discover the port from the client log.** On start the client agent logs
    **`MCTP listening on :PORT`** to the client's stdout/`client.log`. `driver-inprocess`
    **scrapes** that line (`/MCTP listening on :(\d+)/`) to learn the agent's WebSocket port and
@@ -464,6 +475,13 @@ server, and the runner **launches and babysits** that client via `/packages/driv
    (`server-bukkit`/`server-fabric`). The negotiator reasons about the **union** of both
    connections' advertised caps (§4). With no server agent listed, the server-owned steps
    **skip with a reason** (§4) rather than pass.
+   > **The truth agent matches the *server*, not the rendered client.** When a rendered-client
+   > target's underlying server is **Paper** (the common case — a Fabric/NeoForge *client* drives the
+   > GUI against a Paper server hosting the regions **plugin**), the co-selected truth agent is
+   > **`server-bukkit`** + the regions plugin — not `server-fabric`. The F3 `mc-test.yml` fabric/neoforge
+   > client rows were corrected to co-select `server-bukkit` + the plugin accordingly, so the combined
+   > session is real end-to-end (the **client** agent proves the click; the **Bukkit** agent proves the
+   > region). `server-fabric` is the truth agent only when the server itself is a Fabric/NeoForge server.
 
 > The SUT's cooperating client mod stamps stable widget `testId`s the client agent reads via the
 > `TestIdHolder` marker shipped in `/agents/core` (the client analog of the server SPIs) — see
@@ -675,14 +693,24 @@ For `inprocess`/`pixel` targets, `client` describes how to start the real client
 | `profile` | `vanilla\|fabric\|forge\|neoforge\|quilt` | Which client to launch (usually mirrors `loader`). |
 | `mc` | string | Client MC version (defaults to `Target.mc`). |
 | `mods` | list<`Source`> | Client-side mods incl. the **client agent** (`client-fabric`, …) and the SUT's client mod. |
+| `loaderVersion` | string | Mod-loader version (e.g. the Fabric loader). When omitted the provisioner **resolves it from `meta.fabricmc.net` and pins** the resolved version for the run (F3). |
+| `downloadAssets` | bool | Whether `ClientProvisioner` downloads the Mojang **asset bundle** (textures/sounds). Default `true`; set `false` to skip assets for a faster boot when frames need not be faithful (F3). |
 | `connect` | `auto\|localhost:<port>` | After load, the client auto-connects to this instance's server `gamePort`. `auto` ⇒ the allocated game port. This is how *"join localhost"* is realized. |
-| `username` | string | Offline username (default `mc-test-client`); valid because the server is `online-mode=false`. |
+| `username` | string | Offline username (the `driver-inprocess` launcher defaults to `Tester`); valid because the server is `online-mode=false`. Offline auth uses a zero UUID + `--accessToken 0` (no Microsoft). |
 | `windowSize` | string | e.g. `1920x1080`. |
 
-The runner installs the client loader + mods into a throwaway client instance dir, launches
-it under the chosen display backend, waits for the **client agent** to complete its MCTP
-handshake, then issues `connect` so the client joins the server. The test then drives real
-Screens (`/or` → click "Regions" → click "TestRegion") through the `clientScreens` primitives.
+As of **F3**, `/packages/driver-inprocess` provisions the client itself rather than shelling out to an
+external launcher (§2.4.2): **`ClientProvisioner.ts`** resolves the **Mojang version manifest** (§2.2)
+→ version JSON → downloads the **client jar + libraries** and (per `downloadAssets`) the **asset
+bundle**, fetches the **Fabric loader profile** (`meta.fabricmc.net`) → **loader libraries** (pinning
+the resolved `loaderVersion`), and extracts the **LWJGL natives** via a dependency-free ZIP reader —
+all into the **content-addressed cache shared across runs** (the same `provision.cacheDir` discipline
+as server jars). It stages the client agent + SUT mod into the throwaway client instance's `mods/`,
+launches via **`ClientLauncher.ts`** (`java -Djava.library.path=<natives> -cp <all jars>
+net.fabricmc.loader.impl.launch.knot.KnotClient`, offline) under the chosen display backend, waits for
+the **client agent** to complete its MCTP handshake (scraping `MCTP listening on :PORT` from the client
+log), then issues `connect` so the client joins the server. The test then drives real Screens (`/or` →
+click "Regions" → click "TestRegion") through the `clientScreens` primitives.
 
 ### 5.3 Headless vs. rendered — cost gate
 
@@ -764,8 +792,10 @@ commented matrix that:
   - `regions-plugin-headless` (requires `chat, containerGui, pluginState`) — runs on the
     **Paper** targets with the `headless` bot + `server-bukkit` agent. CI-fast, no display.
   - `regions-mod-gui` (requires `chat, clientScreens, pluginState`) — runs on the **Fabric**
-    and **NeoForge** *client* targets with the `inprocess` driver under Xvfb. Skipped (with a
-    reason) on Paper, demonstrating §4.
+    and **NeoForge** *client* targets with the `inprocess` driver under Xvfb, **co-selecting the
+    `server-bukkit` truth agent + the regions plugin** (the server is Paper, so the client agent
+    proves the click and the Bukkit agent proves the region — §2.4.2). Skipped (with a reason) on a
+    headless Paper target, demonstrating §4.
 - Uses world `flat-void` + a fixture (`fixture.set` region create) per §3.4, so the test is
   hermetic; the assertion uses `truth.assertPluginState(regionExists "TestRegion")`.
 

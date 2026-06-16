@@ -11,6 +11,7 @@ export {
   type InProcessLaunchOptions,
   type SpawnedClient,
   type ClientLaunch,
+  type SpawnContext,
 } from "./InProcessDriver.js";
 export {
   INPROCESS_CAPABILITIES,
@@ -19,10 +20,37 @@ export {
 } from "./capabilities.js";
 export {
   selectDisplay,
+  startDisplay,
+  xvfbArgs,
   type DisplayBackend,
   type DisplayChoice,
+  type DisplaySession,
+  type XvfbSpawner,
 } from "./launch/Display.js";
 export {
   buildClientLaunch,
-  type ClientLaunchSpec,
+  type BuildLaunchInput,
+  type ResolvedClient,
+  type OfflineIdentity,
 } from "./launch/ClientLauncher.js";
+export {
+  provisionClient,
+  type ProvisionOptions,
+} from "./launch/ClientProvisioner.js";
+export {
+  pickVersion,
+  selectLibraries,
+  fabricLibraries,
+  pickFabricLoader,
+  assetDownloads,
+  parseMaven,
+  mavenPath,
+  mavenUrl,
+  ruleAllows,
+  mojangOs,
+  type VersionManifest,
+  type VersionJson,
+  type FabricProfile,
+  type ResolvedArtifact,
+} from "./launch/resolve.js";
+export { extractNatives } from "./launch/unzip.js";

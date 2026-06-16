@@ -1,7 +1,13 @@
-# Real-boot E2E matrix (F1). Self-contained: two Paper 1.20.4 targets that differ
-# ONLY by whether the server-bukkit truth agent is co-selected — the basis for the
-# positive run, the honest-skip control, the truth/UI-divergence control, and the
-# fixtures run. Driven by tests/e2e/run-real-boot.mjs.
+# Real-boot E2E matrix (F1 + F3). Self-contained targets for the committed E2E harnesses:
+#   - two Paper 1.20.4 headless targets (paper-agent / paper-noagent) differing ONLY by
+#     whether the server-bukkit truth agent is co-selected — the basis for F1's positive
+#     run, honest-skip control, truth/UI-divergence control, and fixtures run. Driven by
+#     tests/e2e/run-real-boot.mjs.
+#   - one Fabric 1.21.1 RENDERED-CLIENT target (fabric-client, driver: inprocess) — the F3
+#     rendered-client (in-process driver) path: a real Fabric client renders the SUT mod's
+#     client Screen over MCTP while a Paper server + the Bukkit agent provide server truth.
+#     Driven by tests/e2e/run-rendered-boot.mjs. The plain headless paper-agent target above
+#     doubles as F3's honest-skip control (the clientgui test SKIPS unmet:[clientScreens] on it).
 version: 1
 provision:
   eulaAccepted: true
@@ -33,4 +39,27 @@ targets:
     server: { paper: { project: paper, version: "1.20.4", build: latest } }
     plugins:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    world: { ref: regions-world }
+
+  # F3 RENDERED-CLIENT target — mirrors mc-test.yml's fabric-1.21-client row. The in-process
+  # driver launches a REAL Fabric 1.21.1 client (under Xvfb in CI) hosting the client-fabric
+  # agent, which renders/clicks the SUT mod's client Screen; the Paper 1.21.1 server hosts the
+  # regions PLUGIN + the Bukkit truth agent so assertPluginState resolves real state. MC 1.21.1
+  # matches the pinned Loom build of both openregions.jar and agent-client-fabric.jar. The
+  # clientgui test RUNS here (clientScreens) and SKIPS on the headless paper-agent target above.
+  - id: fabric-client
+    loader: fabric
+    mc: "1.21.1"
+    driver: inprocess # Rendered client agent — the ONLY driver that sees client Screens.
+    server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    # Server-side regions plugin (queried by assertPluginState via the Bukkit agent).
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    # Client SUT mod, injected into the rendered client alongside the client-fabric agent.
+    mods:
+      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+    display: xvfb # Linux CI headless surface; "desktop" on a windowed runner.
+    # Bukkit server agent (server is Paper) for the truth half; client-fabric is injected
+    # implicitly by driver: inprocess (default client agent).
+    agents: [ client-fabric, server-bukkit ]
     world: { ref: regions-world }

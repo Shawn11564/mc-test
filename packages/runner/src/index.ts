@@ -44,7 +44,24 @@ export {
   type SkipMatrix,
   type SkipCell,
 } from "./report/SkipMatrix.js";
-export { collectArtifacts } from "./report/Artifacts.js";
+export { collectArtifacts, artifactDirFor, baselineDirFor } from "./report/Artifacts.js";
+export {
+  decodePng,
+  comparePng,
+  isDecoded,
+  type DecodedPng,
+  type DecodeResult,
+  type PngComparison,
+} from "./report/pngDiff.js";
+export {
+  captureScreenshot,
+  tryCaptureOnFailure,
+  diffAgainstBaseline,
+  type ScreenshotArtifact,
+  type ScreenshotCaller,
+  type CaptureOptions,
+  type BaselineDiff,
+} from "./report/screenshots.js";
 export {
   provisionPaper,
   resolvePaperJar,
@@ -57,4 +74,4 @@ export {
 } from "./provision/PaperProvisioner.js";
 export type { NormalizedTest, NormalizedStep } from "./model/Step.js";
 export type { MatrixFile, MatrixTarget, WorldDef, Source, ProvisionPolicy } from "./model/Target.js";
-export type { TestResult, StepResult, SuiteResult, SkipInfo, Outcome } from "./model/result.js";
+export type { TestResult, StepResult, SuiteResult, SkipInfo, Outcome, BaselineDiffInfo } from "./model/result.js";

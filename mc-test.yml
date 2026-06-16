@@ -79,43 +79,54 @@ targets:
     agents: [ server-bukkit ]
     world: { ref: regions-world }
 
-  # ACCEPTANCE-ONLY (M4). This target drives the CLIENT-GUI variant
+  # F3 (M4) RENDERED-CLIENT ROW. This target drives the CLIENT-GUI variant
   # (examples/regions/regions.clientgui.mctest.yml) against the mod SUT's real client
   # Screens — the case the headless bot provably cannot see. It needs (a) a built client
-  # mod jar + the client-fabric agent jar and (b) a rendered client under a display
-  # (Xvfb in CI / desktop runner), so it does NOT run in this repo's offline CI. The
-  # in-process driver launches the rendered client; the Paper server below is just the
-  # connect target (the SUT is a client-side mod, so a vanilla/Paper server suffices; a
-  # Fabric/vanilla server source via `mojang:` is M5 — the provisioner currently boots Paper).
-  # clientScreens-gated steps run; on the headless paper row above, the same suite honestly
-  # SKIPS (unmet:["clientScreens"]).
+  # mod jar + the client-fabric agent jar and (b) a rendered client under a display, so it
+  # runs in a GL-capable CI job (Xvfb + Mesa/llvmpipe) or a desktop runner — NOT this repo's
+  # plain offline CI. The in-process driver launches the rendered client; the Paper server
+  # below is both the connect target AND the host of the server-truth agent (the SUT is a
+  # client-side mod, so a vanilla/Paper server suffices; a Fabric/vanilla server source via
+  # `mojang:` is M5 — the provisioner currently boots Paper). Because the server is Paper,
+  # the server-truth half is the BUKKIT agent `server-bukkit` (M3), not server-fabric (that
+  # is for a Fabric server — F4/M5). clientScreens-gated steps run here; on the headless paper
+  # row above, the same suite honestly SKIPS (unmet:["clientScreens"]).
   - id: fabric-1.21-client
     loader: fabric
     mc: "1.21.1"
     driver: inprocess # Rendered client agent — the ONLY driver that sees client Screens.
     server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    # The server-side regions PLUGIN (dropped into plugins/) so assertPluginState has real
+    # state to query via the Bukkit agent. The client SUT mod stays under `mods:` below.
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     mods:
       - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
     display: xvfb # Linux CI headless surface; "desktop" on a windowed runner.
-    # M5: the client-fabric agent (Yarn) is injected into the rendered client by the
-    # in-process driver; the server-fabric truth agent is co-selected so the canonical
-    # assertPluginState RUNS (not skips). Both jars are Loom-built (acceptance-only).
-    agents: [ client-fabric, server-fabric ]
+    # The client-fabric agent (Yarn) is injected into the rendered client by the in-process
+    # driver; the BUKKIT server agent is co-selected (the server is Paper) so the canonical
+    # assertPluginState RUNS (not skips). The client/SUT-mod jars are Loom-built.
+    agents: [ client-fabric, server-bukkit ]
     world: { ref: regions-world }
 
-  # ACCEPTANCE-ONLY (M5 fan-out). The NeoForge twin of the fabric client row: the SAME
+  # ACCEPTANCE-ONLY (M5 / F4 fan-out). The NeoForge twin of the fabric client row: the SAME
   # unchanged test, driven against the real client Screens via the in-process driver +
-  # the client-neoforge agent (Mojmap mappings), with server-fabric for the truth half.
-  # Differs from the fabric row ONLY by loader/agent — proving "add a loader = one new
-  # mappings/Names.java + a matrix row" (ROADMAP §6.3). The Forge twin (client-forge,
-  # MCP-SRG) is built identically and selectable via an analogous `loader: forge` row.
+  # the client-neoforge agent (Mojmap mappings). The server is Paper, so the truth half is
+  # the BUKKIT agent `server-bukkit` (M3) — same as the fabric row. Differs from that row
+  # ONLY by loader/client-agent — proving "add a loader = one new mappings/Names.java + a
+  # matrix row" (ROADMAP §6.3). The Forge twin (client-forge, MCP-SRG) is built identically
+  # and selectable via an analogous `loader: forge` row. Acceptance-only: the client-neoforge
+  # agent is a scaffolded shim (M5; NeoGradle build) and is not exercised in this repo's CI.
   - id: neoforge-1.21-client
     loader: neoforge
     mc: "1.21.1"
     driver: inprocess
     server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    # Server-side regions PLUGIN so assertPluginState resolves against the Bukkit agent.
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     mods:
       - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
     display: xvfb
-    agents: [ client-neoforge, server-fabric ]
+    agents: [ client-neoforge, server-bukkit ]
     world: { ref: regions-world }

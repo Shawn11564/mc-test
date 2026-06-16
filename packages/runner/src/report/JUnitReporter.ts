@@ -50,6 +50,13 @@ export function renderJUnit(results: TestResult[]): string {
       totalTests++;
       sTime += r.durationMs / 1000;
 
+      // Per-step baseline diff ratios surfaced as properties (informational only).
+      const baselineProps = r.steps
+        .filter((st) => st.baselineDiff?.compared && st.baselineDiff.unsupported === undefined)
+        .map(
+          (st) => [`baselineDiff.step${st.index}`, st.baselineDiff!.ratio!.toFixed(6)] as [string, string],
+        );
+
       const props = (
         [
           ["loader", r.loader],
@@ -58,6 +65,9 @@ export function renderJUnit(results: TestResult[]): string {
           // Surface the advisory brittle-driver marker so CI dashboards can flag
           // last-resort (pixel/OCR) results (ROADMAP §6.3).
           ["brittle", r.brittle ? "true" : undefined],
+          // Each artifact (screenshot PNG, server log) as a property so CI can link it.
+          ...(r.artifacts ?? []).map((p, i) => [`artifact.${i}`, p] as [string, string]),
+          ...baselineProps,
         ] as [string, string | undefined][]
       )
         .filter(([, v]) => v !== undefined)

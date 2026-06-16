@@ -12,6 +12,19 @@ export interface SkipInfo {
   message: string;
 }
 
+/** An informational, NON-GATING baseline screenshot diff (ROADMAP §5.4 / M4). */
+export interface BaselineDiffInfo {
+  baselinePath: string;
+  /** False when this run only seeded the baseline candidate (no prior baseline). */
+  compared: boolean;
+  ratio?: number;
+  diffPixels?: number;
+  totalPixels?: number;
+  sameSize?: boolean;
+  /** Set when a PNG could not be decoded for comparison. */
+  unsupported?: string;
+}
+
 /** Per-step outcome within a test. */
 export interface StepResult {
   index: number;
@@ -21,6 +34,14 @@ export interface StepResult {
   detail?: string;
   skip?: SkipInfo;
   error?: { message: string; reason?: string };
+  /**
+   * Artifact paths this step produced (absolute) — e.g. a `screenshot` step's
+   * persisted PNG. The reporters link these; `collectArtifacts` copies them into
+   * the bundle dir even on a passing test.
+   */
+  artifacts?: string[];
+  /** Informational baseline screenshot diff recorded for a `screenshot` step. */
+  baselineDiff?: BaselineDiffInfo;
 }
 
 /** One authored test resolved against one target. */

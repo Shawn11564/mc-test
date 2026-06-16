@@ -1,11 +1,11 @@
 /**
  * Pure construction of the offline rendered-client launch (no Microsoft auth).
  *
- * `buildClientLaunch` is PURE: it returns the `{ command, args, env }` that
- * `InProcessDriver` spawns. Real launching needs a *provisioned* client (a
- * Loom/launcher-built instance with the SUT mods + the client agent jar dropped
- * into its `mods/` dir) — that is acceptance-only and lives in the driver's real
- * `start()` path, not here.
+ * `buildClientLaunch` is PURE: given an already-provisioned client (the resolved
+ * classpath, natives dir, main class, game/assets dirs — produced by
+ * `ClientProvisioner`) it returns the real `{ command, args, env }` that
+ * `InProcessDriver` spawns. This is a genuine `java -cp … net.fabricmc.loader.
+ * impl.launch.knot.KnotClient …` invocation — NOT a fictional launcher CLI.
  *
  * Offline discipline (ROADMAP §8.3): NO Microsoft/Mojang auth. The client joins
  * an `online-mode=false` server with a deterministic username, a zero UUID, and
@@ -13,88 +13,109 @@
  */
 import type { DisplayChoice } from "./Display.js";
 
-/** Everything needed to build a rendered-client launch. */
-export interface ClientLaunchSpec {
+/** A fully provisioned, launchable client (output of `ClientProvisioner`). */
+export interface ResolvedClient {
   /** Minecraft version, e.g. `"1.21.1"`. */
   mc: string;
-  /** Loader, e.g. `"fabric"`. */
+  /** Loader id, e.g. `"fabric"`. */
   loader: string;
-  /** SUT mod jars to inject into the client's `mods/` dir. */
-  mods: string[];
-  /** The client MCTP agent jar (e.g. `agent-client-fabric.jar`). */
-  clientAgentJar?: string;
-  /** Offline username (default `"Tester"`). */
+  /** Resolved loader version, e.g. `"0.16.5"`. */
+  loaderVersion: string;
+  /** Absolute path to the `java` executable to launch with. */
+  javaPath: string;
+  /** Launch main class (Fabric: `net.fabricmc.loader.impl.launch.knot.KnotClient`). */
+  mainClass: string;
+  /** Absolute classpath entries (vanilla client jar + vanilla + loader libraries). */
+  classpath: string[];
+  /** Directory the extracted LWJGL natives live in (`-Djava.library.path`). */
+  nativesDir: string;
+  /** The per-instance game directory (holds `mods/`, saves, logs). */
+  gameDir: string;
+  /** The shared assets root (`assets/indexes`, `assets/objects`). */
+  assetsDir: string;
+  /** The asset index id, e.g. `"17"`. */
+  assetIndex: string;
+  /** The platform the client runs on (drives classpath separator + mac flags). */
+  platform: NodeJS.Platform;
+}
+
+/** Offline identity overrides (deterministic — never a real auth identity). */
+export interface OfflineIdentity {
   username?: string;
-  /** Offline UUID (default the zero form). */
   uuid?: string;
-  /** `"WIDTHxHEIGHT"` window size (default `"1280x720"`). */
-  windowSize?: string;
-  /** Port the client agent should host MCTP on (passed via `MCTEST_AGENT_PORT`). */
-  agentPort?: number;
-  /** The resolved display choice (provides DISPLAY/LIBGL env on the Xvfb path). */
-  display: DisplayChoice;
 }
 
 /** Offline defaults — deterministic, never a real auth identity. */
 const DEFAULT_USERNAME = "Tester";
 /** The all-zero offline UUID (no Microsoft account). */
 const DEFAULT_UUID = "00000000-0000-0000-0000-000000000000";
-const DEFAULT_WINDOW_SIZE = "1280x720";
 /** A sentinel access token: offline auth, never a session token. */
 const OFFLINE_ACCESS_TOKEN = "0";
+const DEFAULT_WINDOW_SIZE = "1280x720";
+
+/** Everything needed to shape the launch invocation. */
+export interface BuildLaunchInput {
+  client: ResolvedClient;
+  /** The resolved display choice (provides DISPLAY/LIBGL env on the Xvfb path). */
+  display: DisplayChoice;
+  /** Port the client agent should host MCTP on (passed via `MCTEST_AGENT_PORT`). */
+  agentPort?: number;
+  identity?: OfflineIdentity;
+  /** `"WIDTHxHEIGHT"` window size (default `"1280x720"`). */
+  windowSize?: string;
+  /** Extra JVM args (e.g. `-Xmx`); inserted before `-cp`. */
+  extraJvmArgs?: string[];
+}
 
 /**
- * Build the offline client launch command. PURE — performs no I/O and spawns
- * nothing. The mods directory contents are the union of `mods` + `clientAgentJar`
- * (surfaced as `--mctest-mods` so the provisioner/launcher stages them), and the
- * client agent port + display env are threaded through `env`.
- *
- * NB: real launching requires a provisioned client (Loom/launcher); this only
- * shapes the invocation. The actual spawn + readiness scrape is acceptance-only
- * in `InProcessDriver.start()`.
+ * Build the real offline client launch command. PURE — performs no I/O and
+ * spawns nothing; it only shapes the `java` invocation from a `ResolvedClient`.
+ * The classpath separator and mac `-XstartOnFirstThread` are chosen from
+ * `client.platform`, so a launch can be shaped for any target host (testable
+ * cross-platform). The agent port + display env are threaded through `env`.
  */
-export function buildClientLaunch(spec: ClientLaunchSpec): {
+export function buildClientLaunch(input: BuildLaunchInput): {
   command: string;
   args: string[];
   env: Record<string, string>;
 } {
-  const username = spec.username ?? DEFAULT_USERNAME;
-  const uuid = spec.uuid ?? DEFAULT_UUID;
-  const windowSize = spec.windowSize ?? DEFAULT_WINDOW_SIZE;
+  const { client, display } = input;
+  const username = input.identity?.username ?? DEFAULT_USERNAME;
+  const uuid = input.identity?.uuid ?? DEFAULT_UUID;
+  const [width, height] = (input.windowSize ?? DEFAULT_WINDOW_SIZE).split("x");
+  const sep = client.platform === "win32" ? ";" : ":";
 
-  const mods = [...spec.mods, ...(spec.clientAgentJar ? [spec.clientAgentJar] : [])];
-
-  const [width, height] = windowSize.split("x");
-
-  // The client is launched via `java` against the provisioned instance. We pass
-  // offline auth flags only — no `--accessToken <session>` from Microsoft.
-  const args: string[] = [
-    "--version",
-    spec.mc,
-    "--loader",
-    spec.loader,
-    "--username",
-    username,
-    "--uuid",
-    uuid,
-    "--accessToken",
-    OFFLINE_ACCESS_TOKEN,
-    "--width",
-    width ?? "1280",
-    "--height",
-    height ?? "720",
+  const jvm: string[] = [
+    // macOS needs the GL context created on the first thread.
+    ...(client.platform === "darwin" ? ["-XstartOnFirstThread"] : []),
+    `-Djava.library.path=${client.nativesDir}`,
+    `-Dorg.lwjgl.librarypath=${client.nativesDir}`,
+    // Tells Fabric loader which vanilla entrypoint it is emulating.
+    "-DFabricMcEmu=net.minecraft.client.main.Main",
+    ...(input.extraJvmArgs ?? []),
+    "-cp",
+    client.classpath.join(sep),
   ];
 
-  for (const mod of mods) {
-    args.push("--mctest-mod", mod);
+  // Offline game args only — no `--accessToken <session>` from Microsoft.
+  const game: string[] = [
+    "--username", username,
+    "--version", client.mc,
+    "--gameDir", client.gameDir,
+    "--assetsDir", client.assetsDir,
+    "--assetIndex", client.assetIndex,
+    "--uuid", uuid,
+    "--accessToken", OFFLINE_ACCESS_TOKEN,
+    "--userType", "legacy",
+    "--versionType", "release",
+    "--width", width ?? "1280",
+    "--height", height ?? "720",
+  ];
+
+  const env: Record<string, string> = { ...display.env };
+  if (input.agentPort !== undefined) {
+    env["MCTEST_AGENT_PORT"] = String(input.agentPort);
   }
 
-  const env: Record<string, string> = {
-    ...spec.display.env,
-  };
-  if (spec.agentPort !== undefined) {
-    env["MCTEST_AGENT_PORT"] = String(spec.agentPort);
-  }
-
-  return { command: "java", args, env };
+  return { command: client.javaPath, args: [...jvm, client.mainClass, ...game], env };
 }

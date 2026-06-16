@@ -369,6 +369,7 @@ async function runOneTarget(
   matrix: MatrixFile,
   target: MatrixTarget,
   test: ReturnType<typeof loadSteps>,
+  outDir: string,
 ): Promise<TestResult> {
   const pre = preflightSkip(test, target);
   if (pre) {
@@ -377,7 +378,8 @@ async function runOneTarget(
     return pre;
   }
   console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc})…`);
-  const result = await runner.runTarget(test, targetMetaFor(target), buildProvision(matrix, target));
+  // `outDir` lets the screenshot verb persist PNGs + seed/diff baselines under it.
+  const result = await runner.runTarget(test, targetMetaFor(target), buildProvision(matrix, target), "Tester", outDir);
   printResult(result);
   return result;
 }
@@ -447,7 +449,7 @@ async function cmdRun(args: Args): Promise<number> {
   const results: TestResult[] = [];
   for (const target of targets) {
     for (const test of tests) {
-      results.push(await runOneTarget(runner, matrix, target, test));
+      results.push(await runOneTarget(runner, matrix, target, test, outDir));
     }
   }
 

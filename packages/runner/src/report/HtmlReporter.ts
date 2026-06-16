@@ -22,6 +22,14 @@ function badge(outcome: string): string {
   return `<span class="badge ${outcome}">${outcome}</span>`;
 }
 
+/** A relative `file:`-friendly href for an artifact path (artifacts live next to the report). */
+function artifactLink(path: string): string {
+  const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
+  // Use the basename as link text; href is the path as-written (the report sits at
+  // the out dir root, artifacts under artifacts/<target>/<name>/).
+  return `<a class="art" href="${esc(path.replace(/\\/g, "/"))}">${esc(name)}</a>`;
+}
+
 function stepRow(s: StepResult): string {
   const glyph = s.outcome === "passed" ? "✓" : s.outcome === "skipped" ? "○" : "✗";
   let detail = "";
@@ -32,7 +40,21 @@ function stepRow(s: StepResult): string {
   } else if (s.detail) {
     detail = esc(s.detail);
   }
-  return `<li class="step ${s.outcome}"><span class="g">${glyph}</span> <code>${esc(s.verb)}</code> <span class="d">${detail}</span></li>`;
+  // Informational baseline diff (never gates) + links to any PNGs the step produced.
+  let extra = "";
+  if (s.baselineDiff) {
+    const b = s.baselineDiff;
+    const txt = b.unsupported
+      ? `baseline diff: unsupported (${esc(b.unsupported)})`
+      : b.compared
+        ? `baseline diff: ${(b.ratio! * 100).toFixed(2)}% (${b.diffPixels}/${b.totalPixels}px${b.sameSize === false ? ", size changed" : ""})`
+        : "baseline seeded";
+    extra += ` <span class="diff">${txt}</span>`;
+  }
+  if (s.artifacts?.length) {
+    extra += ` <span class="arts">${s.artifacts.map(artifactLink).join(" ")}</span>`;
+  }
+  return `<li class="step ${s.outcome}"><span class="g">${glyph}</span> <code>${esc(s.verb)}</code> <span class="d">${detail}</span>${extra}</li>`;
 }
 
 function testCard(r: TestResult): string {
@@ -98,7 +120,9 @@ export function renderHtml(results: TestResult[]): string {
     ul.steps { list-style:none; padding-left:0; margin:.5rem 0; }
     .step { padding:.1rem 0; } .step .g { display:inline-block; width:1.2em; }
     .step.passed .g{color:#1a7f37} .step.failed .g{color:#cf222e} .step.skipped .g{color:#9a6700}
-    .step .d { opacity:.8; }`;
+    .step .d { opacity:.8; }
+    .step .diff { font-size:.85em; opacity:.7; margin-left:.4rem; }
+    .step .arts { margin-left:.4rem; } .step .art { font-size:.85em; margin-right:.4rem; }`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>mc-test report</title><style>${css}</style></head><body>
 <h1>mc-test report</h1>

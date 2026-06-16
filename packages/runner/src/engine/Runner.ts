@@ -16,6 +16,8 @@ import type { Outcome, StepResult, TestResult, SkipInfo } from "../model/result.
 import { SessionGroup, type ConnDef } from "./SessionGroup.js";
 import { executeStep, VERB_CAPABILITY, type ExecContext } from "./StepExecutor.js";
 import { advertisedKeys, requiredKeys, stepCapMatch } from "./CapabilityMatch.js";
+import { tryCaptureOnFailure, type ScreenshotArtifact } from "../report/screenshots.js";
+import { artifactDirFor, baselineDirFor } from "../report/Artifacts.js";
 
 /** A live, provisioned target (the server the bot will join). */
 export interface ProvisionHandle {
@@ -130,6 +132,9 @@ export class Runner {
     let outcome: Outcome = "passed";
     let failure: TestResult["failure"];
     let testSkip: SkipInfo | undefined;
+    // Artifact paths produced during the run (step screenshots + on-failure
+    // captures), surfaced on the result so the reporter/bundle pick them up.
+    const testArtifacts: string[] = [];
 
     // A driver advertising the advisory `brittle` flag (the pixel/OCR last
     // resort) gets a loud report note so its result is never mistaken for a
@@ -212,24 +217,47 @@ export class Runner {
             });
             continue;
           }
+          const stepArtifacts: ScreenshotArtifact[] = [];
+          const stepExec: ExecContext = { ...exec, onArtifact: (a) => stepArtifacts.push(a) };
           try {
-            const detail = await executeStep((cap) => group.route(cap), step, exec);
+            const detail = await executeStep((cap) => group.route(cap), step, stepExec);
             steps.push({
               index: step.index,
               verb: step.verb,
               outcome: "passed",
               durationMs: Date.now() - sStart,
               detail,
+              ...(stepArtifacts.length ? { artifacts: stepArtifacts.map((a) => a.path) } : {}),
+              ...(stepArtifacts.find((a) => a.baseline)?.baseline
+                ? { baselineDiff: stepArtifacts.find((a) => a.baseline)!.baseline }
+                : {}),
             });
+            for (const a of stepArtifacts) testArtifacts.push(a.path);
           } catch (err) {
             const reason = err instanceof MctpRpcError ? err.reason : undefined;
+            // AUTO-CAPTURE ON FAILURE (ROADMAP §5.4): if a `screenshot`-capable
+            // surface is connected, best-effort grab the screen and attach it to the
+            // failure bundle. Gated on the advertised `screenshot` cap so a
+            // headless/no-render driver does NO wasted round-trip; still fully
+            // defensive — `tryCaptureOnFailure` never throws — so a screenshot can
+            // never turn a failing step into a crash. Skipped silently otherwise.
+            const failArtifacts: string[] = stepArtifacts.map((a) => a.path);
+            if (exec.artifactsDir && group.unionAdvertised().screenshot === true) {
+              const onFail = await tryCaptureOnFailure(group.route("screenshot"), {
+                artifactsDir: exec.artifactsDir,
+                slot: `failure-step${step.index}-${step.verb}`,
+              });
+              if (onFail) failArtifacts.push(onFail.path);
+            }
             steps.push({
               index: step.index,
               verb: step.verb,
               outcome: "failed",
               durationMs: Date.now() - sStart,
               error: { message: errMessage(err), ...(reason ? { reason } : {}) },
+              ...(failArtifacts.length ? { artifacts: failArtifacts } : {}),
             });
+            for (const p of failArtifacts) testArtifacts.push(p);
             outcome = "failed";
             failure = {
               message: `step ${step.index} (${step.verb}) failed: ${errMessage(err)}`,
@@ -259,6 +287,7 @@ export class Runner {
       ...(failure ? { failure } : {}),
       ...(testSkip ? { skip: testSkip } : {}),
       ...(brittle ? { brittle: true, notes } : {}),
+      ...(testArtifacts.length ? { artifacts: testArtifacts } : {}),
       systemOut: brittle ? `${notes.join("\n")}\n${stepsOut}` : stepsOut,
     };
   }
@@ -273,6 +302,14 @@ export class Runner {
     meta: TargetMeta,
     provision: () => Promise<ProvisionHandle>,
     defaultUsername = "Tester",
+    /**
+     * Where reports/artifacts are written. When supplied, the `screenshot` verb
+     * persists PNGs into `<outputDir>/artifacts/<target>/<name>/` and the
+     * informational baseline diff reads/seeds `<outputDir>/baselines/<target>/`.
+     * Absent (e.g. the M5 no-boot harness) → screenshots round-trip but aren't
+     * persisted, and no baseline diff runs.
+     */
+    outputDir?: string,
   ): Promise<TestResult> {
     const selection = this.selectDriver(test, meta.driverPin);
     if (!selection.descriptor) {
@@ -302,11 +339,15 @@ export class Runner {
         host: provisioned.host,
         port: provisioned.port,
         defaultUsername,
+        ...(outputDir ? { artifactsDir: artifactDirFor(outputDir, meta.target, test.name) } : {}),
+        ...(outputDir ? { baselineDir: baselineDirFor(outputDir, meta.target) } : {}),
       };
       const result = await this.runTest(test, descriptor, driver.url, exec, meta, provisioned.agents ?? []);
       failed = result.outcome === "failed";
-      if (provisioned.logPath && (result.outcome === "failed")) {
-        result.artifacts = [provisioned.logPath];
+      // Add the server log to the failure bundle WITHOUT clobbering any screenshot
+      // artifacts the run already recorded (explicit steps + on-failure capture).
+      if (provisioned.logPath && result.outcome === "failed") {
+        result.artifacts = [...(result.artifacts ?? []), provisioned.logPath];
       }
       return result;
     } catch (err) {

@@ -11,7 +11,7 @@
 plugins {
     java
     // Pin Loom; the exact patch is provisioned externally. (Acceptance-only — not resolved here.)
-    id("fabric-loom") version "1.7-SNAPSHOT"
+    id("fabric-loom") version "1.7.4"
 }
 
 base {

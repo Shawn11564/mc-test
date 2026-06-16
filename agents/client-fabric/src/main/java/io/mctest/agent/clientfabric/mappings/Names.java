@@ -4,7 +4,6 @@ import io.mctest.agent.core.ElementModel;
 import io.mctest.agent.core.ElementModel.ScreenSnapshot;
 import io.mctest.agent.core.client.ClientBridge;
 import io.mctest.agent.core.client.TestIdHolder;
-import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -15,9 +14,9 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Element;
 import net.minecraft.client.gui.ParentElement;
-import net.minecraft.client.gui.screen.ConnectScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.TitleScreen;
+import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.client.gui.widget.PressableWidget;
@@ -215,13 +214,17 @@ public final class Names implements ClientBridge {
         }
         try {
             // ScreenshotRecorder.takeScreenshot copies the framebuffer into a NativeImage; encode PNG.
+            // NativeImage.writeTo only accepts File/Path (the OutputStream overload was removed at
+            // 1.20.x), so we round-trip through a temp file to obtain the PNG bytes.
             return callOnClient(() -> {
                 try {
                     var image = ScreenshotRecorder.takeScreenshot(client.getFramebuffer());
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    image.writeTo(out);
+                    java.nio.file.Path tmp = java.nio.file.Files.createTempFile("mctp-shot", ".png");
+                    image.writeTo(tmp);
                     image.close();
-                    return out.toByteArray();
+                    byte[] bytes = java.nio.file.Files.readAllBytes(tmp);
+                    java.nio.file.Files.deleteIfExists(tmp);
+                    return bytes;
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }

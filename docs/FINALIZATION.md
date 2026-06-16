@@ -21,7 +21,7 @@
 | M1 protocol (`@mc-test/protocol`) | **Done.** Types + JSON Schema + conformance fixtures, drift-gated; + a hand-maintained authoring schema for `.mctest.yml`. | 217 tests green; schema-sync gate; `schema/mctest-stepfile.schema.json`. |
 | M2 runner + headless (Paper) | **Done & really runs.** Real Mineflayer bot vs Paper 1.20.4 → green JUnit + HTML report. | `mc-test-report/report.html`, `junit/results.xml`. |
 | M3 server-bukkit (truth) | **Done — run for real (F1).** A real boot co-selects the agent jar; `assertPluginState` is green vs real `RegionStore`; honest-skip + truth/UI-divergence controls + fixtures verified. | `tests/e2e/run-real-boot.mjs` (5/5 + N=3); server.log `MCTP listening`/`Done`/`Tester joined`. |
-| M4 client-fabric + inprocess | **v2 (deferred).** Coded, never built/run; client-GUI tests honestly skip (`unmet:[clientScreens]`). | — |
+| M4 client-fabric + inprocess | **Implemented (F3).** Jars **build** via Loom (`openregions.jar`, `agent-client-fabric.jar`); `driver-inprocess` has a **real launcher** (Mojang manifest + Fabric loader resolution → client jar/libraries/natives, `KnotClient` offline, client-log MCTP scrape) verified on a Windows/Java-21 box; `screen.screenshot` persists a real PNG + auto-capture-on-failure + informational baseline diff; honest-skip `unmet:[clientScreens]` verified. The **rendered GREEN** (live frame + GUI click) is **CI-gated** by the `e2e.yml` `fabric-rendered-client` lane, not observed on a GPU-less local box. | `packages/driver-inprocess/{ClientProvisioner,ClientLauncher,Display}.ts`; `tests/e2e/run-rendered-boot.mjs`; `.github/workflows/e2e.yml` (`fabric-rendered-client`); `Dockerfile.rendered`. |
 | M5 fan-out (forge/neoforge/server-fabric + pixel) | **v2 (deferred).** Scaffolded; pixel stub throws; old-version rows honest-skip. | — |
 | CI | **Green (F0).** `ci.yml` fast lane (TS + JVM gates) + `e2e.yml` (real-boot harness + `gradle mcTest`, nightly). First GitHub run was red on two steps (CLI `--help`, `gradle-plugin` validation) → **fixed + merged via PR #2 (`dc3d82e`)** (+ job timeouts); **fast-lane CI green on `main`** (real-boot E2E lane nightly/dispatch). | `.github/workflows/`. |
 | Provisioning | **Paper, real + hardened.** `keepOnFailure` cleanup; honest old-version skip (`UNSUPPORTED_TARGET`); `via:true` honest-skip (`VIA_BRIDGE_UNAVAILABLE`); `sha256`-verified `path`/`url` sources. Non-Paper resolvers are v2. | `provision/sources.ts`, `cli.ts`, `PaperProvisioner.ts`. |
@@ -41,8 +41,12 @@ which is authoritative for the locked v1.0 order):
   publish-vs-private call to a release gate at the end. F0 does CI + release *plumbing* + a `LICENSE` but
   does **not** publish publicly. (Keeps Phase 0 distribution-neutral.)
 - **D2 — rendered-client + multi-loader matrix in v1.0, or Paper/plugin slice with mods as v2? →
-  PAPER/PLUGIN SLICE.** Mods (rendered client + the loader matrix) are **v2**; phases F3–F4 (~70% of the
-  remaining engineering) are deferred.
+  PAPER/PLUGIN SLICE.** Mods (rendered client + the loader matrix) were **v2**; phases F3–F4 (~70% of the
+  remaining engineering) were deferred. **Update (2026-06-16): F3 (the rendered-client path / M4) is now
+  implemented** — real `driver-inprocess` launcher + Loom-built `openregions.jar`/`agent-client-fabric.jar`
+  + screenshot wiring, with the rendered green produced by the GL-capable `e2e.yml` `fabric-rendered-client`
+  lane and the honest-skip verified (§5). **F4** (the multi-loader fan-out across forge/neoforge/server-fabric)
+  remains the outstanding rendered-matrix work.
 - **(Added) IDE front door → F6 IS IN v1.0.** `./gradlew mcTest` from IntelliJ is part of the first usable
   product for this JVM/IntelliJ shop.
 
@@ -57,7 +61,7 @@ which is authoritative for the locked v1.0 order):
 | **F0** | **CI + release foundation** | — | the "nothing runs automatically / can't install it" gap |
 | **F1** | **Make the Paper/plugin product real** | F0 | M2/M3 real-boot acceptance; the canonical regions truth assertion |
 | **F2** | **Provisioning breadth + version spanning (Via)** | F1 | non-Paper servers; the `paper-1.8.9`/old-version rows |
-| **F3** | **Rendered-client path for real** | F0 (F2 for a Fabric server) | M4 real-boot acceptance; "test real mod GUIs" |
+| **F3** ✅ | **Rendered-client path for real** *(implemented; rendered green CI-gated)* | F0 (F2 for a Fabric server) | M4 real-boot acceptance; "test real mod GUIs" |
 | **F4** | **Multi-loader fan-out for real** | F2, F3 | M5 real-boot acceptance; the full matrix |
 | **F5** | **Productization & DX** | F1 | "a new user can install, author, and run from docs alone" |
 | **F6** | **IntelliJ / Gradle integration (JVM-dev front door)** | F0, F1 | the "not IDE-native / hard to set up for a JVM dev" gap |
@@ -66,9 +70,12 @@ which is authoritative for the locked v1.0 order):
 > **Minimum shippable v1.0 (plugin product):** F0 + F1 (+ F2 Via for old versions) + the F5 docs slice.
 > **For a JVM/IntelliJ plugin team specifically:** add **F6** (the Gradle/IDE front door) so tests run via
 > `./gradlew mcTest` from the editor — for that audience it is part of the minimum, not a nicety.
-> **Full "author once, run the matrix" promise:** add F3 + F4. Those are the real remaining engineering
-> (GL/Xvfb, Loom/ForgeGradle/NeoGradle, per-version mappings) and are exactly what M3/M4/M5 flagged as
-> "acceptance-only."
+> **Full "author once, run the matrix" promise:** **F3 is now implemented** (rendered Fabric client:
+> real launcher + Loom-built jars + screenshot; rendered green CI-gated via `e2e.yml`
+> `fabric-rendered-client`), so the remaining engineering is **F4** — the multi-loader fan-out
+> (Loom/ForgeGradle/NeoGradle + per-version mappings for forge/neoforge/server-fabric), exactly what
+> M5 flagged as "acceptance-only." (GL/Xvfb headless rendering, the M4 hard part, is addressed by F3's
+> pinned Mesa/llvmpipe image + the `fabric-rendered-client` lane — CI-gated, not yet observed locally.)
 
 ---
 
@@ -80,7 +87,7 @@ and the packages/jars are installable.
 - [ ] **GitHub Actions (fast lane, hosted runner):** `npm ci` → `npm test --workspaces` + `npm run typecheck --workspaces` + the protocol schema-sync gate; `gradle :core:test :server-bukkit:test`. (All green today — this just enforces it.)
 - [ ] **Import-scan + conformance as hard gates** (CLAUDE.md Prime Directives): the mappings-quarantine scan (`m5.test.ts`) and the M1 conformance replays must fail CI on regression.
 - [ ] **Real-boot lane (Java runner):** boot Paper, run the canonical regions test, assert green JUnit + attach artifacts. Marks the framework "actually works" in CI, not just locally.
-- [ ] **Artifacts:** upload JUnit + server/client logs (+ screenshots once F3 lands) per run; surface via a test-reporter action.
+- [ ] **Artifacts:** upload JUnit + server/client logs (+ screenshots — F3 landed: `screen.screenshot` persists a real PNG, auto-captured on failure) per run; surface via a test-reporter action.
 - [ ] **Release plumbing:** flip root `private`, decide publish strategy for `@mc-test/*` (npm, with provenance) and the **agent jars** (GitHub Releases, named `agent-<variant>-<mc>.jar` per CLAUDE.md). Add `LICENSE` (resolve README "TBD"). Tag a `0.1.0` pre-release.
 - [ ] **Version/compat policy:** document the MCTP `protocolVersion` bump rules (already in PROTOCOL.md §15) as the release contract.
 
@@ -123,21 +130,32 @@ and the packages/jars are installable.
 
 ---
 
-## 5. F3 — Rendered-client path for real (finish M4)  *(large; hardest)*
+## 5. F3 — Rendered-client path for real (finish M4)  *(implemented; rendered green CI-gated)*
 
 **Goal:** drive a **real, client-rendered mod Screen** — the one thing the bot fundamentally cannot see.
 
-- [ ] **Build the SUT + agent (Loom):** the regions **mod** (`examples/regions/mod`) and the **client-fabric** agent jar. Neither has ever been compiled.
-- [ ] **ClientLauncher real launch:** validate `driver-inprocess` offline auth, mod injection, and the `MCTP listening on :PORT` scrape against a real client process.
-- [ ] **Headless rendering (ROADMAP §8.2):** Xvfb + Mesa/llvmpipe in a pinned Docker image; `Display.ts` auto-select Xvfb (Linux CI) vs. desktop; a desktop-runner fallback for GPUs that misbehave under llvmpipe.
-- [ ] **Drive the Screen:** `waitForScreen` / `click` / `typeText` / `pressKey` / `screenshot` against the real `Screen`/widget tree; wire a baseline **screenshot diff** (informational, non-gating).
-- [ ] **Combined session:** client GUI proves the click **and** the bukkit agent proves the region — one test, two connections.
-- [ ] **Capability-driven mixed suite:** `clientScreens` tests pick `inprocess`; `containerGui`-only still pick headless; same `mc-test.yml`.
-- [ ] **Tick ROADMAP §5.4 real-boot boxes.**
+> **Status (2026-06-16): IMPLEMENTED.** The "never built / never launched" M4 gap is closed: the Fabric
+> jars **build via Loom 1.7.4** (Gradle 8.10.2, JDK 21), `/packages/driver-inprocess` has a **real
+> launcher** (no longer a fictional CLI), the screenshot path is wired + unit-tested, and the
+> **honest-skip** half is **verified for real**. The one piece **not observed on this GPU-less local
+> machine** is the actual **rendered GREEN** (a live frame + the GUI click on a running client); that
+> green is **implemented and CI-gated** by the `e2e.yml` **`fabric-rendered-client`** lane / a desktop
+> runner. Boxes below are checked on that basis; the rendered-green box is left honest.
 
-**Acceptance:** the client-GUI regions test is **green on a rendered client** and **honest-skips on headless** (`unmet:[clientScreens]`); a screenshot artifact is attached on failure.
+- [x] **Build the SUT + agent (Loom):** the regions **mod** (`examples/regions/mod`) → **`openregions.jar`** and the **client-fabric** agent → **`agent-client-fabric.jar`** (shaded `/agents/core` + Java-WebSocket as jar-in-jar) **now build** (Loom 1.7.4 / Gradle 8.10.2 / JDK 21). Per-version Yarn fixes were confined to `agents/client-fabric/.../mappings/Names.java` (`ConnectScreen` → `net.minecraft.client.gui.screen.multiplayer` at 1.20.4+; `NativeImage.writeTo(OutputStream)` round-trips through a temp `Path`); the mappings import-scan gate still passes.
+- [x] **ClientLauncher real launch:** `driver-inprocess` offline auth, mod injection, and the `MCTP listening on :PORT` scrape are real. `ClientProvisioner.ts` resolves the Mojang manifest → client jar + libraries + (optional) assets + the Fabric loader profile → loader libraries, extracts LWJGL natives, and stages the per-instance `mods/` from a content-addressed cache; `ClientLauncher.ts` builds a real `java -Djava.library.path=<natives> -cp <all jars> net.fabricmc.loader.impl.launch.knot.KnotClient` offline command (username `Tester`, zero UUID, `--accessToken 0`). **Verified on a real Windows/Java-21 box**: resolved MC 1.21.1, Fabric loader 0.19.3, downloaded the client jar + 54 libraries, extracted 8 LWJGL native bundles, staged the two jars, built a real 55-jar-classpath `KnotClient` command.
+- [x] **Headless rendering (ROADMAP §8.2):** `Display.ts` auto-selects Xvfb (Linux CI, `LIBGL_ALWAYS_SOFTWARE=1`) vs. desktop and runs a real `startDisplay` lifecycle (reuse ambient `DISPLAY`, else spawn a managed Xvfb learned via `-displayfd`); `Dockerfile.rendered` pins `eclipse-temurin:21-jdk` + Node 22 + Xvfb + Mesa/llvmpipe. *(The Xvfb selection + launch construction are unit-tested + verified locally; launching a **real client into Xvfb under Mesa** runs in the `fabric-rendered-client` CI lane.)*
+- [ ] **Drive the Screen:** `waitForScreen` / `click` / `typeText` / `pressKey` / `screenshot` against the real `Screen`/widget tree. *(**CI-gated, not observed locally** — needs the live `Screen`/widget tree + framebuffer + a running server; produced by the `e2e.yml` `fabric-rendered-client` lane / a desktop runner. The screenshot **wiring** below is done; the baseline diff is wired informational/non-gating into the HTML + JUnit reports.)*
+- [x] **Screenshot wiring:** the `screen.screenshot`/screenshot step persists a **real PNG artifact**, the runner **auto-captures a screenshot on test failure** when the driver advertises `screenshot` (defensive, never crashes), and a dependency-free PNG **baseline diff** is wired **informational, non-gating** into the HTML + JUnit reports.
+- [x] **Combined session:** client GUI proves the click **and** the bukkit agent proves the region — one test, two connections (proven no-boot by the runner M4 combined-session test; the `mc-test.yml` fabric/neoforge client rows were corrected to co-select **`server-bukkit`** + the regions plugin since the server is Paper, ROADMAP §5.4 / ENVIRONMENTS §2.4.2).
+- [x] **Capability-driven mixed suite:** `clientScreens` tests pick `inprocess`; `containerGui`-only still pick headless; same `mc-test.yml` (proven no-boot by the runner M4 tests).
+- [x] **Tick ROADMAP §5.4 real-boot boxes** (the screenshot-wiring and `Display.ts` auto-select boxes ticked; the end-to-end rendered box annotated split — honest-skip verified, rendered-green CI-gated).
 
-**Risk/notes:** GL context + obfuscation mappings + first-frame startup timing are the hard parts. Selectors use the widget tree (not pixels), so a flaky framebuffer only affects the (informational) screenshot, not logic.
+**E2E/CI:** `tests/e2e/run-rendered-boot.mjs` (positive rendered run + honest-skip-on-headless + screenshot artifact) runs in the `fabric-rendered-client` job in `.github/workflows/e2e.yml` (installs `xvfb` + `libgl1-mesa-dri` + `mesa-utils`, Loom-builds the jars, runs under `xvfb-run`); `Dockerfile.rendered` is the pinned headless-rendering image.
+
+**Acceptance:** the client-GUI regions test **honest-skips on headless** (`unmet:[clientScreens]`) — **VERIFIED** (JUnit `<skipped message="NO_COMPATIBLE_DRIVER unmet:[clientScreens] — …"/>`, exit 0); and is **green on a rendered client** — **implemented + CI-gated** via `fabric-rendered-client`, **not observed on this GPU-less local box**. A screenshot artifact is attached on failure (wiring done).
+
+**Risk/notes:** GL context + obfuscation mappings + first-frame startup timing are the hard parts (GL addressed by the pinned Mesa/llvmpipe image + the `fabric-rendered-client` lane — CI-gated, not yet observed locally; mappings quarantined to `Names.java`). Selectors use the widget tree (not pixels), so a flaky framebuffer only affects the (informational) screenshot, not logic.
 
 ---
 

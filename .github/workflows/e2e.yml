@@ -116,3 +116,79 @@ jobs:
           name: gradle-front-door-report
           path: examples/regions/plugin-gradle/build/mc-test-report/
           if-no-files-found: ignore
+
+  # F3 rendered-client lane: a REAL Fabric Minecraft client renders the SUT mod's client
+  # Screen, driven over MCTP via the in-process driver, while a Paper server + the Bukkit
+  # agent supply server truth. Runs the committed rendered-boot harness
+  # (tests/e2e/run-rendered-boot.mjs) under a virtual display (Xvfb + Mesa/llvmpipe). This is
+  # the heaviest lane: it boots a server AND launches a GL client, and the two Loom jars are
+  # acceptance-only (Fabric Loom needs network + a Minecraft/Yarn download). `continue-on-error`
+  # keeps it advisory — like the rest of this nightly/dispatch-only workflow — so a flaky GL
+  # surface never blocks; the harness asserts REAL markers (whole-test SKIP on headless +
+  # PASS with assertPluginState green on the rendered client) so it is never a false green.
+  fabric-rendered-client:
+    name: Fabric · regions client GUI (rendered, Xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60   # boots a Paper server AND launches a rendered GL client; cap a hung boot
+    continue-on-error: true   # heaviest/most-fragile lane (GL surface + acceptance-only Loom jars)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      # The rendered client is LWJGL/OpenGL: Xvfb provides the headless surface and
+      # Mesa (libgl1-mesa-dri) + LIBGL_ALWAYS_SOFTWARE give software GL (llvmpipe), so
+      # no GPU is needed. mesa-utils ships glxinfo for diagnostics.
+      - name: Install display + software-GL stack
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1-mesa-dri mesa-utils
+
+      - run: npm ci
+      - name: Build runner (dependency order)
+        run: |
+          npm run build -w @mc-test/protocol
+          npm run build -w @mc-test/driver-headless
+          npm run build -w @mc-test/driver-inprocess
+          npm run build -w @mc-test/driver-pixel
+          npm run build -w @mc-test/runner
+
+      # Server side: publish the agent-core SPI (the SUT compiles against it), build the
+      # Bukkit truth agent jar, and build the server-side regions plugin (Maven).
+      - name: Build agent core + server-bukkit jar
+        run: gradle -p agents :core:publishToMavenLocal :server-bukkit:jar
+      - name: Build regions plugin (server-side SUT)
+        run: mvn -B -f examples/regions/plugin/pom.xml package
+
+      # Client side (Loom, standalone projects with their own wrappers): the client-fabric
+      # agent jar (agent-client-fabric.jar) the in-process driver injects, and the SUT's
+      # client mod jar (openregions.jar). Both download Minecraft + Yarn at build time.
+      - name: Build client-fabric agent jar (Loom)
+        run: ./gradlew build
+        working-directory: agents/client-fabric
+      - name: Build regions client mod jar (Loom)
+        run: ./gradlew build
+        working-directory: examples/regions/mod
+
+      # The rendered boot: honest-skip on headless + the positive rendered run (GUI flow +
+      # assertPluginState) + screenshot artifact + flake budget, all under a virtual display.
+      - name: Run rendered-client E2E harness (Xvfb)
+        run: xvfb-run -a node tests/e2e/run-rendered-boot.mjs --flake=1
+
+      - name: Upload report + screenshots + server/client logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mc-test-rendered-report
+          path: |
+            mc-test-report/
+            .mc-test/run/
+            **/*.png
+          if-no-files-found: ignore

@@ -1,0 +1,60 @@
+# mc-test — rendered-client (in-process driver) E2E image.
+#
+# The pinned headless-RENDERING image (ROADMAP §8.2): a JDK + Node toolchain plus an
+# Xvfb virtual display and Mesa software GL (llvmpipe), so a REAL Minecraft client can
+# render the SUT mod's client Screen with NO GPU. This is the reproducible environment
+# for the F3 rendered-client lane — the in-process driver launches a rendered Fabric
+# client (hosting the client-fabric agent) and drives it over MCTP while a Paper server
+# + the Bukkit agent provide server truth (see tests/e2e/run-rendered-boot.mjs and the
+# `fabric-rendered-client` job in .github/workflows/e2e.yml).
+#
+# Pinned + minimal on purpose: only what the rendered boot needs (no SUT/agent jars are
+# baked in — they are built/mounted at run time). Headless server + headless bot lanes
+# do NOT need this image; they run in a plain JDK+Node container.
+#
+# Build:
+#   docker build -f Dockerfile.rendered -t mc-test/rendered:21 .
+#
+# Run the rendered-client harness inside it (mount the repo, build everything, then drive
+# the client under a virtual display via xvfb-run):
+#   docker run --rm -v "$PWD":/work -w /work mc-test/rendered:21 bash -lc '
+#     npm ci &&
+#     npm run build -w @mc-test/protocol &&
+#     npm run build -w @mc-test/driver-headless &&
+#     npm run build -w @mc-test/driver-inprocess &&
+#     npm run build -w @mc-test/driver-pixel &&
+#     npm run build -w @mc-test/runner &&
+#     gradle -p agents :core:publishToMavenLocal :server-bukkit:jar &&
+#     mvn -B -f examples/regions/plugin/pom.xml package &&
+#     (cd agents/client-fabric && ./gradlew build) &&
+#     (cd examples/regions/mod && ./gradlew build) &&
+#     xvfb-run -a node tests/e2e/run-rendered-boot.mjs --flake=1
+#   '
+
+# Pinned JDK 21 base (MC 1.20.5+ / the 1.21.x rendered-client matrix rows need Java 21).
+FROM eclipse-temurin:21-jdk
+
+# Xvfb virtual display + Mesa software GL (llvmpipe) so LWJGL/OpenGL renders with no GPU;
+# mesa-utils ships glxinfo for diagnostics. Node 22 is installed from NodeSource (pinned
+# major) for the TypeScript runner/drivers. git + ca-certificates support the Loom/Spigot
+# builds and HTTPS artifact fetches. Cleaned in the same layer to keep the image small.
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      xvfb \
+      libgl1 \
+      libgl1-mesa-dri \
+      mesa-utils \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+# Force Mesa software rendering (llvmpipe) under Xvfb — there is no GPU in the container,
+# so the GL driver must fall back to software or client launch fails.
+ENV LIBGL_ALWAYS_SOFTWARE=1
+
+WORKDIR /work
