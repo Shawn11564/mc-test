@@ -1,0 +1,7 @@
+# Gradle wrapper — make line endings correct regardless of each clone's
+# core.autocrlf. The POSIX launcher MUST stay LF (it runs under bash on Linux
+# CI); the Windows launcher is CRLF; the wrapper jar is binary and must never be
+# line-ending-converted. (Scoped on purpose — no repo-wide renormalization.)
+gradlew         text eol=lf
+gradlew.bat     text eol=crlf
+*.jar           binary

@@ -86,8 +86,10 @@ ran on the local Windows machine (JDK 21 / Gradle 9.4.0 / Maven 3.9.6).
    - flipping root `package.json` `private: true`. *(Keeping it private satisfies the gate's "or keep private" branch — no code change.)*
 3. **Small F0 leftover:** the MCTP `protocolVersion` bump policy is documented in **PROTOCOL.md §10
    (Protocol versioning)**, now framed there as the release compatibility contract.
-4. **(Optional) commit a Gradle wrapper** (`gradle wrapper` under `gradle-plugin/` and `agents/`) so `./gradlew`
-   works without a system Gradle; CI currently provisions Gradle via `gradle/actions/setup-gradle`.
+4. ~~**(Optional) commit a Gradle wrapper**~~ ✅ **done** — wrappers pinned to Gradle 9.4.0 are committed
+   under `agents/`, `gradle-plugin/`, and `examples/regions/plugin-gradle/`, so the documented `./gradlew
+   mcTest` works without a system Gradle (a `.gitattributes` keeps `gradlew` LF for Linux CI). CI still
+   provisions Gradle via `gradle/actions/setup-gradle`.
 
 ### Out of scope for v1.0 (→ v2)
 
