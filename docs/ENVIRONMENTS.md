@@ -290,6 +290,8 @@ Capabilities are the **negotiated vocabulary** between suites and drivers. Canon
 | `keepWorkDir` | bool | `false` | Never delete instance dirs (debug). |
 | `offline` | bool | `false` | Forbid network; require everything already cached. CI air-gap mode. |
 | `downloadRetries` | int | `3` | Retry count for transient download/resolve failures (exponential backoff). |
+| `jdks` | `Record<string,string>` | — | Explicit JDK homes by Java **major** (e.g. `{ "8": "C:/jdk8", "17": "/opt/jdk17" }`) for booting servers whose MC version needs a different Java than the host (multi-JDK). A target's `mc` maps to a required major; the host JDK is preferred when it fits the version's range, else a configured/installed JDK, else a fetched one. |
+| `downloadJdks` | bool | `true` | Fetch a matching **Eclipse Temurin** JDK from Adoptium into `cacheDir` when none is configured/installed for a target's required major. Set `false` for fully offline runs (a missing JDK is then a precise `JDK_NOT_AVAILABLE`). |
 
 **`ReportingPolicy`** — see §6.
 

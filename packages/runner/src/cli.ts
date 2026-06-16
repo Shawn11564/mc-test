@@ -23,6 +23,7 @@ import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPr
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
 import { resolveArtifact } from "./provision/sources.js";
+import { resolveJavaForMc } from "./provision/jdk.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
 import { writeHtml } from "./report/HtmlReporter.js";
 import { renderSkipMatrix } from "./report/SkipMatrix.js";
@@ -231,10 +232,21 @@ function buildProvision(
     const serverSrc = target.server;
     const serverJar =
       serverSrc && (serverSrc.path || serverSrc.url) ? await resolveArtifact(serverSrc, cacheDir) : undefined;
+    // Multi-JDK: legacy MC needs an older Java than the host (e.g. 1.8.x needs Java 8, not 21).
+    // Map mc → an acceptable Java major and resolve a matching JDK — the host if it fits (modern
+    // targets boot unchanged with no download), else a configured/installed one, else a Temurin
+    // build fetched from Adoptium into the cache — and spawn the server with it.
+    const javaPath = await resolveJavaForMc(target.mc, {
+      cacheDir,
+      ...(prov.jdks ? { configured: prov.jdks } : {}),
+      ...(prov.downloadJdks !== undefined ? { download: prov.downloadJdks } : {}),
+      onLog: (line) => console.log(`  ${line}`),
+    });
     const server = await provisionPaper({
       mc: target.mc,
       build: target.server?.paper?.build ?? "latest",
       ...(serverJar ? { serverJar } : {}),
+      javaPath,
       bindHost,
       gamePort,
       instanceDir,

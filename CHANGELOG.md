@@ -16,7 +16,14 @@ All notable changes to this project are recorded here. The format is based on
   span ~1.8–1.21), and the provisioner boots an explicit, integrity-checked
   `server: { url | path, sha256 }` jar — so a plugin-capable old server the PaperMC fill API cannot
   serve (e.g. a Spigot 1.8.x jar) is supported. (`engine/viaPreflight.ts`, `PaperProvisioner`
-  `serverJar`.) Real-boot acceptance of a legacy version also needs a Java 8/11 toolchain.
+  `serverJar`.)
+- **Multi-JDK provisioning (v2):** the provisioner selects/fetches the right Java for a target's MC
+  version, so legacy servers no longer fail on a modern host JDK. `mc` maps to an acceptable Java
+  range; the host `java` is used when it fits, else a configured (`provision.jdks`) / installed JDK,
+  else an Eclipse Temurin build fetched from Adoptium into the cache (`provision.downloadJdks`,
+  default `true`) and spawned via `javaPath`. (`provision/jdk.ts`.) Validated end-to-end: Temurin 8
+  fetched + extracted + `java -version`-verified on Windows. Legacy real-boot still needs a
+  plugin-capable old-server jar source.
 
 ### Changed
 - **`via` is now advisory, not a blanket skip.** A `via: true` target only honest-skips

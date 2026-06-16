@@ -45,6 +45,17 @@ export interface ProvisionPolicy {
   cacheDir?: string;
   workDir?: string;
   keepOnFailure?: boolean;
+  /**
+   * Explicit JDK homes keyed by Java major (e.g. `{ "8": "C:/jdk8", "17": "/opt/jdk17" }`), used to
+   * boot servers whose MC version needs a different Java than the host (multi-JDK provisioning). A
+   * target's `mc` maps to a required major; the host JDK is preferred when it fits the range.
+   */
+  jdks?: Record<string, string>;
+  /**
+   * Fetch a matching Eclipse Temurin JDK from Adoptium into the cache when none is configured or
+   * installed for a target's required Java major. Default `true`; set `false` for fully offline runs.
+   */
+  downloadJdks?: boolean;
 }
 
 /** One matrix target (template). */
