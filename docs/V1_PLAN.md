@@ -1,9 +1,12 @@
 # mc-test — v1.0 Plan (the first usable product)
 
-> Status: **v1.0 implemented** — F0–F5 are done on branch `f0-ci-foundation` (2026-06-16, **not yet
-> pushed**). See the **[Status](#status--v10-implemented--2026-06-16)** section below for exactly what's
-> done, what remains, and how to resume. This is the **scoped, sequenced plan for the first usable
-> product**, derived from
+> Status: **v1.0 implemented** — F0–F5 are done and **merged to `main`** via PR #1 (merge `4760b90`,
+> 2026-06-16). The first GitHub CI run surfaced **two real failures** (CLI `--help` exited 2; the
+> `gradle-plugin` build failed `validatePlugins`); both are **fixed on branch `fix/ci-v1-release`**
+> (the "Test core + server-bukkit" *cancellation* was a benign concurrency artifact of a superseded
+> run, not a test failure). See the **[Status](#status--v10-implemented--2026-06-16)** section below for
+> exactly what's done, what remains, and how to resume. This is the **scoped, sequenced plan for the
+> first usable product**, derived from
 > `FINALIZATION.md` after the v1.0 scope was ratified (2026-06-16). `FINALIZATION.md` enumerates the full
 > path (phases F0–F7) and the open scope decisions; **this document locks the decisions and the build
 > order for v1.0** and is authoritative only for that. All wire names, capability keys, selector keys,
@@ -53,10 +56,11 @@ F0 ──► F1 ──► F6 ──► (release gate: decide OSS vs internal →
 
 ## Status — v1.0 implemented ✅ (2026-06-16)
 
-**The locked order F0 → F1 → F6 → F2 → F5 is implemented and verified** on branch `f0-ci-foundation`
-(6 commits, **not yet pushed**). The Paper/Spigot plugin product is real: a real Paper boot drives the
-regions GUI and asserts server truth, runnable from the CLI **and** `gradle mcTest`. The per-phase
-sections below are the original spec; **this table is the source of truth for status.**
+**The locked order F0 → F1 → F6 → F2 → F5 is implemented and verified.** F0–F5 are **merged to `main`**
+(PR #1, merge `4760b90`); the CI-failure fixes (CLI `--help`, `gradle-plugin` validation, job timeouts,
+this doc) ride on branch `fix/ci-v1-release`. The Paper/Spigot plugin product is real: a real Paper boot
+drives the regions GUI and asserts server truth, runnable from the CLI **and** `gradle mcTest`. The
+per-phase sections below are the original spec; **this table is the source of truth for status.**
 
 | Phase | Status | Commit(s) | Delivered (verified on real boots) |
 |-------|--------|-----------|------------------------------------|
@@ -72,13 +76,16 @@ ran on the local Windows machine (JDK 21 / Gradle 9.4.0 / Maven 3.9.6).
 
 ### Resume here — remaining for v1.0 "done"
 
-1. **Push `f0-ci-foundation` + open a PR.** CI has never run on GitHub (branch unpushed) → do this to get
-   the green **badge** (the one open F0 acceptance box). Locally both lanes pass.
+1. **Land the CI fixes on `main`.** F0–F5 already merged (PR #1), but the first GitHub CI run was **red**
+   on two real steps — CLI `--help` exited 2 (fast-lane "CLI smoke test") and `gradle -p gradle-plugin
+   build` failed `validatePlugins`. Both are fixed on `fix/ci-v1-release`; merge it to `main` and confirm
+   **one green CI run** there (the one open F0 acceptance box → the green **badge**).
 2. **Make the D1 distribution call** (public OSS vs internal). It unblocks, in order:
    - npm publish of `@mc-test/*` + GitHub Releases of the agent jars (F0 release gate);
    - **zero-Node-setup** for `gradle mcTest` (auto Node provisioning + resolving the published runner — the F6 deferral);
-   - flipping root `package.json` `private: true`.
-3. **Small F0 leftover:** document the MCTP `protocolVersion` bump policy (PROTOCOL.md §15) as the release contract.
+   - flipping root `package.json` `private: true`. *(Keeping it private satisfies the gate's "or keep private" branch — no code change.)*
+3. **Small F0 leftover:** the MCTP `protocolVersion` bump policy is documented in **PROTOCOL.md §10
+   (Protocol versioning)**, now framed there as the release compatibility contract.
 4. **(Optional) commit a Gradle wrapper** (`gradle wrapper` under `gradle-plugin/` and `agents/`) so `./gradlew`
    works without a system Gradle; CI currently provisions Gradle via `gradle/actions/setup-gradle`.
 
@@ -95,7 +102,8 @@ run — they honestly **skip** today (never a false green).
 - [x] Headless driver + `server-bukkit` agent green against the M1 conformance fixtures.
 - [x] No false greens — old-version / `via` / pixel paths honest-skip, surfaced in the skip matrix.
 - [x] Docs match the shipped product.
-- [ ] **CI green on every push** — needs the branch pushed (Resume #1).
+- [ ] **CI green on every push** — F0–F5 merged to `main` but the first run was red; fixes on
+      `fix/ci-v1-release` (Resume #1) — merge + confirm one green run on `main`.
 - [ ] **Release gate decided + executed** — needs the D1 call (Resume #2).
 
 ---
@@ -118,7 +126,7 @@ The TS + Java suites are already green; F0 *enforces* them and makes the repo in
   so PRs stay fast and the repo isn't red before F1 wires the full payload.
 - **Foundation:** add a `LICENSE` file (repo already declares MIT; resolves the README "TBD" — keeps the
   OSS option open without committing to publish); commit `package-lock.json` so CI uses `npm ci`; document
-  the MCTP `protocolVersion` bump rules (`PROTOCOL.md` §15) as the release contract.
+  the MCTP `protocolVersion` bump rules (`PROTOCOL.md` §10) as the release contract.
 - **Deferred to the release gate:** actual npm publish + GitHub Releases of agent jars.
 
 **Acceptance:** green fast-lane CI on `main`; `npx mc-test --help` works from a clean checkout following

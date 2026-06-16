@@ -10,9 +10,10 @@
 
 ## 0. Where we actually are (verified state)
 
-> **Updated 2026-06-16:** the F0→F5 finalization (the v1.0 plugin slice) is **implemented** on branch
-> `f0-ci-foundation` (unpushed). The table below reflects the new state; see `V1_PLAN.md` §Status for the
-> per-phase commits + what remains.
+> **Updated 2026-06-16:** the F0→F5 finalization (the v1.0 plugin slice) is **implemented and merged to
+> `main`** (PR #1, merge `4760b90`). The first GitHub CI run was red on two real steps (CLI `--help`,
+> `gradle-plugin` validation), now fixed on `fix/ci-v1-release`. The table below reflects the new state;
+> see `V1_PLAN.md` §Status for the per-phase commits + what remains.
 
 | Area | State | Evidence |
 |------|-------|----------|
@@ -21,7 +22,7 @@
 | M3 server-bukkit (truth) | **Done — run for real (F1).** A real boot co-selects the agent jar; `assertPluginState` is green vs real `RegionStore`; honest-skip + truth/UI-divergence controls + fixtures verified. | `tests/e2e/run-real-boot.mjs` (5/5 + N=3); server.log `MCTP listening`/`Done`/`Tester joined`. |
 | M4 client-fabric + inprocess | **v2 (deferred).** Coded, never built/run; client-GUI tests honestly skip (`unmet:[clientScreens]`). | — |
 | M5 fan-out (forge/neoforge/server-fabric + pixel) | **v2 (deferred).** Scaffolded; pixel stub throws; old-version rows honest-skip. | — |
-| CI | **Present (F0).** `ci.yml` fast lane (TS + JVM gates) + `e2e.yml` (real-boot harness + `gradle mcTest`, nightly). Validated locally; **not yet run on GitHub** (branch unpushed → no badge). | `.github/workflows/`. |
+| CI | **Present (F0), fixes pending merge.** `ci.yml` fast lane (TS + JVM gates) + `e2e.yml` (real-boot harness + `gradle mcTest`, nightly). First GitHub run **red on two steps** (CLI `--help`, `gradle-plugin` validation) → **fixed on `fix/ci-v1-release`** (+ job timeouts); green badge once that lands on `main`. | `.github/workflows/`. |
 | Provisioning | **Paper, real + hardened.** `keepOnFailure` cleanup; honest old-version skip (`UNSUPPORTED_TARGET`); `via:true` honest-skip (`VIA_BRIDGE_UNAVAILABLE`); `sha256`-verified `path`/`url` sources. Non-Paper resolvers are v2. | `provision/sources.ts`, `cli.ts`, `PaperProvisioner.ts`. |
 | Gradle/IntelliJ (F6) | **Done.** `gradle mcTest` builds the SUT jar, boots Paper, runs the test — verified end-to-end. | `gradle-plugin/`, `examples/regions/plugin-gradle/`. |
 | Docs / DX (F5) | **Done.** `GETTING_STARTED.md` + `AUTHORING.md`; `mc-test init` / rich `doctor`; HTML report. | `docs/`. |
@@ -29,8 +30,8 @@
 
 **Usable now (v1.0):** testing **Spigot/Paper plugin GUIs** (chest/anvil/sign menus), chat, commands, **and
 server-side truth** (`assertPluginState` / fixtures) on a **real Paper boot** — from the CLI or
-`gradle mcTest`, with an HTML + JUnit report. The F0→F5 finalization is implemented on branch
-`f0-ci-foundation`; see `V1_PLAN.md` §Status for what remains (push/PR + the distribution decision).
+`gradle mcTest`, with an HTML + JUnit report. The F0→F5 finalization is merged to `main` (PR #1); see
+`V1_PLAN.md` §Status for what remains (land the CI fixes + the distribution decision).
 
 **Two scope decisions** that change the size of this plan — **✅ ratified 2026-06-16** (see `V1_PLAN.md`,
 which is authoritative for the locked v1.0 order):

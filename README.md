@@ -40,7 +40,7 @@ in-game agents stay tiny, dumb, and cheap to port to each `(loader × version)`.
 
 ## Quickstart
 
-> Status: **v1.0 Paper/plugin product is real** (on branch `f0-ci-foundation`). A real Paper boot drives
+> Status: **v1.0 Paper/plugin product is real** (merged to `main`). A real Paper boot drives
 > the regions GUI and asserts server-side state (`assertPluginState`); runnable via the CLI **and**
 > `gradle mcTest`, with CI gates, an HTML + JUnit report, and user docs. Rendered-client **mod** GUIs and
 > the multi-loader matrix are **v2** — those targets honestly *skip*. See

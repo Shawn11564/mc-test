@@ -22,6 +22,7 @@ jobs:
   paper-regions:
     name: Paper · regions (headless)
     runs-on: ubuntu-latest
+    timeout-minutes: 45   # boots real Paper servers (incl. N=3 flake budget); cap a hung boot
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -75,6 +76,7 @@ jobs:
   gradle-front-door:
     name: Gradle front door (gradle mcTest)
     runs-on: ubuntu-latest
+    timeout-minutes: 45   # builds the SUT + boots an ephemeral Paper server via gradle mcTest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
