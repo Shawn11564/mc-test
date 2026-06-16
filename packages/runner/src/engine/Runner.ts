@@ -30,6 +30,13 @@ export interface ProvisionHandle {
    */
   agents?: AgentConn[];
   stop: () => Promise<void>;
+  /**
+   * Optional post-run cleanup of the instance working dir (F1 hardening). Called
+   * after `stop()` with whether the test failed; the provider decides what to
+   * keep (e.g. retain the dir on failure when `keepOnFailure`, delete on success
+   * to bound disk growth). Absent → nothing is cleaned (mock-agent back-compat).
+   */
+  cleanup?: (failed: boolean) => Promise<void>;
 }
 
 /** Identity of the matrix cell, for reporting. */
@@ -150,11 +157,18 @@ export class Runner {
       role: "driver",
       ...(Object.keys(constraints).length ? { constraints } : {}),
     };
-    // Agents negotiate only their own advertised caps; a refusing agent simply
-    // drops out of the union (its steps then honestly skip) — never a test fail.
+    // A co-selected agent is a COMPANION: it must never refuse the session over
+    // capabilities. We require nothing and OFFER the assumed caps as optional, then
+    // let the union reflect what the agent ACTUALLY grants (capability discovery, not
+    // a runner-side assumption). So an agent that honestly advertises a subset — e.g.
+    // the bukkit agent dropping `fakePlayers` when no Carpet backend is present — still
+    // connects, its real caps (pluginState/fixtures/…) join the union, and only the
+    // genuinely-absent caps' steps honestly skip. A transport failure still drops the
+    // agent out entirely (its steps then skip), never a test fail.
     const agentConns: ConnDef[] = agents.map((agent) => ({
       url: agent.url,
-      required: advertisedKeys(agent.advertised),
+      required: [],
+      optional: advertisedKeys(agent.advertised),
       advertised: agent.advertised,
       role: "agent",
     }));
@@ -278,6 +292,9 @@ export class Runner {
     const descriptor = selection.descriptor;
     let provisioned: ProvisionHandle | undefined;
     let driver: Awaited<ReturnType<DriverDescriptor["create"]>> | undefined;
+    // Assume failure until a result proves otherwise, so the cleanup hook retains
+    // the instance dir on the error path too (keepOnFailure semantics).
+    let failed = true;
     try {
       provisioned = await provision();
       driver = await descriptor.create(meta.launch);
@@ -287,6 +304,7 @@ export class Runner {
         defaultUsername,
       };
       const result = await this.runTest(test, descriptor, driver.url, exec, meta, provisioned.agents ?? []);
+      failed = result.outcome === "failed";
       if (provisioned.logPath && (result.outcome === "failed")) {
         result.artifacts = [provisioned.logPath];
       }
@@ -306,7 +324,12 @@ export class Runner {
       };
     } finally {
       if (driver) await driver.stop().catch(() => {});
-      if (provisioned) await provisioned.stop().catch(() => {});
+      if (provisioned) {
+        await provisioned.stop().catch(() => {});
+        // Free the per-instance work dir on success; the provider retains it on
+        // failure (keepOnFailure) so logs/artifacts survive for triage.
+        await provisioned.cleanup?.(failed).catch(() => {});
+      }
     }
   }
 }

@@ -1,15 +1,14 @@
 name: E2E (real Paper boot)
 
-# Real-boot lane: provisions a Paper server and runs the canonical regions test
-# for a GENUINE pass/fail + artifacts. Off the per-PR path (manual + nightly) so
-# PRs stay fast.
-#
-# Status: SCAFFOLD. In F0 this exercises the M2 headless-only payload
-# (assertPluginState honestly SKIPS). It goes fully green in F1, when the
-# server-bukkit agent is co-selected and assertPluginState asserts real state.
-# The build steps below follow the documented M3 sequence; F1 finishes the
-# wiring it depends on (mc-test.yml/target resolution, agent jar naming,
-# co-selection). See docs/V1_PLAN.md (F0 → F1).
+# Real-boot lane (F1): provisions real Paper servers and runs the committed E2E
+# harness (tests/e2e/run-real-boot.mjs) for GENUINE pass/fail + artifacts. The
+# harness asserts the "tester doesn't lie" triad + fixtures, not just exit codes:
+#   - positive: regions test green INCLUDING assertPluginState (agent co-selected)
+#   - honest-skip: no agent → assertPluginState SKIPPED (never a false pass)
+#   - truth/UI-divergence: ghost region → assertPluginState RED while chat is green
+#   - fixtures: createRegion→true / reset→false; spawnFakePlayer honestly skips
+#   - flake budget: the positive run repeated N=3, all green (nondeterminism alarm)
+# Off the per-PR path (manual + nightly) so PRs stay fast.
 
 on:
   workflow_dispatch:
@@ -55,12 +54,12 @@ jobs:
       - name: Build regions plugin (SUT)
         run: mvn -B -f examples/regions/plugin/pom.xml package
 
-      # The real boot. F1 reconciles target id / config resolution (README uses
-      # `--target paper-1.20.4`; the example matrix id is `regions-paper-headless`).
-      - name: Run regions E2E on Paper
-        run: npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
+      # The real boots: positive + both negative controls + fixtures + N=3 flake budget.
+      # The harness asserts every outcome and exits non-zero on any regression.
+      - name: Run real-boot E2E harness
+        run: node tests/e2e/run-real-boot.mjs --flake=3
 
-      - name: Upload report + run logs
+      - name: Upload report + retained failure instances
         if: always()
         uses: actions/upload-artifact@v4
         with:

@@ -403,7 +403,10 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
     agentEndpoints,
     stop: async () => {
       await stopServer(proc);
-      logStream.end();
+      // Await the log stream's close so its file handle is released before any
+      // post-run cleanup tries to remove the instance dir (matters on Windows,
+      // where an open handle blocks rmSync).
+      await new Promise<void>((res) => logStream.end(() => res()));
     },
   };
 }

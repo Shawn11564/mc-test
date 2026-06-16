@@ -8,7 +8,7 @@
  */
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
@@ -189,6 +189,9 @@ function buildProvision(
   const [from, to] = prov.portRange ?? [25700, 25899];
   const cacheDir = expandHome(prov.cacheDir ?? "~/.mc-test/cache");
   const workDir = prov.workDir ?? ".mc-test/run";
+  // Retain the per-instance work dir on failure (default true) for log/artifact
+  // triage; on success it is deleted so .mc-test/run/ does not grow unbounded.
+  const keepOnFailure = prov.keepOnFailure ?? true;
   const world = resolveWorld(matrix, target);
   const worldSnapshotPath = world?.snapshot?.path ? resolve(world.snapshot.path) : undefined;
   const agentJars = resolveAgentJars(target);
@@ -230,6 +233,18 @@ function buildProvision(
       logPath: server.logPath,
       ...(agentConns.length ? { agents: agentConns } : {}),
       stop: server.stop,
+      cleanup: async (failed: boolean) => {
+        if (failed && keepOnFailure) return; // retain failed instance dir for triage
+        // Best-effort: on Linux/CI (where disk growth actually matters) the dir is
+        // removed promptly. On Windows, Paper's world region files + session.lock are
+        // released slowly after JVM exit, so the dir may persist until a later run —
+        // a dev-only annoyance, not a CI concern. retryDelay rides out the transient.
+        try {
+          rmSync(server.instanceDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        } catch {
+          /* a still-held handle simply leaves the dir behind */
+        }
+      },
     };
   };
 }

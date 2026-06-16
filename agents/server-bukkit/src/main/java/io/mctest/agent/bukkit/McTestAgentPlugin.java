@@ -44,25 +44,35 @@ public final class McTestAgentPlugin extends JavaPlugin {
 
         LogSink logSink = (level, message) -> getLogger().log(toLevel(level), message);
 
-        // Advertise exactly the serverPlugin capability bundle (PROTOCOL.md §6.1–§6.2).
+        // Whether to advertise fake players. The FakePlayerManager backend dispatches Carpet's
+        // /player command, which does NOT exist on plain Paper — advertising a capability we cannot
+        // honor would turn spawnFakePlayer steps into red failures instead of honest skips (prime
+        // directive: honest skips beat false greens). Default OFF; opt in via `fakePlayers: true` in
+        // config.yml only where a Carpet-style /player command is present (e.g. a Fabric+Carpet
+        // server agent). When off, the runner sees no `fakePlayers` cap and honestly SKIPS those steps.
+        boolean fakePlayersEnabled = getConfig().getBoolean("fakePlayers", false);
+
+        // Advertise the serverPlugin capability bundle (PROTOCOL.md §6.1–§6.2) — fakePlayers only
+        // when a backend is present.
         JsonObject worldTruthDetail = new JsonObject();
         worldTruthDetail.addProperty("version", 1);
         worldTruthDetail.addProperty("radiusLimit", RADIUS_LIMIT);
-        JsonObject fakePlayersDetail = new JsonObject();
-        fakePlayersDetail.addProperty("backend", "carpet");
         Capabilities capabilities = new Capabilities()
                 .advertise("worldTruth", worldTruthDetail)
                 .advertise("pluginState")
                 .advertise("fixtures")
-                .advertise("fakePlayers", fakePlayersDetail)
                 .advertise("chat")
                 .advertise("testIdTags");
+        if (fakePlayersEnabled) {
+            JsonObject fakePlayersDetail = new JsonObject();
+            fakePlayersDetail.addProperty("backend", "carpet");
+            capabilities.advertise("fakePlayers", fakePlayersDetail);
+        }
 
         // Primitive handlers — each gated by its capability key (PROTOCOL.md §6.1).
         WorldTruth worldTruth = new WorldTruth(this, RADIUS_LIMIT);
         PluginStateProbe stateProbe = new PluginStateProbe(this);
         FixtureManager fixtures = new FixtureManager(this);
-        FakePlayerManager fakePlayers = new FakePlayerManager(this);
 
         Dispatch dispatch = new Dispatch()
                 .setAgentInfo("mc-test-agent-bukkit", getDescription().getVersion(),
@@ -74,9 +84,16 @@ public final class McTestAgentPlugin extends JavaPlugin {
                 .register("truth.getEntities", "worldTruth", worldTruth::getEntities)
                 .register("truth.assertPluginState", "pluginState", stateProbe::assertPluginState)
                 .register("fixture.set", "fixtures", fixtures::set)
-                .register("fixture.reset", "fixtures", fixtures::reset)
-                .register("player.spawnFake", "fakePlayers", fakePlayers::spawnFake)
-                .register("player.despawnFake", "fakePlayers", fakePlayers::despawnFake);
+                .register("fixture.reset", "fixtures", fixtures::reset);
+        if (fakePlayersEnabled) {
+            FakePlayerManager fakePlayers = new FakePlayerManager(this);
+            dispatch.register("player.spawnFake", "fakePlayers", fakePlayers::spawnFake)
+                    .register("player.despawnFake", "fakePlayers", fakePlayers::despawnFake);
+        } else {
+            getLogger().info("fakePlayers capability disabled (no Carpet /player backend on plain Paper); "
+                    + "spawnFakePlayer steps will honestly skip. Set 'fakePlayers: true' in "
+                    + "plugins/mc-test-agent/config.yml when a Carpet-style /player command is available.");
+        }
 
         // Optional tiny server-GUI cross-check listener (no MCTP method of its own).
         Bukkit.getPluginManager().registerEvents(new ServerGuiBridge(), this);
