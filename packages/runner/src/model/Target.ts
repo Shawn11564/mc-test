@@ -22,7 +22,10 @@ export interface MojangRef {
 
 /** A `spigot:` source ref → built from source with Spigot BuildTools (legacy plugin-capable jars). */
 export interface SpigotRef {
-  /** MC version to build; defaults to the target's `mc`. */
+  /**
+   * The Spigot **BuildTools rev** to build; defaults to the target's `mc`. Note Spigot revs can
+   * differ from MC versions (e.g. MC 1.8.9 → Spigot rev `1.8.8`); see hub.spigotmc.org/versions/.
+   */
   version?: string;
 }
 

@@ -53,6 +53,16 @@ export async function resolveSpigotJar(version: string, opts: SpigotResolveOptio
     onLog(`Spigot ${version} (cached): ${finalJar}`);
     return finalJar;
   }
+  // Fail fast on an invalid rev BEFORE the expensive build: a Spigot BuildTools rev can differ from
+  // the MC version (e.g. MC 1.8.9 → Spigot rev 1.8.8). Verify it exists in the version manifest.
+  const verRes = await fetch(`https://hub.spigotmc.org/versions/${version}.json`);
+  if (!verRes.ok) {
+    throw new Error(
+      `SPIGOT_VERSION_NOT_FOUND: '${version}' is not a Spigot BuildTools rev (HTTP ${verRes.status} ` +
+        `for versions/${version}.json). Spigot revs can differ from MC versions (e.g. 1.8.9 → 1.8.8); ` +
+        `see https://hub.spigotmc.org/versions/.`,
+    );
+  }
   if (!hasGit()) {
     throw new Error(`GIT_REQUIRED: Spigot BuildTools needs 'git' on PATH to build ${version}`);
   }
