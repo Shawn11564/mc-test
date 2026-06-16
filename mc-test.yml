@@ -41,17 +41,22 @@ targets:
     agents: [ server-bukkit ]
     world: { ref: regions-world }
 
-  # OLD-VERSION headless row (ROADMAP §6.2/§8.4): the SAME test on MC 1.8.9, with the
-  # headless Mineflayer driver routed through ViaVersion/ViaProxy so a modern bot can
-  # speak the old protocol. The headless driver's wide mcVersionRange (>=1.8) covers
-  # it; the Via bridge itself is acceptance-only (provisioned in CI, not offline here).
-  # If Via cannot faithfully bridge a feature, the cell honestly skips with a precise
-  # reason rather than a dubious pass.
+  # OLD-VERSION headless row (ROADMAP §6.2/§8.4): the SAME test on MC 1.8.9. The headless
+  # Mineflayer bot speaks 1.8.9 NATIVELY (its mcVersionRange spans >=1.8), so it connects
+  # DIRECTLY — no proxy needed for an in-range version. The real blocker is the server jar:
+  # the PaperMC fill API has no 1.8.9 build, so with `server: { paper: ... }` below this row
+  # honestly SKIPS `UNSUPPORTED_TARGET`. To actually RUN it, point `server` at a plugin-capable
+  # Spigot/legacy 1.8.x jar via `{ url | path, sha256 }` (a real boot also needs a Java 8/11
+  # toolchain — 1.8.x servers do not run on modern JDKs). `via: true` is advisory now: it only
+  # forces a `VIA_BRIDGE_UNAVAILABLE` skip if `mc` were OUTSIDE the bot's native range (which
+  # would need ViaProxy — a deferred v2 follow-on).
   - id: paper-1.8.9
     loader: paper
     mc: "1.8.9"
     driver: headless
-    via: true # route the headless bot through ViaProxy
+    via: true # advisory; 1.8.9 is in-range so the bot connects natively (no proxy)
+    # Paper has no 1.8.9 build → honest UNSUPPORTED_TARGET skip. Swap for a plugin-capable
+    # Spigot 1.8.x jar to run: server: { url: <jar-url>, sha256: <hex> }
     server: { paper: { project: paper, version: "1.8.9", build: latest } }
     plugins:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }

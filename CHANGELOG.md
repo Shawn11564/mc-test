@@ -10,7 +10,19 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **F2 — native old-version support (v2):** old Minecraft versions now run on the headless path
+  *without* a proxy. The bot connects at the target's `mc` natively (Mineflayer + minecraft-data
+  span ~1.8–1.21), and the provisioner boots an explicit, integrity-checked
+  `server: { url | path, sha256 }` jar — so a plugin-capable old server the PaperMC fill API cannot
+  serve (e.g. a Spigot 1.8.x jar) is supported. (`engine/viaPreflight.ts`, `PaperProvisioner`
+  `serverJar`.) Real-boot acceptance of a legacy version also needs a Java 8/11 toolchain.
+
 ### Changed
+- **`via` is now advisory, not a blanket skip.** A `via: true` target only honest-skips
+  `VIA_BRIDGE_UNAVAILABLE` when its `mc` is *outside* the bot's native range (genuinely needs
+  ViaProxy — a deferred follow-on); in-range versions (incl. legacy like 1.8.9) connect directly.
+  An out-of-range target without `via` is skipped by capability negotiation (`NO_COMPATIBLE_DRIVER`).
 - **Headless driver — improved handling of custom items** in selector resolution: richer
   display-name / NBT normalization (`packages/driver-headless/src/normalize.ts`) and container-GUI
   element mapping (`primitives/containerGui.ts`), with a new `Target` field + `PaperProvisioner`

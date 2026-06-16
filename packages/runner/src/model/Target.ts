@@ -55,13 +55,14 @@ export interface MatrixTarget {
   /** `auto` lets capability negotiation pick (ENVIRONMENTS.md §1.2). */
   driver?: DriverId | "auto";
   /**
-   * Route the headless driver through ViaVersion/ViaProxy so a modern Mineflayer
-   * can speak to an old-version server (ENVIRONMENTS.md; ROADMAP §8.4). Used by
-   * e.g. `paper-1.8.9`. The headless driver's wide `mcVersionRange` covers the old
-   * version; the Via bridge itself is acceptance-only (provisioned in CI, not in
-   * this offline build). If Via cannot faithfully bridge a feature, the driver
-   * narrows its range and the cell honestly skips rather than producing a dubious
-   * pass.
+   * Advisory hint that a target may need protocol bridging (ENVIRONMENTS.md; ROADMAP §8.4).
+   * The headless bot speaks its advertised `mcVersionRange` NATIVELY (Mineflayer +
+   * minecraft-data span ~1.8–1.21), so an in-range target — including old versions like
+   * `1.8.9` — connects DIRECTLY and needs no proxy; pair it with a plugin-capable
+   * `server: { url|path, sha256 }` the PaperMC fill API cannot serve. `via: true` only
+   * changes behavior when `mc` is OUTSIDE the native range: that genuinely needs ViaProxy
+   * (a deferred v2 follow-on), so the cell honestly skips `VIA_BRIDGE_UNAVAILABLE` rather
+   * than emitting a dubious pass.
    */
   via?: boolean;
   server?: Source;

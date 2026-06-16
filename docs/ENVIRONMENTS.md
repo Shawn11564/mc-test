@@ -115,13 +115,16 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 > `{ ref: <key> }` to point at an entry under top-level `sources:`. This keeps the big
 > URL/coordinate blobs in one place.
 
-> **Old-version targets (v1.0 honest skips).** A target whose `mc` the PaperMC fill API
-> cannot serve (e.g. `1.8.x`) **and** that lists `plugins:` is **skipped, not booted**: the
-> runner refuses to fall back to a vanilla server (which cannot load Bukkit plugins) and
-> reports `UNSUPPORTED_TARGET` rather than failing every plugin step. Combined with the `via`
-> skip above, old-version rows surface as honest `○` cells in the skip matrix with a precise
-> reason — never a false green. Real old-version coverage (legacy-Paper provisioning + Via GUI
-> bridging) is post-v1.0.
+> **Old-version targets (native connect; honest skips).** The headless bot speaks its advertised
+> `mcVersionRange` (~1.8–1.21) **natively** via Mineflayer + minecraft-data, so an in-range old
+> version (e.g. `1.8.9`) connects **directly — no proxy**. The real blocker is the *server* jar:
+> the PaperMC fill API cannot serve `1.8.x`, so a target whose `mc` Paper cannot build **and** that
+> lists `plugins:` is **skipped** `UNSUPPORTED_TARGET` (the runner refuses to fall back to a
+> plugin-incapable vanilla server) — **unless** it supplies a plugin-capable
+> `server: { url | path, sha256 }` (e.g. a checksummed Spigot `1.8.x` jar), in which case it boots
+> and runs natively. `via: true` is **advisory**: it only forces a `VIA_BRIDGE_UNAVAILABLE` skip
+> when `mc` is *outside* the native range — that genuinely needs ViaProxy, a deferred v2 follow-on.
+> Either way old-version rows surface as honest `○` cells with a precise reason — never a false green.
 
 ---
 
@@ -145,12 +148,14 @@ Exactly one of `url` / `path` / `maven` / `paper` / `mojang` / `modrinth` / `git
 | `as` | string (filename) | — | Rename the installed file (e.g. `regions.jar`). Default keeps the source filename. |
 | `optional` | bool | — | If `true`, a resolve/download failure is a *warning*, not an error (e.g. an optional companion mod). Default `false`. |
 
-> **v1.0 resolver support.** The runner currently resolves **`path`** and **`url`** plugin/mod
-> sources (with `sha256` integrity, §2), plus **`paper`**/**`mojang`** for server jars. `maven`,
-> `modrinth`, and `github` are part of the documented schema but **not yet runner-consumed** —
-> use `url` + `sha256` for third-party deps until they land. Version pinning (Mineflayer +
-> minecraft-data, and a future ViaProxy build) is per-runner-release; a bump is gated by the
-> golden E2E so old-version behavior stays reproducible.
+> **Resolver support.** The runner resolves **`path`** and **`url`** sources (with `sha256`
+> integrity, §2) for plugins/mods **and for the server jar** — an explicit
+> `server: { url | path, sha256 }` boots directly, which is how a plugin-capable old server the
+> PaperMC fill API cannot serve (e.g. a Spigot `1.8.x` jar) is provisioned. **`paper`**/**`mojang`**
+> remain the default server resolvers. `maven`, `modrinth`, and `github` are part of the documented
+> schema but **not yet runner-consumed** — use `url` + `sha256` for third-party deps until they land.
+> Version pinning (Mineflayer + minecraft-data, and a future ViaProxy build) is per-runner-release;
+> a bump is gated by the golden E2E so old-version behavior stays reproducible.
 
 ---
 
