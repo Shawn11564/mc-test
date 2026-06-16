@@ -2,12 +2,18 @@
 /**
  * `mc-test` CLI — `run`, `list`, `doctor`.
  *
- *   mc-test run <stepfile.mctest.yml> --target <id> [--matrix mc-test.yml] [--out dir]
+ *   mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all]
+ *           [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir]
  *   mc-test list   [--matrix mc-test.yml]
  *   mc-test doctor [--matrix mc-test.yml]
+ *
+ * `--plugin` overrides each target's SUT jar with a build-graph artifact (used by
+ * the Gradle front door so the freshly-built jar is tested without editing the
+ * matrix). Multiple step files run as (test × target), aggregated into one JUnit.
  */
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { existsSync, rmSync } from "node:fs";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
@@ -52,6 +58,14 @@ const SERVER_FABRIC_CAPABILITIES: Capabilities = {
   testIdTags: true,
   loader: ["fabric", "neoforge", "quilt"],
 };
+
+/**
+ * Monorepo root, derived from the runner's own location (…/packages/runner/dist/
+ * cli.js → up 3). Built-in agent jar paths resolve from here so the runner finds
+ * them regardless of the caller's CWD — e.g. when the Gradle front door invokes it
+ * from a SUT project directory rather than the monorepo root.
+ */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 /** Known server agents: how to find their built jar (ROADMAP §4 / DRIVERS.md). */
 const KNOWN_AGENTS: Record<string, { jarPath: string; advertised: Capabilities }> = {
@@ -140,7 +154,8 @@ function resolveAgentJars(target: MatrixTarget): { name: string; jarPath: string
       const override = target.agentSources?.[name]?.path;
       return {
         name,
-        jarPath: resolve(override ?? known.jarPath),
+        // A user-supplied override is CWD-relative; the built-in path is monorepo-relative.
+        jarPath: override ? resolve(override) : resolve(REPO_ROOT, known.jarPath),
         advertised: known.advertised,
       };
     });
@@ -157,7 +172,7 @@ function resolveClientAgentJar(target: MatrixTarget): string {
   const named = (target.agents ?? []).find((name) => name in KNOWN_CLIENT_AGENTS) ?? "client-fabric";
   const known = KNOWN_CLIENT_AGENTS[named]!;
   const override = target.agentSources?.[named]?.path;
-  return resolve(override ?? known.jarPath);
+  return override ? resolve(override) : resolve(REPO_ROOT, known.jarPath);
 }
 
 /**
@@ -296,9 +311,11 @@ async function runOneTarget(
 }
 
 async function cmdRun(args: Args): Promise<number> {
-  const stepFile = args._[1];
-  if (!stepFile) {
-    console.error("usage: mc-test run <stepfile.mctest.yml> [--target <id> | --target all | --all]");
+  const stepFiles = args._.slice(1);
+  if (stepFiles.length === 0) {
+    console.error(
+      "usage: mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all] [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir]",
+    );
     return 2;
   }
   const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
@@ -311,34 +328,55 @@ async function cmdRun(args: Args): Promise<number> {
   // Target selection: a single `--target <id>`, or the WHOLE matrix when
   // `--target all` / `--all` is given (ROADMAP §6.3 — author once, run across the
   // matrix, aggregate into one JUnit + a skip matrix).
-  const targetId = args.flags["target"];
-  const runAll = args.flags["all"] === "true" || targetId === "all" || targetId === undefined;
+  const targetSel = args.flags["target"];
+  const runAll = args.flags["all"] === "true" || targetSel === "all" || targetSel === undefined;
   let targets: MatrixTarget[];
   if (runAll) {
     targets = matrix.targets;
-    if (targetId === undefined) {
-      console.log(`No --target given → running the whole matrix (${targets.length} targets). Pass --target <id> for one.`);
+    if (targetSel === undefined) {
+      console.log(`No --target given → running the whole matrix (${targets.length} targets). Pass --target <id[,id...]> for a subset.`);
     }
   } else {
-    const target = findTarget(matrix, targetId!);
-    if (!target) {
-      console.error(`target '${targetId}' not found in ${matrixPath}`);
-      return 2;
+    // Accept a single id or a comma-separated subset (the Gradle front door passes
+    // its configured `targets` this way).
+    const ids = targetSel!.split(",").map((s) => s.trim()).filter(Boolean);
+    targets = [];
+    for (const id of ids) {
+      const target = findTarget(matrix, id);
+      if (!target) {
+        console.error(`target '${id}' not found in ${matrixPath}`);
+        return 2;
+      }
+      targets.push(target);
     }
-    targets = [target];
   }
 
-  const test = loadSteps(resolve(stepFile));
+  // --plugin <jar>: override each target's SUT plugin with a build-graph artifact
+  // (the Gradle front door passes the freshly-built jar so it is tested without
+  // hand-editing mc-test.yml). Replaces the target's `plugins` with the one jar.
+  const pluginOverride = args.flags["plugin"] ? resolve(args.flags["plugin"]) : undefined;
+  if (pluginOverride) {
+    if (!existsSync(pluginOverride)) {
+      console.error(`--plugin jar not found: ${pluginOverride} (build the SUT first)`);
+      return 2;
+    }
+    targets = targets.map((t) => ({ ...t, plugins: [{ path: pluginOverride }] }));
+  }
+
+  const tests = stepFiles.map((f) => loadSteps(resolve(f)));
   const outDir = resolve(args.flags["out"] ?? "mc-test-report");
   const runner = new Runner(defaultRegistry());
 
   // Per-target isolation (distinct leased ports + per-instance world copies, see
   // PaperProvisioner) makes the targets independent; we run them sequentially for
   // deterministic, readable output. Each `buildProvision` is a fresh closure, so a
-  // future bounded-concurrency pool is a drop-in.
+  // future bounded-concurrency pool is a drop-in. Multiple step files run as
+  // (target × test) and aggregate into one JUnit.
   const results: TestResult[] = [];
   for (const target of targets) {
-    results.push(await runOneTarget(runner, matrix, target, test));
+    for (const test of tests) {
+      results.push(await runOneTarget(runner, matrix, target, test));
+    }
   }
 
   // One aggregated JUnit (one <testsuite> per target) + per-result artifacts.

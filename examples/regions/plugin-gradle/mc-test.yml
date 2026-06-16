@@ -1,0 +1,23 @@
+# Matrix for the Gradle sample. The SUT jar is NOT referenced here — the mc-test
+# Gradle plugin supplies the freshly-built jar via `--plugin` (build graph). Paths
+# are resolved from this project dir (the runner's working directory).
+version: 1
+provision:
+  eulaAccepted: true
+  bindHost: 127.0.0.1
+  portRange: [25700, 25899]
+  cacheDir: ~/.mc-test/cache
+  workDir: .mc-test/run
+worlds:
+  regions-world:
+    snapshot: { path: ../world-snapshot } # reuse the example world snapshot
+    levelName: world
+targets:
+  - id: paper-1.20.4
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    # No `plugins:` — the Gradle plugin injects the built SUT jar at run time.
+    agents: [server-bukkit] # co-select the truth agent so assertPluginState RUNS
+    world: { ref: regions-world }

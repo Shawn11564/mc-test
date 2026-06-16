@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../packages/protocol/schema/mctest-stepfile.schema.json
 name: regions-open-testregion
 # RequiredCapabilities (subset of the canonical capability keys).
 requires:
