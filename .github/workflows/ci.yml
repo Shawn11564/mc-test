@@ -20,6 +20,7 @@ jobs:
   typescript:
     name: TypeScript (protocol · drivers · runner)
     runs-on: ubuntu-latest
+    timeout-minutes: 15   # pure TS build/test; caps a hang well under the 360-min default
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,6 +60,7 @@ jobs:
   jvm:
     name: JVM agents (core · server-bukkit)
     runs-on: ubuntu-latest
+    timeout-minutes: 15   # Gradle unit/conformance + plugin compile-gate; no real boots
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

@@ -17,25 +17,38 @@ import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputDirectory;
+import org.gradle.api.tasks.PathSensitive;
+import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.process.ExecOperations;
+import org.gradle.work.DisableCachingByDefault;
 
 /**
  * Runs the mc-test Node runner against an ephemeral Minecraft server. The freshly
  * built SUT jar (wired from the build graph) is passed via {@code --plugin} so the
  * matrix never hand-references a jar path. JUnit lands under {@link #getReportDir()}
  * where IntelliJ / CI reporters expect it.
+ *
+ * <p>Not cacheable: the action boots a real (ephemeral) Minecraft server and the only
+ * output is a cheap-to-regenerate JUnit report, so a build cache hit would never be
+ * trustworthy. The file inputs use content-only ({@code NONE}) path sensitivity — the
+ * task re-derives absolute paths at run time, so a file's location does not affect the
+ * result. Both annotations are required by Gradle's {@code validatePlugins} check.
  */
+@DisableCachingByDefault(because = "Boots an ephemeral Minecraft server; the JUnit report is cheap to regenerate and not worth caching")
 public abstract class McTestRunTask extends DefaultTask {
 
     @InputFile
+    @PathSensitive(PathSensitivity.NONE)
     public abstract RegularFileProperty getMatrix();
 
     @InputFiles
+    @PathSensitive(PathSensitivity.NONE)
     public abstract ConfigurableFileCollection getTests();
 
     /** The SUT jar to test — wired from the project's jar task output by the plugin. */
     @InputFile
+    @PathSensitive(PathSensitivity.NONE)
     public abstract RegularFileProperty getSutJar();
 
     @Input
@@ -46,6 +59,7 @@ public abstract class McTestRunTask extends DefaultTask {
 
     @Optional
     @InputFile
+    @PathSensitive(PathSensitivity.NONE)
     public abstract RegularFileProperty getRunnerCli();
 
     @OutputDirectory

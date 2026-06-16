@@ -573,26 +573,64 @@ function checkCommand(cmd: string, cmdArgs: string[]): Promise<boolean> {
   });
 }
 
+/** Top-level usage, printed on `--help`/`-h`/`help`/no-command and on an unknown command. */
+const USAGE = `mc-test — automated testing for Minecraft plugins & mods
+
+usage: mc-test <command> [options]
+
+commands:
+  run <stepfile.mctest.yml> [more...]   run test(s) against the matrix
+        [--target <id>|<id,id,...>|all] [--matrix mc-test.yml]
+        [--plugin built-sut.jar] [--out dir] [--fail-on-skip]
+  list                                  list targets in the matrix [--matrix mc-test.yml]
+  doctor                                check Java, ports, downloads, matrix [--matrix mc-test.yml]
+  init                                  scaffold mc-test.yml + a sample test [--dir <dir>]
+
+docs: docs/GETTING_STARTED.md · docs/AUTHORING.md`;
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const command = args._[0];
+
+  // Help is a first-class request, not an error: `--help` (a parsed flag), `-h` or
+  // `help` (a positional), or no command at all prints usage to STDOUT and exits 0.
+  // `mc-test --help` must be a clean success — it is the CI smoke test and a stated
+  // v1.0 acceptance gate. (A genuinely unknown command still errors to stderr, below.)
+  if (
+    args.flags["help"] === "true" ||
+    command === undefined ||
+    command === "-h" ||
+    command === "help"
+  ) {
+    console.log(USAGE);
+    process.exit(0);
+  }
+
   let code: number;
-  switch (command) {
-    case "run":
-      code = await cmdRun(args);
-      break;
-    case "list":
-      code = cmdList(args);
-      break;
-    case "init":
-      code = cmdInit(args);
-      break;
-    case "doctor":
-      code = await cmdDoctor(args);
-      break;
-    default:
-      console.error("usage: mc-test <run|list|doctor|init> [...]");
-      code = 2;
+  try {
+    switch (command) {
+      case "run":
+        code = await cmdRun(args);
+        break;
+      case "list":
+        code = cmdList(args);
+        break;
+      case "init":
+        code = cmdInit(args);
+        break;
+      case "doctor":
+        code = await cmdDoctor(args);
+        break;
+      default:
+        console.error(`mc-test: unknown command '${command}'\n`);
+        console.error(USAGE);
+        code = 2;
+    }
+  } catch (err) {
+    // loadSteps/loadMatrix/provision embed helpful messages (file path, parse error);
+    // surface them as one line rather than dumping a raw Node stack trace at the user.
+    console.error(`mc-test: ${err instanceof Error ? err.message : String(err)}`);
+    code = 2;
   }
   process.exit(code);
 }
