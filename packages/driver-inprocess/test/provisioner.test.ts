@@ -113,10 +113,77 @@ describe("provisionClient (injected fetch)", () => {
     expect(staged).toEqual(["agent-client-fabric.jar", "openregions.jar"]);
   });
 
-  it("rejects a non-fabric loader with a clear, honest error", async () => {
+  it("HONEST-SKIPs a modular loader (forge) that is not opted in — never a crash or false green", async () => {
+    // F4: forge/neoforge rendered launch is CI-gated. Without the opt-in the
+    // provisioner throws an UNSUPPORTED_TARGET the runner maps to an honest SKIP
+    // (not the old hard UNSUPPORTED_LOADER crash that surfaced as a RED).
     await expect(
       provisionClient({ mc: "1.21.1", loader: "forge", fetchImpl: makeFetch() }),
-    ).rejects.toThrow(/UNSUPPORTED_LOADER/);
+    ).rejects.toThrow(/UNSUPPORTED_TARGET.*forge.*CI-gated/s);
+    // The honest skip names the opt-in env var and the resolved installer url.
+    await expect(
+      provisionClient({ mc: "1.21.1", loader: "neoforge", fetchImpl: makeFetch() }),
+    ).rejects.toThrow(/MC_TEST_RENDERED_LOADERS=neoforge/);
+  });
+
+  it("an unknown loader honest-skips (UNSUPPORTED_TARGET), never crashes", async () => {
+    await expect(
+      provisionClient({ mc: "1.21.1", loader: "vanilla", fetchImpl: makeFetch() }),
+    ).rejects.toThrow(/UNSUPPORTED_TARGET.*fabric\/quilt\/forge\/neoforge/s);
+  });
+
+  it("opted-in modular loader (forge): runs the installer seam, merges its profile, assembles the launch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mctp-forge-"));
+    // A fixture launcher profile, as the (CI-gated) installer would produce. The
+    // installer run is INJECTED — no JVM, no network — so the pure assembly
+    // (merge + flatten + substitute) is exercised offline.
+    const forgeProfile = {
+      id: "1.21.1-forge-52.0.0",
+      inheritsFrom: "1.21.1",
+      mainClass: "cpw.mods.bootstraplauncher.BootstrapLauncher",
+      libraries: [
+        {
+          name: "net.minecraftforge:forge:1.21.1-52.0.0",
+          downloads: {
+            artifact: {
+              path: "net/minecraftforge/forge/1.21.1-52.0.0/forge-1.21.1-52.0.0.jar",
+              url: "https://maven.minecraftforge.net/net/minecraftforge/forge/1.21.1-52.0.0/forge-1.21.1-52.0.0.jar",
+            },
+          },
+        },
+      ],
+      arguments: {
+        jvm: ["-DlibraryDirectory=${library_directory}", "-p", "${classpath}"],
+        game: ["--username", "${auth_player_name}", "--launchTarget", "forgeclient", "--gameDir", "${game_directory}"],
+      },
+    };
+
+    const client = await provisionClient({
+      mc: "1.21.1",
+      loader: "forge",
+      loaderVersion: "52.0.0",
+      experimentalLoaders: ["forge"], // opt in (no env needed)
+      runInstaller: async () => forgeProfile, // CI-gated seam, injected
+      cacheDir: join(root, "cache"),
+      workDir: join(root, "work"),
+      platform: "linux",
+      arch: "x64",
+      downloadAssets: false,
+      fetchImpl: makeFetch(),
+    });
+
+    expect(client.loader).toBe("forge");
+    expect(client.mainClass).toBe("cpw.mods.bootstraplauncher.BootstrapLauncher");
+    // Modular launch profile assembled.
+    expect(client.launchProfile).toBeDefined();
+    // Path/version placeholders substituted at provision time…
+    expect(client.launchProfile!.jvmArgs).toContain(`-DlibraryDirectory=${join(root, "cache", "libraries")}`);
+    // …identity placeholders left for the launcher (substituted in buildClientLaunch).
+    expect(client.launchProfile!.gameArgs).toContain("${auth_player_name}");
+    expect(client.launchProfile!.gameArgs).toContain("forgeclient");
+    // Classpath = forge lib + vanilla libs + client jar.
+    expect(client.classpath.some((p) => p.includes("forge-1.21.1-52.0.0.jar"))).toBe(true);
+    expect(client.classpath.some((p) => p.endsWith("client.jar"))).toBe(true);
   });
 
   it("fails clearly if a mod jar to stage is missing", async () => {

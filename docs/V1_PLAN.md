@@ -98,8 +98,12 @@ ran on the local Windows machine (JDK 21 / Gradle 9.4.0 / Maven 3.9.6).
 ### Out of scope for v1.0 (→ v2)
 
 F3 (rendered-client mods), F4 (multi-loader matrix), genuine ViaProxy bridging, genuine fake players (needs
-Carpet), and the `maven`/`modrinth`/`github` source resolvers. These are scaffolded/coded but not built or
-run — they honestly **skip** today (never a false green).
+Carpet), and the `maven`/`modrinth`/`github` source resolvers — all **v2**. **Update (2026-06-16): F3 and
+F4 are now implemented** as v2 work (rendered Fabric client; loader-aware in-process driver for
+forge/neoforge + per-target parallelism + the full-matrix orchestration), with the rendered loader boots
+**CI-gated** (`fabric-rendered-client` + `multi-loader-matrix` lanes) — see `FINALIZATION.md` §5–§6. The
+rest (genuine Via bridging, Carpet fake players, the extra source resolvers) remain scaffolded/coded but
+not built or run — they honestly **skip** today (never a false green).
 
 ### Definition of done (v1.0) — checklist
 

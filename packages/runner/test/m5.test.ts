@@ -361,7 +361,10 @@ describe("M5 mappings quarantine: mapped names ONLY in mappings/Names.java for t
 
   for (const shim of ["client-forge", "client-neoforge", "server-fabric"]) {
     it(`${shim}: no mapped (net.minecraft.*) import outside mappings/Names.java`, () => {
-      const root = fileURLToPath(new URL(`../../../agents/${shim}/src`, import.meta.url));
+      // Scope the quarantine to PRODUCTION code (src/main): the per-(loader×version) recompile tax is
+      // the shipped shim. Tests (src/test) legitimately reference mapped names — e.g. the mapping-contract
+      // tests assert `net.minecraft.*` symbols resolve — so they are out of scope for the scan.
+      const root = fileURLToPath(new URL(`../../../agents/${shim}/src/main`, import.meta.url));
       if (!existsSync(root)) return; // tolerate a not-yet-landed shim (parallel build order)
 
       const javaFiles: string[] = [];

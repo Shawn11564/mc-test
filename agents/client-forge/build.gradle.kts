@@ -80,6 +80,19 @@ dependencies {
     // Java-WebSocket is the MCTP transport the core needs at runtime; shade it in too.
     implementation("org.java-websocket:Java-WebSocket:1.5.7")
     shade("org.java-websocket:Java-WebSocket:1.5.7")
+
+    // --- Tests ---------------------------------------------------------------
+    // The mapping-contract test reflects over the REAL remapped Minecraft (ForgeGradle puts it on the
+    // test classpath) to assert the net.minecraft.* symbols mappings/Names.java depends on resolve for
+    // this (loader × MC version) — the per-version drift guard. Runs headless in `./gradlew test`.
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+// Standalone build (not under agents/build.gradle.kts) → configure the test task here.
+tasks.named<Test>("test") {
+    useJUnitPlatform()
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -99,6 +112,13 @@ tasks.named<ProcessResources>("processResources") {
     filesMatching("META-INF/mods.toml") {
         expand(props)
     }
+}
+
+// ForgeGradle's reobfJar reobfuscates the plain `jar`, whose default output (agent-client-forge.jar)
+// COLLIDES with shadowJar's — Gradle flags the implicit dependency. Give the plain jar a "dev" classifier
+// so only shadowJar owns the clean `agent-client-forge.jar` the runner's KNOWN_CLIENT_AGENTS resolves.
+tasks.named<Jar>("jar") {
+    archiveClassifier.set("dev")
 }
 
 tasks.named<ShadowJar>("shadowJar") {

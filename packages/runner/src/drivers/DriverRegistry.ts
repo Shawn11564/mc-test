@@ -26,6 +26,8 @@ export interface DriverHandle {
 export interface DriverLaunchContext {
   mc?: string;
   loader?: string;
+  /** Pinned loader version (Forge/NeoForge need it for the modular launch). */
+  loaderVersion?: string;
   display?: "xvfb" | "desktop";
   mods?: string[];
   clientAgentJar?: string;

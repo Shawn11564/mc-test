@@ -1,5 +1,5 @@
 # mc-test client agent (Forge) manifest. Forge uses mods.toml (NOT fabric.mod.json).
-# ${...} tokens are stamped by build.gradle.kts processResources expand(...).
+# Placeholder tokens below are stamped at build time by processResources.
 modLoader = "javafml"
 loaderVersion = "[${loaderRange},)"
 license = "Apache-2.0"

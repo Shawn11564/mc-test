@@ -290,7 +290,9 @@ describe("M4 client GUI: anyOf gating, mixed-driver selection, combined session"
     // The mappings-quarantine rule (CLAUDE.md Prime Directive 2; ROADMAP §8.1): all
     // obfuscation-mapped (Yarn) symbols live ONLY in mappings/Names.java. Partition B
     // owns agents/client-fabric; tolerate the dir being absent (parallel build order).
-    const root = fileURLToPath(new URL("../../../agents/client-fabric/src", import.meta.url));
+    // Scoped to PRODUCTION code (src/main): the mapping-contract test under src/test legitimately
+    // references mapped names (as Class.forName strings) to assert they resolve — out of scope here.
+    const root = fileURLToPath(new URL("../../../agents/client-fabric/src/main", import.meta.url));
     if (!existsSync(root)) {
       // B has not landed in this tree yet — nothing to scan, do not fail.
       return;

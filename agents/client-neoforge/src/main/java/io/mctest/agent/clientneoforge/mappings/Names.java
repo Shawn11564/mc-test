@@ -225,7 +225,9 @@ public final class Names implements ClientBridge {
                 try {
                     var image = Screenshot.takeScreenshot(client.getMainRenderTarget());
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    image.writeToChannel(java.nio.channels.Channels.newChannel(out));
+                    // NativeImage.writeToChannel(...) is private in Mojmap 1.21.x; asByteArray() is the
+                    // public PNG-encode (same call the Forge shim uses).
+                    out.write(image.asByteArray());
                     image.close();
                     return out.toByteArray();
                 } catch (Exception e) {

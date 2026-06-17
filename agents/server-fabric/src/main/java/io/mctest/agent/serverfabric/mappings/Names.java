@@ -296,19 +296,19 @@ public final class Names {
         return world.getGameRules().get(key).serialize();
     }
 
-    /** Sets a gamerule by name on the given world. Coerces against the rule's value type. */
+    /** Sets a gamerule by name. Routed through the server's /gamerule command (robust across types). */
     public void setGameRule(String worldName, String ruleName, Object value) throws McTestException {
         ServerWorld world = resolveWorld(worldName);
         if (world == null) {
             throw McTestException.fixtureFailed("World not loaded for gamerule");
         }
-        GameRules.Key<?> key = findGameRuleKey(ruleName);
-        if (key == null) {
+        if (findGameRuleKey(ruleName) == null) {
             throw McTestException.fixtureFailed("Unknown gamerule: " + ruleName);
         }
-        GameRules.Rule<?> rule = world.getGameRules().get(key);
-        // setValue parses the serialized string form, which is robust across rule types.
-        rule.setValue(parseGameRule(rule, value), server);
+        // In Yarn 1.21.x GameRules.Rule<T>.setValue takes another Rule<T> (CRTP), NOT a raw value, so
+        // set via the server's /gamerule command — robust across rule types (boolean/int) and MC
+        // versions. Gamerules are server-wide (stored on the overworld); worldName only gates "loaded".
+        dispatchConsoleCommand("gamerule " + ruleName + " " + value);
     }
 
     /** @return the world's current time-of-day (for the undo record). */
@@ -479,11 +479,6 @@ public final class Names {
             }
         });
         return found[0];
-    }
-
-    private static String parseGameRule(GameRules.Rule<?> rule, Object value) {
-        // Rule.setValue parses a serialized string; both bool and int rules accept their string form.
-        return String.valueOf(value);
     }
 
     private static String worldId(World world) {

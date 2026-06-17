@@ -48,9 +48,12 @@ export const INPROCESS_CAPABILITIES: Capabilities = {
   testIdTags: true,
   screenshot: true,
   rendering: true,
+  // The client agent core is loader-neutral; the driver launches each via a
+  // loader-aware resolver (`launch/loaders.ts`): fabric/quilt use the KnotClient
+  // classpath launch (F3, fully run); forge/neoforge use the modular installer
+  // launch (F4) — implemented + pure parts tested, the live boot CI-gated behind
+  // `MC_TEST_RENDERED_LOADERS` (else an HONEST SKIP, never a crash or false green).
   loader: ["fabric", "quilt", "forge", "neoforge"],
-  // The client agent core is loader-neutral; the shipped client-fabric shim
-  // targets the modern range. Narrowed generously for M4.
   mcVersionRange: ">=1.20 <=1.21.4",
 };
 

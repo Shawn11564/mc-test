@@ -170,7 +170,8 @@ jobs:
       # Client side (Loom, standalone projects with their own wrappers): the client-fabric
       # agent jar (agent-client-fabric.jar) the in-process driver injects, and the SUT's
       # client mod jar (openregions.jar). Both download Minecraft + Yarn at build time.
-      - name: Build client-fabric agent jar (Loom)
+      # `build` also runs client-fabric's mapping-contract test (reflects over the real Yarn-remapped MC).
+      - name: Build + test client-fabric agent (Loom)
         run: ./gradlew build
         working-directory: agents/client-fabric
       - name: Build regions client mod jar (Loom)
@@ -191,4 +192,84 @@ jobs:
             mc-test-report/
             .mc-test/run/
             **/*.png
+          if-no-files-found: ignore
+
+  # F4 multi-loader fan-out lane: the SAME unchanged test across the (loader × version)
+  # matrix → ONE aggregated JUnit + a (test × target) skip matrix, run with per-target
+  # PARALLELISM. Two parts:
+  #   (1) the orchestration harness (tests/e2e/run-matrix-boot.mjs) — a DETERMINISTIC
+  #       proof (no boot/GL/network) that the fan-out aggregates + honest-skips correctly
+  #       (paper headless → clientScreens; forge/neoforge → CI-gated UNSUPPORTED_TARGET).
+  #       This is a real gate.
+  #   (2) the three loader shims actually BUILD (client-forge/ForgeGradle,
+  #       client-neoforge/NeoGradle, server-fabric/Loom) — acceptance-only, heavy +
+  #       network (download MC/Yarn/Forge/NeoForge), so each is continue-on-error.
+  # The rendered GREEN forge/neoforge boots are gated behind MC_TEST_RENDERED_LOADERS on a
+  # GL-capable host (the in-process driver's modular launch); fabric's rendered green is the
+  # fabric-rendered-client lane above. nightly/dispatch only.
+  multi-loader-matrix:
+    name: Multi-loader · fan-out (matrix orchestration + shim builds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60   # the shim builds download MC/Yarn/Forge/NeoForge toolchains
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      - run: npm ci
+      - name: Build runner (dependency order)
+        run: |
+          npm run build -w @mc-test/protocol
+          npm run build -w @mc-test/driver-headless
+          npm run build -w @mc-test/driver-inprocess
+          npm run build -w @mc-test/driver-pixel
+          npm run build -w @mc-test/runner
+
+      # (1) The deterministic orchestration proof: aggregated JUnit + skip matrix +
+      #     honest skips + per-target parallelism, across paper/forge/neoforge. No boot.
+      - name: Run multi-loader matrix orchestration harness
+        run: node tests/e2e/run-matrix-boot.mjs
+
+      # (2) BUILD + TEST the three loader shims against their REAL remapped Minecraft. `./gradlew build`
+      #     runs each shim's test suite (mapping-contract tests for the clients — they reflect over the
+      #     real Yarn/MCP-SRG/Mojmap symbols mappings/Names.java depends on; pure-Java helper tests for
+      #     server-fabric) AND compiles Names.java against the remapped MC, which is itself the strongest
+      #     per-(loader × version) mapping check. They are standalone Loom/ForgeGradle/NeoGradle projects
+      #     with their own committed Gradle 8.10.2 wrappers, each pulling the agent-core SPI from
+      #     mavenLocal. Network-heavy (download MC/Yarn/Forge/NeoForge toolchains) → continue-on-error so
+      #     a flaky download never blocks, while the tests/compile still run + report.
+      - name: Publish agent core (mavenLocal) for the shims
+        run: gradle -p agents :core:publishToMavenLocal
+      - name: Build + test client-forge (ForgeGradle, vs remapped MC 1.20.1)
+        continue-on-error: true
+        run: ./gradlew build
+        working-directory: agents/client-forge
+      - name: Build + test client-neoforge (NeoGradle, vs Mojmap MC 1.21.1)
+        continue-on-error: true
+        run: ./gradlew build
+        working-directory: agents/client-neoforge
+      - name: Build + test server-fabric (Loom, vs Yarn MC 1.21.1)
+        continue-on-error: true
+        run: ./gradlew build
+        working-directory: agents/server-fabric
+
+      - name: Upload matrix report + built shim jars
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mc-test-matrix-report
+          path: |
+            mc-test-report/
+            agents/client-forge/build/libs/*.jar
+            agents/client-neoforge/build/libs/*.jar
+            agents/server-fabric/build/libs/*.jar
           if-no-files-found: ignore

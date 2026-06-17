@@ -97,6 +97,7 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `server` | `Source` \| `{ref}` | cond | — | The server artifact (jar/installer) for server-side loaders (`paper`, `spigot`, `folia`, server-side `fabric`/`forge`/`neoforge`/`quilt`, `vanilla`). REQUIRED when `side` includes `server`. May be `{ ref: <sources key> }`. |
 | `client` | `Source` \| `{ref}` | cond | — | The client artifact / launch profile for rendered-client targets. REQUIRED when `side` includes `client` and `driver: inprocess|pixel`. See §5.2. |
 | `loaderInstaller` | `Source` \| `{ref}` | cond | — | For mod loaders, the loader installer (e.g. Fabric installer jar, NeoForge installer). REQUIRED for `fabric`/`forge`/`neoforge`/`quilt` unless `server`/`client` already points at a pre-installed server jar. |
+| `loaderVersion` | string | cond | — | Pinned mod-loader version, **threaded from the target to the in-process driver** for a rendered (`inprocess`) client (`DRIVERS.md` §2.4). **Fabric/Quilt:** optional — the Fabric loader version, else the provisioner resolves + pins the newest stable for `mc`. **Forge/NeoForge:** **REQUIRED** to run the modular installer launch (e.g. forge `"47.2.0"`, neoforge `"21.1.66"`). Mirrors `Target.client.loaderVersion` (§5.2). |
 | `plugins` | list<`Source`\|`{ref}`> | — | `[]` | Bukkit/Spigot/Paper **plugins** to install (the SUT and its deps). Dropped into `plugins/`. The regions plugin is one of these. |
 | `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. For an `inprocess` (rendered-client) target these mods are installed into the **rendered client's** `mods/` (§5.2) alongside the client agent (§2.4.2). The regions client-GUI mod is one of these. |
 | `display` | `Display` enum | — | from `provision.display` | Per-target display backend for a rendered (`inprocess`/`pixel`) client: `xvfb` (Linux headless / CI) or `desktop` (a real display). Overrides the global `provision.display.backend` (§5.1) for this target only. Ignored for headless/server-side targets (no rendered client). |
@@ -506,6 +507,15 @@ target uses ≥3 ports.
 - Because every instance has its **own** ports + **own** instance dir + **own** world copy,
   N instances run fully in parallel up to `provision.parallelism`.
 
+> **Per-target parallelism (`mc-test run --concurrency`).** The CLI run loop drives the
+> `(target × test)` jobs through a **bounded-concurrency pool**. Because each instance is isolated
+> (distinct leased ports + per-instance world copies, above), those jobs are independent and safe to
+> run concurrently. The pool size is set by **`mc-test run --concurrency N`** (alias **`-j N`**, or
+> `--concurrency auto`): the default is **`1`** (sequential — readable streamed output, and we don't
+> boot several servers at once unasked); `auto` picks a modest pool (currently **4**) bounded by the
+> job count. Results are **aggregated in deterministic input order** regardless of completion order,
+> so reports are stable no matter the concurrency.
+
 ### 2.6 Materialize world
 
 Per the world's `resetPolicy` (§3), copy the pristine snapshot (or generate) into
@@ -684,6 +694,18 @@ target). As of **M4**, `/packages/driver-inprocess` owns the backend selection (
 client **launch + log-scrape**: it spawns the offline client into the chosen display and learns the
 client agent's MCTP port from the client-log line `MCTP listening on :PORT` (§2.4.2).
 
+> **Forge/NeoForge rendered clients are opt-in (`MC_TEST_RENDERED_LOADERS`).** As of **F4** the
+> in-process launcher is **loader-aware** (`DRIVERS.md` §2.4): Fabric/Quilt use the F3 `KnotClient`
+> launch, while Forge/NeoForge use a *modular* installer-driven `BootstrapLauncher` launch. The pure
+> launch-assembly is unit-tested offline, but actually running the loader installer + booting a
+> forge/neoforge client needs a GL-capable host, so it is **CI-gated**: by **default** a
+> forge/neoforge `inprocess` target **honest-SKIPS** with reason `UNSUPPORTED_TARGET` (never a crash,
+> never a false green). It runs for real **only** when opted in via the environment variable
+> **`MC_TEST_RENDERED_LOADERS=<loader>`** (comma-separated list, e.g. `forge,neoforge`) on a capable
+> runner — mirroring how the Fabric rendered-green is gated to the `e2e.yml` `fabric-rendered-client`
+> lane (§5.1). (Before F4 such a target threw `UNSUPPORTED_LOADER`, surfacing as a **false red**; it
+> is now an honest skip.)
+
 ### 5.2 Client launch profile (`Target.client`)
 
 For `inprocess`/`pixel` targets, `client` describes how to start the real client:
@@ -788,6 +810,10 @@ commented matrix that:
 - Defines **named sources** for the regions SUT (plugin jar + Fabric/NeoForge mod jars) and
   the four agents.
 - Spans **Paper + Fabric + NeoForge** across **1.20.4 / 1.21.1 / 1.21.4** via `matrix.mc`.
+- Carries the full **inprocess loader axis** (F4): `fabric-1.21-client`, `neoforge-1.21-client`,
+  and a `forge-1.20.1-client` row (loader `forge`, mc `1.20.1`, `loaderVersion: "47.2.0"`). The
+  **modular** (forge/neoforge) rows **honest-skip** with `UNSUPPORTED_TARGET` unless opted in via
+  `MC_TEST_RENDERED_LOADERS` (§5.1); only Fabric runs rendered by default.
 - Provides **two suites**:
   - `regions-plugin-headless` (requires `chat, containerGui, pluginState`) — runs on the
     **Paper** targets with the `headless` bot + `server-bukkit` agent. CI-fast, no display.

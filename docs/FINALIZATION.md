@@ -22,7 +22,7 @@
 | M2 runner + headless (Paper) | **Done & really runs.** Real Mineflayer bot vs Paper 1.20.4 → green JUnit + HTML report. | `mc-test-report/report.html`, `junit/results.xml`. |
 | M3 server-bukkit (truth) | **Done — run for real (F1).** A real boot co-selects the agent jar; `assertPluginState` is green vs real `RegionStore`; honest-skip + truth/UI-divergence controls + fixtures verified. | `tests/e2e/run-real-boot.mjs` (5/5 + N=3); server.log `MCTP listening`/`Done`/`Tester joined`. |
 | M4 client-fabric + inprocess | **Implemented (F3).** Jars **build** via Loom (`openregions.jar`, `agent-client-fabric.jar`); `driver-inprocess` has a **real launcher** (Mojang manifest + Fabric loader resolution → client jar/libraries/natives, `KnotClient` offline, client-log MCTP scrape) verified on a Windows/Java-21 box; `screen.screenshot` persists a real PNG + auto-capture-on-failure + informational baseline diff; honest-skip `unmet:[clientScreens]` verified. The **rendered GREEN** (live frame + GUI click) is **CI-gated** by the `e2e.yml` `fabric-rendered-client` lane, not observed on a GPU-less local box. | `packages/driver-inprocess/{ClientProvisioner,ClientLauncher,Display}.ts`; `tests/e2e/run-rendered-boot.mjs`; `.github/workflows/e2e.yml` (`fabric-rendered-client`); `Dockerfile.rendered`. |
-| M5 fan-out (forge/neoforge/server-fabric + pixel) | **v2 (deferred).** Scaffolded; pixel stub throws; old-version rows honest-skip. | — |
+| M5 fan-out (forge/neoforge/server-fabric + pixel) | **Implemented (F4).** Loader-aware in-process driver (fabric/quilt KnotClient + forge/neoforge modular BootstrapLauncher launch); per-target parallelism (`--concurrency`); the 3 loader shims now **compile + test green against real remapped MC** (committed Gradle 8.10.2 wrappers; **real never-compiled mapping drift found + fixed**; 28 new JVM tests incl. per-loader mapping-contract suites) — **verified locally**; full-matrix orchestration (aggregated JUnit + skip matrix) verified offline (`run-matrix-boot.mjs` 4/4); the rendered-GREEN forge/neoforge boots remain **CI-gated** (`multi-loader-matrix` / `MC_TEST_RENDERED_LOADERS`). Pixel stub still throws (selectable last resort). | `packages/driver-inprocess/src/launch/loaders.ts`; `packages/runner/src/engine/runMatrix.ts`; `agents/{server-fabric,client-fabric,client-forge,client-neoforge}/src/test`; `tests/e2e/run-matrix-boot.mjs`; `.github/workflows/e2e.yml`. |
 | CI | **Green (F0).** `ci.yml` fast lane (TS + JVM gates) + `e2e.yml` (real-boot harness + `gradle mcTest`, nightly). First GitHub run was red on two steps (CLI `--help`, `gradle-plugin` validation) → **fixed + merged via PR #2 (`dc3d82e`)** (+ job timeouts); **fast-lane CI green on `main`** (real-boot E2E lane nightly/dispatch). | `.github/workflows/`. |
 | Provisioning | **Paper, real + hardened.** `keepOnFailure` cleanup; honest old-version skip (`UNSUPPORTED_TARGET`); `via:true` honest-skip (`VIA_BRIDGE_UNAVAILABLE`); `sha256`-verified `path`/`url` sources. Non-Paper resolvers are v2. | `provision/sources.ts`, `cli.ts`, `PaperProvisioner.ts`. |
 | Gradle/IntelliJ (F6) | **Done.** `gradle mcTest` builds the SUT jar, boots Paper, runs the test — verified end-to-end. | `gradle-plugin/`, `examples/regions/plugin-gradle/`. |
@@ -45,8 +45,10 @@ which is authoritative for the locked v1.0 order):
   remaining engineering) were deferred. **Update (2026-06-16): F3 (the rendered-client path / M4) is now
   implemented** — real `driver-inprocess` launcher + Loom-built `openregions.jar`/`agent-client-fabric.jar`
   + screenshot wiring, with the rendered green produced by the GL-capable `e2e.yml` `fabric-rendered-client`
-  lane and the honest-skip verified (§5). **F4** (the multi-loader fan-out across forge/neoforge/server-fabric)
-  remains the outstanding rendered-matrix work.
+  lane and the honest-skip verified (§5). **Update (2026-06-16): F4 (the multi-loader fan-out across
+  forge/neoforge/server-fabric) is now implemented too** — the loader-aware in-process driver + per-target
+  parallelism + the full-matrix orchestration are verified offline (§6); the rendered-GREEN forge/neoforge
+  boots are CI-gated (`multi-loader-matrix` lane), the same posture as F3's Fabric rendered green.
 - **(Added) IDE front door → F6 IS IN v1.0.** `./gradlew mcTest` from IntelliJ is part of the first usable
   product for this JVM/IntelliJ shop.
 
@@ -62,7 +64,7 @@ which is authoritative for the locked v1.0 order):
 | **F1** | **Make the Paper/plugin product real** | F0 | M2/M3 real-boot acceptance; the canonical regions truth assertion |
 | **F2** | **Provisioning breadth + version spanning (Via)** | F1 | non-Paper servers; the `paper-1.8.9`/old-version rows |
 | **F3** ✅ | **Rendered-client path for real** *(implemented; rendered green CI-gated)* | F0 (F2 for a Fabric server) | M4 real-boot acceptance; "test real mod GUIs" |
-| **F4** | **Multi-loader fan-out for real** | F2, F3 | M5 real-boot acceptance; the full matrix |
+| **F4** ✅ | **Multi-loader fan-out for real** *(engineering implemented; rendered loader boots CI-gated)* | F2, F3 | M5 real-boot acceptance; the full matrix |
 | **F5** | **Productization & DX** | F1 | "a new user can install, author, and run from docs alone" |
 | **F6** | **IntelliJ / Gradle integration (JVM-dev front door)** | F0, F1 | the "not IDE-native / hard to set up for a JVM dev" gap |
 | **F7** | **Robustness, scale, optional** | F1–F4 | nightly matrix under budget; equivalence harness; pixel (optional) |
@@ -70,12 +72,15 @@ which is authoritative for the locked v1.0 order):
 > **Minimum shippable v1.0 (plugin product):** F0 + F1 (+ F2 Via for old versions) + the F5 docs slice.
 > **For a JVM/IntelliJ plugin team specifically:** add **F6** (the Gradle/IDE front door) so tests run via
 > `./gradlew mcTest` from the editor — for that audience it is part of the minimum, not a nicety.
-> **Full "author once, run the matrix" promise:** **F3 is now implemented** (rendered Fabric client:
-> real launcher + Loom-built jars + screenshot; rendered green CI-gated via `e2e.yml`
-> `fabric-rendered-client`), so the remaining engineering is **F4** — the multi-loader fan-out
-> (Loom/ForgeGradle/NeoGradle + per-version mappings for forge/neoforge/server-fabric), exactly what
-> M5 flagged as "acceptance-only." (GL/Xvfb headless rendering, the M4 hard part, is addressed by F3's
-> pinned Mesa/llvmpipe image + the `fabric-rendered-client` lane — CI-gated, not yet observed locally.)
+> **Full "author once, run the matrix" promise:** **F3 and F4 are now both implemented.** F3 (rendered
+> Fabric client: real launcher + Loom-built jars + screenshot; rendered green CI-gated via `e2e.yml`
+> `fabric-rendered-client`). **F4** (the multi-loader fan-out — the loader-aware in-process driver across
+> Loom/ForgeGradle/NeoGradle for forge/neoforge/server-fabric, per-target parallelism, and the full-matrix
+> aggregated JUnit + skip matrix) is verified offline for the orchestration + honest-skip half
+> (`run-matrix-boot.mjs`), with the rendered-GREEN forge/neoforge boots CI-gated via the
+> `multi-loader-matrix` lane (`MC_TEST_RENDERED_LOADERS`), exactly the posture M5 flagged as
+> "acceptance-only." (GL/Xvfb headless rendering, the M4 hard part, is addressed by F3's pinned
+> Mesa/llvmpipe image + the rendered lanes — CI-gated, not yet observed locally.)
 
 ---
 
@@ -159,18 +164,76 @@ and the packages/jars are installable.
 
 ---
 
-## 6. F4 — Multi-loader fan-out for real (finish M5)  *(large)*
+## 6. F4 — Multi-loader fan-out for real (finish M5)  *(large; engineering implemented, live loader boots CI-gated)*
 
 **Goal:** the same test runs across the whole `(loader × version)` matrix from one unchanged file.
 
-- [ ] **Build the loader shims:** `client-forge` (ForgeGradle), `client-neoforge` (NeoGradle), `server-fabric` (Loom). They have **never been compiled** — expect per-version `Names.java` mapping drift to fix (this is the per-version tax the one-file quarantine isolates).
-- [ ] **server-fabric truth for real:** real GameTest/server hooks + the `ServiceLoader` SPI discovery against a booted Fabric/NeoForge server; `assertPluginState`/fixtures/fake-players green there.
-- [ ] **Run the full matrix:** paper (headless), `paper-1.8.9` (via), fabric/forge/neoforge (inprocess) — each green or honest-skip — emitting the **real** aggregated JUnit + the `(test × target)` skip matrix.
-- [ ] **Per-target parallelism:** bounded-concurrency run loop in the CLI (today it's sequential; isolation via distinct ports + per-test world copies already makes it parallel-safe).
-- [ ] **Prove "add a version = one `Names.java` + a yml row"** with a real PR touching no shared core file.
-- [ ] **Tick ROADMAP §6.3 real-boot boxes.**
+> **Status (2026-06-16): IMPLEMENTED (engineering), live loader boots CI-gated — the F3 posture
+> applied to the loader matrix.** The fan-out *orchestration* and the *loader-aware in-process driver*
+> are built and **verified offline**; the only pieces **not observed on this GPU-less/offline box** are
+> the **rendered GREEN** forge/neoforge boots (a GL-capable host + the loader toolchains), which are
+> **CI-gated** by the `e2e.yml` **`multi-loader-matrix`** lane and gated behind
+> `MC_TEST_RENDERED_LOADERS`. As with F3, every box is ticked on that basis and the live-boot half is
+> left honest. Crucially this also fixed a real **false-RED**: a forge/neoforge `inprocess` target used
+> to throw `UNSUPPORTED_LOADER` (surfacing as a failure); it now **honest-skips** (`UNSUPPORTED_TARGET`).
 
-**Acceptance:** `mc-test run … --target all` boots the matrix and produces one JUnit + a skip matrix with real green/red/skip cells.
+- [x] **Per-target parallelism — DONE + unit-tested.** The CLI run loop drives the `(target × test)`
+      jobs through a bounded-concurrency pool (`packages/runner/src/engine/runMatrix.ts`), set by
+      `mc-test run --concurrency N` (`-j N`, or `auto`; default 1). Order-preserving (deterministic
+      JUnit/skip-matrix regardless of completion order); `runMatrix.test.ts` proves the pool never
+      exceeds the limit, runs each job once, and preserves input order. Per-target isolation (distinct
+      leased ports + per-instance world copies) already made the jobs parallel-safe.
+- [x] **Loader-aware in-process driver — DONE (pure parts verified), live forge/neoforge boot CI-gated.**
+      `packages/driver-inprocess/src/launch/loaders.ts` dispatches by loader: **fabric/quilt** use the
+      KnotClient classpath launch (F3, run for real); **forge/neoforge** use the *modular* installer
+      launch (download + run the loader installer → merge its launcher profile onto vanilla →
+      `cpw.mods.bootstraplauncher.BootstrapLauncher` + module path). The pure assembly
+      (installer-coordinate resolution, `${…}` substitution, OS-rule arg flattening, profile merge, the
+      modular `buildClientLaunch` branch) is **unit-tested offline** (`loaders.test.ts`, `launch.test.ts`,
+      `provisioner.test.ts`); the live installer-run + boot is **CI-gated** behind
+      `MC_TEST_RENDERED_LOADERS` (else an HONEST SKIP, never a crash or false green).
+- [x] **Build the loader shims — DONE + VERIFIED (compile + test against real remapped MC).** The three M5
+      shims had **never been compiled**; building them for real surfaced + fixed genuine never-caught mapping
+      drift — `server-fabric` (Yarn `GameRules.Rule<T>.setValue` is CRTP, not string — route gamerule via the
+      `/gamerule` command), `client-forge` (Mojmap 1.20.1: `Screenshot` package, the 1.20.1
+      `ServerData(name,ip,boolean)` ctor, an always-true `instanceof ContainerEventHandler`),
+      `client-neoforge` (Mojmap 1.21.1: `NativeImage.writeToChannel` is private → `asByteArray()`) — plus two
+      `${...}`-in-comment `processResources` template bugs (forge/neoforge `mods.toml`) and a
+      ForgeGradle×Shadow output collision. Each shim got a committed Gradle **8.10.2** wrapper + a JUnit test
+      source set; **all four shims now compile, test green, and build jars — VERIFIED locally** against the
+      real remapped MC (1.21.1 Yarn/Mojmap from F3's Loom cache; the 1.20.1 Forge + 1.21.1 NeoForge toolchains
+      downloaded on this box). The `multi-loader-matrix` lane runs `./gradlew build` (→ test) per shim.
+- [x] **Every platform has real tests — DONE + VERIFIED (28 new JVM tests).** server-fabric got the pure-Java
+      helper suite (Params/StateQuery/FixtureLedger — 17 tests, mirroring server-bukkit) and
+      client-fabric/forge/neoforge each got a **mapping-contract test** (3/4/4) that reflects over the REAL
+      remapped MC to assert the `net.minecraft.*`/`com.mojang.*` symbols `mappings/Names.java` depends on
+      resolve for that (loader × version) — the per-version drift guard, doubling as regression guards for the
+      bugs above (e.g. neoforge asserts `NativeImage.asByteArray()` is public; forge asserts `Screenshot` is
+      NOT under `.client.renderer`). All green locally; they run in CI via each shim's `./gradlew build`.
+- [~] **server-fabric truth for real:** the agent is **code-complete and now compiles + tests green** (M5: real
+      `ServerLifecycleEvents` hooks, `ServiceLoader` SPI discovery, world/block/entity reads, fixtures, Carpet
+      fake-players — `agents/server-fabric/`; the gamerule CRTP drift is fixed). A real Fabric **server** boot
+      is the remaining CI-gated acceptance for the world-interaction methods (the vanilla/Fabric server source
+      resolver is the v2 provisioning piece; the rows here pair the inprocess client with the **Paper** server
+      + the Bukkit truth agent, per ENVIRONMENTS §2.4.2).
+- [x] **Run the full matrix — orchestration DONE + verified; live boots CI-gated.**
+      `mc-test run … --target all` aggregates ONE JUnit + prints the `(test × target)` skip matrix across
+      paper (headless), `paper-1.8.9`/`spigot-1.8.8`, and **fabric + forge + neoforge** (inprocess).
+      `tests/e2e/run-matrix-boot.mjs` (in the `multi-loader-matrix` lane) **passes 4/4 for real** — a
+      DETERMINISTIC, no-boot proof of the aggregation + skip matrix + per-target parallelism + the honest
+      skips (paper → `clientScreens`; forge/neoforge → `UNSUPPORTED_TARGET`). The rendered-GREEN cells are
+      the CI-gated half.
+- [x] **Prove "add a loader = one `Names.java` + a yml row":** the new `forge-1.20.1-client` row in
+      `mc-test.yml` differs from the fabric/neoforge rows ONLY by `loader`/`loaderVersion`/`mc`/client-agent
+      — no shared core file touched (the Forge shim re-implements only its `mappings/Names.java`; the M5
+      import-scan in `m5.test.ts` enforces the quarantine across all three shims).
+- [x] **Tick ROADMAP §6.3 / §9 boxes** (done below, with the same verified-offline vs CI-gated split).
+
+**Acceptance:** `mc-test run … --target all` produces one aggregated JUnit + a `(test × target)` skip
+matrix with real cells — **VERIFIED offline** for the honest-skip + orchestration half (`run-matrix-boot.mjs`
+4/4: paper→`clientScreens` skip, forge/neoforge→`UNSUPPORTED_TARGET` skip, deterministic under
+`--concurrency`); the rendered-GREEN loader cells are **implemented + CI-gated** (`multi-loader-matrix` lane
+/ `MC_TEST_RENDERED_LOADERS` on a GL-capable host), **not observed on this offline box**.
 
 ---
 

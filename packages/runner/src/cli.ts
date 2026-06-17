@@ -19,6 +19,7 @@ import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
 import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
+import { runMatrix, resolveConcurrency } from "./engine/runMatrix.js";
 import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPreflight.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
@@ -112,15 +113,32 @@ interface Args {
   flags: Record<string, string>;
 }
 
+/** Short flag aliases (`-j 4` ≡ `--concurrency 4`). */
+const SHORT_FLAGS: Record<string, string> = { "-j": "concurrency", "-c": "concurrency" };
+
 function parseArgs(argv: string[]): Args {
   const _: string[] = [];
   const flags: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
+    // A flag's value never itself starts with `-` in this CLI (targets, paths,
+    // dirs, numbers don't), so a following `-`/`--` token is the NEXT flag, not a
+    // value — this lets `--all -j 4` parse `all=true` rather than eating `-j`.
+    const takesValue = (next: string | undefined): next is string =>
+      next !== undefined && !next.startsWith("-");
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--")) {
+      if (takesValue(next)) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = "true";
+      }
+    } else if (SHORT_FLAGS[a]) {
+      const key = SHORT_FLAGS[a];
+      const next = argv[i + 1];
+      if (takesValue(next)) {
         flags[key] = next;
         i++;
       } else {
@@ -188,6 +206,7 @@ function buildLaunchContext(target: MatrixTarget): DriverLaunchContext {
   return {
     ...(target.mc ? { mc: target.mc } : {}),
     ...(target.loader ? { loader: target.loader } : {}),
+    ...(target.loaderVersion ? { loaderVersion: target.loaderVersion } : {}),
     ...(target.display ? { display: target.display } : {}),
     ...(mods.length ? { mods } : {}),
     clientAgentJar: resolveClientAgentJar(target),
@@ -298,21 +317,26 @@ function buildProvision(
 }
 
 function printResult(result: TestResult): void {
+  // Emit the whole per-target block in ONE console.log so it stays contiguous
+  // even when targets run concurrently (--concurrency > 1) and finish interleaved.
   const icon = result.outcome === "passed" ? "✓" : result.outcome === "skipped" ? "○" : "✗";
-  console.log(`\n${icon} ${result.name} [${result.target}] — ${result.outcome.toUpperCase()} (${(result.durationMs / 1000).toFixed(1)}s, driver=${result.driver ?? "none"})`);
-  for (const note of result.notes ?? []) console.log(`  ${note}`);
+  const lines: string[] = [
+    `\n${icon} ${result.name} [${result.target}] — ${result.outcome.toUpperCase()} (${(result.durationMs / 1000).toFixed(1)}s, driver=${result.driver ?? "none"})`,
+  ];
+  for (const note of result.notes ?? []) lines.push(`  ${note}`);
   for (const s of result.steps) {
     const si = s.outcome === "passed" ? "  ✓" : s.outcome === "skipped" ? "  ○" : "  ✗";
     if (s.outcome === "skipped" && s.skip) {
-      console.log(`${si} ${s.verb}: SKIPPED ${s.skip.reason} unmet=[${s.skip.unmet.join(",")}]`);
+      lines.push(`${si} ${s.verb}: SKIPPED ${s.skip.reason} unmet=[${s.skip.unmet.join(",")}]`);
     } else if (s.outcome === "failed") {
-      console.log(`${si} ${s.verb}: FAILED ${s.error?.reason ?? ""} ${s.error?.message ?? ""}`);
+      lines.push(`${si} ${s.verb}: FAILED ${s.error?.reason ?? ""} ${s.error?.message ?? ""}`);
     } else {
-      console.log(`${si} ${s.verb}${s.detail ? `: ${s.detail}` : ""}`);
+      lines.push(`${si} ${s.verb}${s.detail ? `: ${s.detail}` : ""}`);
     }
   }
-  if (result.skip) console.log(`  → skipped: ${result.skip.message}`);
-  if (result.failure) console.log(`  → failure: ${result.failure.message}`);
+  if (result.skip) lines.push(`  → skipped: ${result.skip.message}`);
+  if (result.failure) lines.push(`  → failure: ${result.failure.message}`);
+  console.log(lines.join("\n"));
 }
 
 /** Build the `TargetMeta` for one matrix row (driver pin + inprocess launch ctx). */
@@ -360,7 +384,48 @@ function preflightSkip(test: ReturnType<typeof loadSteps>, target: MatrixTarget)
       systemOut: message,
     };
   }
+  const renderedLoader = renderedLoaderSkip(target);
+  if (renderedLoader) {
+    return {
+      name: test.name,
+      target: target.id,
+      ...(target.loader ? { loader: target.loader } : {}),
+      ...(target.mc ? { mc: target.mc } : {}),
+      outcome: "skipped",
+      durationMs: 0,
+      steps: [],
+      skip: { category: "environment", reason: "UNSUPPORTED_TARGET", unmet: [], message: renderedLoader },
+      systemOut: renderedLoader,
+    };
+  }
   return undefined;
+}
+
+/** Loaders whose rendered-client launch needs the loader installer (Forge family). */
+const MODULAR_RENDERED_LOADERS = ["forge", "neoforge"];
+
+/**
+ * F4 honest skip: a `driver: inprocess` target on a modular loader (forge/neoforge)
+ * needs the loader installer to run on a GL-capable host (CI-gated). Unless opted in
+ * via `MC_TEST_RENDERED_LOADERS=<loader>`, honest-skip BEFORE provisioning — so we
+ * neither boot a server for a client we won't launch nor emit a false RED offline,
+ * and never a false green. Fabric/Quilt are fully implemented (F3) and never skip
+ * here. Returns the skip message, or undefined to run. (The in-process provisioner
+ * is the matching safety net if this is bypassed; both use reason UNSUPPORTED_TARGET.)
+ */
+function renderedLoaderSkip(target: MatrixTarget): string | undefined {
+  const loader = (target.loader ?? "").toLowerCase();
+  if (target.driver !== "inprocess" || !MODULAR_RENDERED_LOADERS.includes(loader)) return undefined;
+  const optedIn = (process.env["MC_TEST_RENDERED_LOADERS"] ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .includes(loader);
+  if (optedIn) return undefined; // run for real on the opted-in capable host
+  return (
+    `inprocess target '${target.id}' (${loader} ${target.mc}) skipped: the ${loader} rendered-client ` +
+    `launch is CI-gated — it needs the ${loader} installer to run on a GL-capable host. Enable on a ` +
+    `capable runner with MC_TEST_RENDERED_LOADERS=${loader}. Honest-skip (never a false green) — see docs/DRIVERS.md.`
+  );
 }
 
 /** Run one target and print its per-test result. */
@@ -388,7 +453,7 @@ async function cmdRun(args: Args): Promise<number> {
   const stepFiles = args._.slice(1);
   if (stepFiles.length === 0) {
     console.error(
-      "usage: mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all] [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir]",
+      "usage: mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all] [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir] [--concurrency N|auto]",
     );
     return 2;
   }
@@ -442,16 +507,21 @@ async function cmdRun(args: Args): Promise<number> {
   const runner = new Runner(defaultRegistry());
 
   // Per-target isolation (distinct leased ports + per-instance world copies, see
-  // PaperProvisioner) makes the targets independent; we run them sequentially for
-  // deterministic, readable output. Each `buildProvision` is a fresh closure, so a
-  // future bounded-concurrency pool is a drop-in. Multiple step files run as
-  // (target × test) and aggregate into one JUnit.
-  const results: TestResult[] = [];
-  for (const target of targets) {
-    for (const test of tests) {
-      results.push(await runOneTarget(runner, matrix, target, test, outDir));
-    }
+  // PaperProvisioner) makes every (target × test) job independent, so the matrix
+  // runs through a bounded-concurrency pool (F4 / ROADMAP §6.3). `--concurrency N`
+  // (`-j N`, or `auto`) sets the pool size; the default is 1 (sequential) so
+  // output streams readably and we don't boot several servers at once unasked.
+  // `runMatrix` preserves INPUT order in `results`, so the aggregated JUnit +
+  // skip matrix are deterministic regardless of which job finishes first.
+  const jobs = targets.flatMap((target) => tests.map((test) => ({ target, test })));
+  const concurrency = resolveConcurrency(args.flags["concurrency"], jobs.length);
+  if (concurrency > 1) {
+    console.log(`Running ${jobs.length} (target × test) job(s) with concurrency ${concurrency}.`);
   }
+  const results: TestResult[] = await runMatrix(jobs.length, concurrency, (i) => {
+    const { target, test } = jobs[i]!;
+    return runOneTarget(runner, matrix, target, test, outDir);
+  });
 
   // One aggregated JUnit (one <testsuite> per target) + a human HTML report + artifacts.
   const junitPath = join(outDir, "junit", "results.xml");
@@ -620,6 +690,7 @@ commands:
   run <stepfile.mctest.yml> [more...]   run test(s) against the matrix
         [--target <id>|<id,id,...>|all] [--matrix mc-test.yml]
         [--plugin built-sut.jar] [--out dir] [--fail-on-skip]
+        [--concurrency N|auto] (-j)     run the (target × test) matrix in parallel
   list                                  list targets in the matrix [--matrix mc-test.yml]
   doctor                                check Java, ports, downloads, matrix [--matrix mc-test.yml]
   init                                  scaffold mc-test.yml + a sample test [--dir <dir>]

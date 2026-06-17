@@ -6,7 +6,7 @@
 # Mojmap-mapped ClientBridge (mappings/Names.java). NeoForge mappings are OFFICIAL Mojang (Mojmap), so
 # there is no mappings dependency — only this one quarantined file carries the per-version tax.
 
-# NeoGradle stamps ${...} placeholders from build.gradle.kts at processResources time.
+# NeoGradle stamps the placeholder tokens from build.gradle.kts at processResources time.
 modLoader = "javafml"
 loaderVersion = "${loaderVersionRange}"
 license = "Apache-2.0"

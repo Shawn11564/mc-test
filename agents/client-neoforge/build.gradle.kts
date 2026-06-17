@@ -64,6 +64,19 @@ dependencies {
 
     // Java-WebSocket is the MCTP transport the core needs at runtime; nest it too.
     jarJar(implementation("org.java-websocket:Java-WebSocket:1.5.7")!!)
+
+    // --- Tests ---------------------------------------------------------------
+    // The mapping-contract test reflects over the REAL remapped Minecraft (NeoGradle puts it on the test
+    // classpath) to assert the net.minecraft.* / com.mojang.* symbols mappings/Names.java depends on
+    // resolve for this (loader × MC version) — the per-version drift guard. Runs headless in `./gradlew test`.
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+// Standalone build (not under agents/build.gradle.kts) → configure the test task here.
+tasks.named<Test>("test") {
+    useJUnitPlatform()
 }
 
 tasks.withType<JavaCompile>().configureEach {

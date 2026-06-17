@@ -71,6 +71,20 @@ dependencies {
     // does NOT reliably put Gson on the mod classloader for our classes, so shade it in via include(...)
     // (jar-in-jar) to guarantee the envelope/JSON code resolves at runtime. See README "Build".
     include(implementation("com.google.code.gson:gson:2.11.0")!!)
+
+    // --- Tests ---------------------------------------------------------------
+    // Fast PURE-JAVA unit tests of the loader-neutral helpers (Params/StateQuery/FixtureLedger): no
+    // server runtime, mirror /agents/server-bukkit. Gson is on the test classpath (the mod shades it,
+    // but tests compile/run on their own classpath).
+    testImplementation("com.google.code.gson:gson:2.11.0")
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+// This is a STANDALONE build (not under agents/build.gradle.kts), so configure the test task here.
+tasks.named<Test>("test") {
+    useJUnitPlatform()
 }
 
 tasks.withType<JavaCompile>().configureEach {

@@ -12,6 +12,19 @@
  * a zero access token — never a real session token.
  */
 import type { DisplayChoice } from "./Display.js";
+import { substituteArgs } from "./loaders.js";
+
+/**
+ * A loader's *modular* launch profile (Forge/NeoForge): the JVM + game args from
+ * the installer-produced launcher profile, already substituted for path/version
+ * placeholders but still carrying the identity placeholders (`${auth_player_name}`
+ * …) for the launcher to fill from the offline identity. Present only for modular
+ * loaders; absent for Fabric (which uses the simple KnotClient game args below).
+ */
+export interface LaunchProfile {
+  jvmArgs: string[];
+  gameArgs: string[];
+}
 
 /** A fully provisioned, launchable client (output of `ClientProvisioner`). */
 export interface ResolvedClient {
@@ -37,6 +50,12 @@ export interface ResolvedClient {
   assetIndex: string;
   /** The platform the client runs on (drives classpath separator + mac flags). */
   platform: NodeJS.Platform;
+  /**
+   * Modular loaders only (Forge/NeoForge): the installer-derived JVM + game args.
+   * When present, the launch uses these instead of the hardcoded Fabric game args
+   * (and skips the Fabric-only `-DFabricMcEmu`). Absent → the Fabric KnotClient path.
+   */
+  launchProfile?: LaunchProfile;
 }
 
 /** Offline identity overrides (deterministic — never a real auth identity). */
@@ -82,9 +101,43 @@ export function buildClientLaunch(input: BuildLaunchInput): {
   const { client, display } = input;
   const username = input.identity?.username ?? DEFAULT_USERNAME;
   const uuid = input.identity?.uuid ?? DEFAULT_UUID;
-  const [width, height] = (input.windowSize ?? DEFAULT_WINDOW_SIZE).split("x");
   const sep = client.platform === "win32" ? ";" : ":";
 
+  const env: Record<string, string> = { ...display.env };
+  if (input.agentPort !== undefined) {
+    env["MCTEST_AGENT_PORT"] = String(input.agentPort);
+  }
+
+  // The offline identity placeholders the launcher fills (modular loaders carry
+  // these in their profile args; never a Microsoft session token).
+  const identity: Record<string, string> = {
+    auth_player_name: username,
+    auth_uuid: uuid,
+    auth_access_token: OFFLINE_ACCESS_TOKEN,
+    auth_session: OFFLINE_ACCESS_TOKEN,
+    auth_xuid: "0",
+    clientid: "0",
+    user_type: "legacy",
+    version_type: "release",
+  };
+
+  // MODULAR loaders (Forge/NeoForge): use the installer-derived JVM + game args
+  // (BootstrapLauncher + module path). Identity placeholders are substituted here;
+  // path/version placeholders were already substituted at provision time.
+  if (client.launchProfile) {
+    const jvm = [
+      ...(client.platform === "darwin" ? ["-XstartOnFirstThread"] : []),
+      `-Djava.library.path=${client.nativesDir}`,
+      `-Dorg.lwjgl.librarypath=${client.nativesDir}`,
+      ...(input.extraJvmArgs ?? []),
+      ...substituteArgs(client.launchProfile.jvmArgs, identity),
+    ];
+    const game = substituteArgs(client.launchProfile.gameArgs, identity);
+    return { command: client.javaPath, args: [...jvm, client.mainClass, ...game], env };
+  }
+
+  // FABRIC / Quilt: the simple KnotClient classpath launch (F3 path, unchanged).
+  const [width, height] = (input.windowSize ?? DEFAULT_WINDOW_SIZE).split("x");
   const jvm: string[] = [
     // macOS needs the GL context created on the first thread.
     ...(client.platform === "darwin" ? ["-XstartOnFirstThread"] : []),
@@ -111,11 +164,6 @@ export function buildClientLaunch(input: BuildLaunchInput): {
     "--width", width ?? "1280",
     "--height", height ?? "720",
   ];
-
-  const env: Record<string, string> = { ...display.env };
-  if (input.agentPort !== undefined) {
-    env["MCTEST_AGENT_PORT"] = String(input.agentPort);
-  }
 
   return { command: client.javaPath, args: [...jvm, client.mainClass, ...game], env };
 }

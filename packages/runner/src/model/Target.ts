@@ -73,6 +73,13 @@ export interface MatrixTarget {
   id: string;
   loader: Loader;
   mc: string;
+  /**
+   * Pin the loader version for a rendered-client target (M4/F4 `driver: inprocess`).
+   * Fabric/Quilt: the Fabric loader version (else newest stable for `mc`).
+   * Forge/NeoForge: REQUIRED to run the modular installer launch (e.g. forge
+   * `"47.2.0"`, neoforge `"21.1.66"`); threaded to the in-process driver.
+   */
+  loaderVersion?: string;
   /** `auto` lets capability negotiation pick (ENVIRONMENTS.md §1.2). */
   driver?: DriverId | "auto";
   /**

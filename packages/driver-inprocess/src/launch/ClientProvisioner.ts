@@ -32,16 +32,44 @@ import {
   type AssetIndexJson,
   type ResolvedArtifact,
 } from "./resolve.js";
+import {
+  isFabricLike,
+  isModularLoader,
+  loaderInstallerArtifact,
+  mergeLaunchProfile,
+  flattenArguments,
+  substituteArgs,
+  launchVars,
+  type LoaderProfileJson,
+} from "./loaders.js";
 import { extractNatives } from "./unzip.js";
-import type { ResolvedClient } from "./ClientLauncher.js";
+import type { ResolvedClient, LaunchProfile } from "./ClientLauncher.js";
 
 const VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
 const FABRIC_META = "https://meta.fabricmc.net/v2";
 
+/** Inputs a modular-loader installer run needs (Forge/NeoForge — CI-gated). */
+export interface RunInstallerInput {
+  loader: "forge" | "neoforge";
+  mc: string;
+  loaderVersion: string;
+  /** Where the installer should place loader libraries (the shared cache). */
+  librariesDir: string;
+  cacheDir: string;
+  javaPath: string;
+  fetchImpl: typeof fetch;
+  onLog: (line: string) => void;
+}
+
 /** Options for provisioning a rendered client. */
 export interface ProvisionOptions {
   mc: string;
-  /** Loader id; only `"fabric"` is implemented for F3 (forge/neoforge are F4). */
+  /**
+   * Loader id. `fabric`/`quilt` use the simple KnotClient classpath launch (F3,
+   * fully implemented). `forge`/`neoforge` use the modular installer launch (F4):
+   * implemented + pure parts tested, the live installer run is CI-gated behind
+   * `experimentalLoaders`/`MC_TEST_RENDERED_LOADERS` (else an honest skip).
+   */
   loader?: string;
   /** Pin a loader version for reproducibility; else the newest stable for `mc`. */
   loaderVersion?: string;
@@ -66,6 +94,28 @@ export interface ProvisionOptions {
   onLog?: (line: string) => void;
   /** Injected `fetch` for tests (defaults to global `fetch`). */
   fetchImpl?: typeof fetch;
+  /**
+   * Modular loaders (forge/neoforge) to ACTUALLY launch (run the installer +
+   * boot). Defaults to `MC_TEST_RENDERED_LOADERS` (comma-separated). A modular
+   * loader NOT listed here honest-skips (`UNSUPPORTED_TARGET`) instead of running
+   * — so the local/fast-CI path never boots a forge/neoforge client it can't, and
+   * never fakes a green. The multi-loader CI lane opts in on a GL-capable host.
+   */
+  experimentalLoaders?: string[];
+  /**
+   * Test/CI seam for the CI-gated modular installer run. Defaults to a real
+   * best-effort runner (`defaultRunInstaller`). Injected in unit tests to return a
+   * fixture launcher profile with no JVM/network.
+   */
+  runInstaller?: (input: RunInstallerInput) => Promise<LoaderProfileJson>;
+}
+
+/** Loaders opted into a live launch via `MC_TEST_RENDERED_LOADERS` (comma list). */
+function envRenderedLoaders(): string[] {
+  return (process.env["MC_TEST_RENDERED_LOADERS"] ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 /** Default shared cache for provisioned client content. */
@@ -115,43 +165,56 @@ export async function provisionClient(opts: ProvisionOptions): Promise<ResolvedC
   const log = opts.onLog ?? (() => {});
   const platform = opts.platform ?? process.platform;
   const arch = opts.arch ?? process.arch;
-  const loader = opts.loader ?? "fabric";
-  if (loader !== "fabric") {
-    throw new Error(
-      `UNSUPPORTED_LOADER: the in-process client launcher implements 'fabric' (got '${loader}'). ` +
-        `forge/neoforge/quilt rendered clients are F4 — that target should honest-skip.`,
-    );
-  }
+  const loader = (opts.loader ?? "fabric").toLowerCase();
   const cacheDir = opts.cacheDir ?? defaultCacheDir();
   const librariesDir = join(cacheDir, "libraries");
   const assetsDir = join(cacheDir, "assets");
   const versionDir = join(cacheDir, "versions", opts.mc);
   const nativesDir = join(cacheDir, "natives", `${opts.mc}-${mojangOs(platform)}-${arch}`);
+  const javaPath = opts.javaPath ?? "java";
+  const sep = platform === "win32" ? ";" : ":";
+  const os = mojangOs(platform);
 
   // 1) Vanilla: manifest → version JSON → client jar + libraries + asset index.
   log(`Resolving Minecraft ${opts.mc} from the Mojang manifest…`);
   const manifest = await fetchJson<VersionManifest>(f, VERSION_MANIFEST_URL);
   const versionEntry = pickVersion(manifest, opts.mc);
   const version = await fetchJson<VersionJson>(f, versionEntry.url);
-
   const client = clientJar(version);
   const clientJarPath = join(versionDir, "client.jar");
-  const { classpath: vanillaLibs, natives } = selectLibraries(version, platform, arch);
 
-  // 2) Fabric: loader version → profile → loader libraries + KnotClient main.
-  const loaderVersion = opts.loaderVersion ?? (await resolveFabricLoader(f, opts.mc));
-  log(`Resolving Fabric loader ${loaderVersion} for ${opts.mc}…`);
-  const profile = await fetchJson<FabricProfile>(
-    f,
-    `${FABRIC_META}/versions/loader/${opts.mc}/${loaderVersion}/profile/json`,
-  );
-  const fabricLibs = fabricLibraries(profile);
+  // 2) Loader resolution → the classpath, the main class, the libs to download,
+  //    the natives, and (modular loaders only) the BootstrapLauncher launch profile.
+  const resolved = isFabricLike(loader)
+    ? resolveFabricLaunch(f, opts, version, librariesDir, clientJarPath, platform, arch, log)
+    : isModularLoader(loader)
+      ? resolveModularLaunch(loader as "forge" | "neoforge", opts, version, {
+          librariesDir,
+          clientJarPath,
+          nativesDir,
+          assetsDir,
+          cacheDir,
+          javaPath,
+          sep,
+          os,
+          platform,
+          arch,
+          fetchImpl: f,
+          log,
+        })
+      : Promise.reject(
+          new Error(
+            `UNSUPPORTED_TARGET: the in-process client launcher supports fabric/quilt/forge/neoforge ` +
+              `(got '${loader}'). Honest-skip — see docs/DRIVERS.md.`,
+          ),
+        );
+  const { loaderVersion, mainClass, classpath, downloadLibs, natives, launchProfile } = await resolved;
 
-  // 3) Download the classpath jars (vanilla client + vanilla + fabric libs).
-  log(`Downloading client jar + ${vanillaLibs.length + fabricLibs.length} libraries…`);
+  // 3) Download the classpath jars (vanilla client + the loader's libraries).
+  log(`Downloading client jar + ${downloadLibs.length} libraries…`);
   await download(f, client.url, clientJarPath);
   const concurrency = opts.concurrency ?? 24;
-  await pool([...vanillaLibs, ...fabricLibs], concurrency, async (lib) => {
+  await pool(downloadLibs, concurrency, async (lib) => {
     await download(f, lib.url, join(librariesDir, lib.path));
   });
 
@@ -165,7 +228,7 @@ export async function provisionClient(opts: ProvisionOptions): Promise<ResolvedC
   }
 
   // 5) Assets (the big bundle) — index + objects, content-addressed + cached.
-  let assetIndexId = version.assets ?? version.assetIndex?.id ?? "legacy";
+  const assetIndexId = version.assets ?? version.assetIndex?.id ?? "legacy";
   if (version.assetIndex?.url) {
     const indexPath = join(assetsDir, "indexes", `${assetIndexId}.json`);
     await download(f, version.assetIndex.url, indexPath);
@@ -185,25 +248,192 @@ export async function provisionClient(opts: ProvisionOptions): Promise<ResolvedC
   const gameDir = opts.gameDir ?? join(opts.workDir ?? join(tmpdir(), "mc-test-clients"), `${loader}-${opts.mc}`);
   stageMods(gameDir, opts.mods ?? [], opts.clientAgentJar, log);
 
-  const classpath = [
-    ...fabricLibs.map((l) => join(librariesDir, l.path)),
-    ...vanillaLibs.map((l) => join(librariesDir, l.path)),
-    clientJarPath,
-  ];
-
   return {
     mc: opts.mc,
     loader,
     loaderVersion,
-    javaPath: opts.javaPath ?? "java",
-    mainClass: profile.mainClass,
+    javaPath,
+    mainClass,
     classpath,
     nativesDir,
     gameDir,
     assetsDir,
     assetIndex: assetIndexId,
     platform,
+    ...(launchProfile ? { launchProfile } : {}),
   };
+}
+
+/** What a loader resolver contributes on top of the shared vanilla resolution. */
+interface ResolvedLaunch {
+  loaderVersion: string;
+  mainClass: string;
+  /** Absolute classpath entries to launch with. */
+  classpath: string[];
+  /** Library artifacts to download into `librariesDir`. */
+  downloadLibs: ResolvedArtifact[];
+  /** Native bundles to download + extract. */
+  natives: ResolvedArtifact[];
+  /** Modular loaders only: the BootstrapLauncher JVM + game args. */
+  launchProfile?: LaunchProfile;
+}
+
+/** FABRIC / Quilt (F3): loader profile → KnotClient + maven libraries. */
+async function resolveFabricLaunch(
+  f: typeof fetch,
+  opts: ProvisionOptions,
+  version: VersionJson,
+  librariesDir: string,
+  clientJarPath: string,
+  platform: NodeJS.Platform,
+  arch: string,
+  log: (l: string) => void,
+): Promise<ResolvedLaunch> {
+  const { classpath: vanillaLibs, natives } = selectLibraries(version, platform, arch);
+  const loaderVersion = opts.loaderVersion ?? (await resolveFabricLoader(f, opts.mc));
+  log(`Resolving Fabric loader ${loaderVersion} for ${opts.mc}…`);
+  const profile = await fetchJson<FabricProfile>(
+    f,
+    `${FABRIC_META}/versions/loader/${opts.mc}/${loaderVersion}/profile/json`,
+  );
+  const fabricLibs = fabricLibraries(profile);
+  return {
+    loaderVersion,
+    mainClass: profile.mainClass,
+    classpath: [
+      ...fabricLibs.map((l) => join(librariesDir, l.path)),
+      ...vanillaLibs.map((l) => join(librariesDir, l.path)),
+      clientJarPath,
+    ],
+    downloadLibs: [...vanillaLibs, ...fabricLibs],
+    natives,
+  };
+}
+
+/** Context the modular resolver needs (paths + the launch-var inputs). */
+interface ModularCtx {
+  librariesDir: string;
+  clientJarPath: string;
+  nativesDir: string;
+  assetsDir: string;
+  cacheDir: string;
+  javaPath: string;
+  sep: string;
+  os: ReturnType<typeof mojangOs>;
+  platform: NodeJS.Platform;
+  arch: string;
+  fetchImpl: typeof fetch;
+  log: (l: string) => void;
+}
+
+/**
+ * FORGE / NeoForge (F4): the modular installer launch. Unless the loader is opted
+ * in (`experimentalLoaders` / `MC_TEST_RENDERED_LOADERS`), HONEST-SKIP with a
+ * precise reason — the live launch needs the loader installer to run on a
+ * GL-capable host (CI-gated), so locally/fast-CI we skip rather than crash or fake.
+ * When opted in: run the installer → merge its profile onto vanilla → resolve the
+ * classpath + substitute the launch args. The pure parts (merge/flatten/substitute)
+ * are unit-tested; the installer run is the CI-gated seam.
+ */
+async function resolveModularLaunch(
+  loader: "forge" | "neoforge",
+  opts: ProvisionOptions,
+  version: VersionJson,
+  ctx: ModularCtx,
+): Promise<ResolvedLaunch> {
+  const optedIn = (opts.experimentalLoaders ?? envRenderedLoaders()).includes(loader);
+  if (!optedIn) {
+    const installer = loaderInstallerArtifact(loader, opts.mc, opts.loaderVersion ?? "latest");
+    throw new Error(
+      `UNSUPPORTED_TARGET: ${loader} rendered-client launch is CI-gated — it needs the ${loader} ` +
+        `installer to run on a GL-capable host (resolved installer: ${installer.url}). Enable on a ` +
+        `capable runner with MC_TEST_RENDERED_LOADERS=${loader}. Honest-skip — see docs/DRIVERS.md.`,
+    );
+  }
+  if (!opts.loaderVersion) {
+    throw new Error(
+      `INVALID_PARAMS: ${loader} needs an explicit loaderVersion (e.g. forge "47.2.0", neoforge "21.1.66").`,
+    );
+  }
+  const runInstaller = opts.runInstaller ?? defaultRunInstaller;
+  ctx.log(`Running ${loader} installer ${opts.loaderVersion} for ${opts.mc} (CI-gated)…`);
+  const profile = await runInstaller({
+    loader,
+    mc: opts.mc,
+    loaderVersion: opts.loaderVersion,
+    librariesDir: ctx.librariesDir,
+    cacheDir: ctx.cacheDir,
+    javaPath: ctx.javaPath,
+    fetchImpl: ctx.fetchImpl,
+    onLog: ctx.log,
+  });
+  const merged = mergeLaunchProfile(version, profile);
+  const { classpath: allLibs, natives } = selectLibraries(
+    { ...version, libraries: merged.libraries },
+    ctx.platform,
+    ctx.arch,
+  );
+  const classpath = [...allLibs.map((l) => join(ctx.librariesDir, l.path)), ctx.clientJarPath];
+  const gameDir = opts.gameDir ?? join(opts.workDir ?? join(tmpdir(), "mc-test-clients"), `${loader}-${opts.mc}`);
+  const vars = launchVars({
+    librariesDir: ctx.librariesDir,
+    classpathSeparator: ctx.sep,
+    versionName: profile.id,
+    nativesDir: ctx.nativesDir,
+    gameDir,
+    assetsDir: ctx.assetsDir,
+    assetIndex: version.assets ?? version.assetIndex?.id ?? "legacy",
+    classpath: classpath.join(ctx.sep),
+  });
+  return {
+    loaderVersion: opts.loaderVersion,
+    mainClass: merged.mainClass,
+    classpath,
+    downloadLibs: allLibs,
+    natives,
+    launchProfile: {
+      jvmArgs: substituteArgs(flattenArguments(merged.jvm, ctx.os), vars),
+      gameArgs: substituteArgs(flattenArguments(merged.game, ctx.os), vars),
+    },
+  };
+}
+
+/**
+ * The real (best-effort, CI-gated) modular installer runner: download the loader
+ * installer jar and run it in client mode against a cache install dir, then read the
+ * launcher profile it writes (`versions/<id>/<id>.json`). This is the F4 analogue of
+ * F3's CI-gated Fabric rendered launch — implemented for a GL/toolchain-capable
+ * runner, NOT verified on the offline box; the multi-loader CI lane exercises it.
+ * Forge uses `--installClient <dir>`; NeoForge uses `--install-client <dir>`.
+ */
+async function defaultRunInstaller(input: RunInstallerInput): Promise<LoaderProfileJson> {
+  const installer = loaderInstallerArtifact(input.loader, input.mc, input.loaderVersion);
+  const installRoot = join(input.cacheDir, "loaders", input.loader, input.loaderVersion);
+  const installerJar = join(installRoot, "installer.jar");
+  await download(input.fetchImpl, installer.url, installerJar);
+  const { spawn } = await import("node:child_process");
+  const flag = input.loader === "forge" ? "--installClient" : "--install-client";
+  input.onLog(`java -jar ${installerJar} ${flag} ${installRoot}`);
+  await new Promise<void>((resolveRun, reject) => {
+    const child = spawn(input.javaPath, ["-jar", installerJar, flag, installRoot], { stdio: "ignore" });
+    child.once("error", reject);
+    child.once("exit", (code) =>
+      code === 0
+        ? resolveRun()
+        : reject(new Error(`INSTALLER_FAILED: ${input.loader} installer exited ${code ?? "?"}`)),
+    );
+  });
+  // The installer writes one or more profiles under <installRoot>/versions/<id>/<id>.json;
+  // pick the loader profile (the one that inheritsFrom the vanilla version).
+  const versionsDir = join(installRoot, "versions");
+  const ids = existsSync(versionsDir) ? readdirSync(versionsDir) : [];
+  for (const id of ids) {
+    const p = join(versionsDir, id, `${id}.json`);
+    if (!existsSync(p)) continue;
+    const profile = JSON.parse(readFileSync(p, "utf8")) as LoaderProfileJson;
+    if (profile.inheritsFrom === input.mc || profile.id !== input.mc) return profile;
+  }
+  throw new Error(`INSTALLER_PROFILE_NOT_FOUND: no ${input.loader} launcher profile under ${versionsDir}`);
 }
 
 /** Newest stable Fabric loader version for `mc` (Fabric meta loader list). */

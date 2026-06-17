@@ -16,14 +16,13 @@ import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
-import net.minecraft.client.renderer.Screenshot;
+import net.minecraft.client.Screenshot;
 import net.minecraft.network.chat.Component;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -256,7 +255,8 @@ public final class Names implements ClientBridge {
 
     @Override
     public void joinServer(String host, int port, String username) {
-        ServerData info = new ServerData(username, host + ":" + port, ServerData.Type.OTHER);
+        // MC 1.20.1's ServerData(name, ip, boolean isLan) predates the 1.20.2+ ServerData.Type enum.
+        ServerData info = new ServerData(username, host + ":" + port, false);
         ServerAddress address = new ServerAddress(host, port);
         runOnClient(() -> ConnectScreen.startConnecting(
                 new TitleScreen(), client, address, info, false));
@@ -373,11 +373,14 @@ public final class Names implements ClientBridge {
 
     /** Best-effort focused text field on the current screen (for {@code typeText} with no selector). */
     private AbstractWidget focusedField(Screen screen) {
-        if (screen instanceof ContainerEventHandler parent) {
-            GuiEventListener focused = parent.getFocused();
-            if (focused instanceof EditBox field) {
-                return field;
-            }
+        // Screen IS-A ContainerEventHandler in 1.20.1, so getFocused() is available directly (an
+        // `instanceof ContainerEventHandler` pattern would be an always-true compile error).
+        if (screen == null) {
+            return null;
+        }
+        GuiEventListener focused = screen.getFocused();
+        if (focused instanceof EditBox field) {
+            return field;
         }
         return null;
     }

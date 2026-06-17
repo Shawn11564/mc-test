@@ -109,24 +109,50 @@ targets:
     agents: [ client-fabric, server-bukkit ]
     world: { ref: regions-world }
 
-  # ACCEPTANCE-ONLY (M5 / F4 fan-out). The NeoForge twin of the fabric client row: the SAME
-  # unchanged test, driven against the real client Screens via the in-process driver +
-  # the client-neoforge agent (Mojmap mappings). The server is Paper, so the truth half is
-  # the BUKKIT agent `server-bukkit` (M3) — same as the fabric row. Differs from that row
-  # ONLY by loader/client-agent — proving "add a loader = one new mappings/Names.java + a
-  # matrix row" (ROADMAP §6.3). The Forge twin (client-forge, MCP-SRG) is built identically
-  # and selectable via an analogous `loader: forge` row. Acceptance-only: the client-neoforge
-  # agent is a scaffolded shim (M5; NeoGradle build) and is not exercised in this repo's CI.
+  # F4 / M5 FAN-OUT. The NeoForge twin of the fabric client row: the SAME unchanged test,
+  # driven against the real client Screens via the in-process driver + the client-neoforge
+  # agent (Mojmap mappings). The server is Paper, so the truth half is the BUKKIT agent
+  # `server-bukkit` (M3) — same as the fabric row. Differs from that row ONLY by
+  # loader/loaderVersion/client-agent — proving "add a loader = one new mappings/Names.java +
+  # a matrix row" (ROADMAP §6.3). NeoForge/Forge use the in-process driver's MODULAR launch:
+  # implemented + pure parts unit-tested, the live boot is CI-GATED behind
+  # MC_TEST_RENDERED_LOADERS=neoforge (a GL-capable host with the NeoGradle-built agent + a
+  # NeoForge build of the SUT mod). Without that opt-in this row HONEST-SKIPS
+  # (UNSUPPORTED_TARGET — never a false green); the no-boot fan-out equivalent is m5.test.ts.
   - id: neoforge-1.21-client
     loader: neoforge
     mc: "1.21.1"
+    loaderVersion: "21.1.66" # the NeoGradle shim's pinned NeoForge version
     driver: inprocess
     server: { paper: { project: paper, version: "1.21.1", build: latest } }
     # Server-side regions PLUGIN so assertPluginState resolves against the Bukkit agent.
     plugins:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     mods:
+      # The example mod is Fabric-only; a real NeoForge run needs a NeoForge build of the SUT.
       - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
     display: xvfb
     agents: [ client-neoforge, server-bukkit ]
+    world: { ref: regions-world }
+
+  # F4 / M5 FAN-OUT. The Forge twin (client-forge, MCP-SRG mappings) — the third loader on the
+  # inprocess axis, completing fabric + neoforge + forge. Identical to the rows above except
+  # loader/loaderVersion/mc/client-agent, which is exactly the "add a loader = one Names.java +
+  # one yml row" promise: the Forge shim pins MC 1.20.1 / Forge 47.2.0 (ForgeGradle build).
+  # Same modular-launch posture as neoforge: HONEST-SKIPS unless opted in via
+  # MC_TEST_RENDERED_LOADERS=forge on a GL-capable host (with the ForgeGradle-built agent + a
+  # Forge build of the SUT mod). The server is Paper 1.20.1 so the truth half is server-bukkit.
+  - id: forge-1.20.1-client
+    loader: forge
+    mc: "1.20.1"
+    loaderVersion: "47.2.0" # the ForgeGradle shim's pinned Forge version
+    driver: inprocess
+    server: { paper: { project: paper, version: "1.20.1", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    mods:
+      # The example mod is Fabric-only; a real Forge run needs a Forge build of the SUT.
+      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+    display: xvfb
+    agents: [ client-forge, server-bukkit ]
     world: { ref: regions-world }

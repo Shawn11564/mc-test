@@ -1,0 +1,72 @@
+# F4 / M5 multi-loader fan-out matrix — the loader axis driven by ONE unchanged test.
+# Self-contained for tests/e2e/run-matrix-boot.mjs. Four targets, one per loader path:
+#   - paper-1.20.4        headless  → the client-GUI test honest-skips (unmet:[clientScreens])
+#   - fabric-1.21-client  inprocess → rendered GREEN (GL host; proven by run-rendered-boot.mjs)
+#   - forge-1.20.1-client inprocess → modular launch, HONEST-SKIP (UNSUPPORTED_TARGET) unless
+#                                      MC_TEST_RENDERED_LOADERS=forge on a GL-capable host
+#   - neoforge-1.21-client inprocess → modular launch, HONEST-SKIP unless opted in
+# The harness asserts the DETERMINISTIC orchestration (aggregated JUnit + skip matrix + the
+# honest skips + per-target parallelism) with NO boot; the rendered green cells are GL-gated.
+version: 1
+provision:
+  eulaAccepted: true
+  bindHost: 127.0.0.1
+  portRange: [25700, 25899]
+  cacheDir: ~/.mc-test/cache
+  workDir: .mc-test/run
+  keepOnFailure: true
+worlds:
+  regions-world:
+    snapshot: { path: ./examples/regions/world-snapshot }
+    levelName: world
+targets:
+  - id: paper-1.20.4
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    agents: [server-bukkit]
+    world: { ref: regions-world }
+
+  - id: fabric-1.21-client
+    loader: fabric
+    mc: "1.21.1"
+    driver: inprocess
+    server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    mods:
+      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+    display: xvfb
+    agents: [client-fabric, server-bukkit]
+    world: { ref: regions-world }
+
+  - id: forge-1.20.1-client
+    loader: forge
+    mc: "1.20.1"
+    loaderVersion: "47.2.0"
+    driver: inprocess
+    server: { paper: { project: paper, version: "1.20.1", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    mods:
+      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+    display: xvfb
+    agents: [client-forge, server-bukkit]
+    world: { ref: regions-world }
+
+  - id: neoforge-1.21-client
+    loader: neoforge
+    mc: "1.21.1"
+    loaderVersion: "21.1.66"
+    driver: inprocess
+    server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    mods:
+      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+    display: xvfb
+    agents: [client-neoforge, server-bukkit]
+    world: { ref: regions-world }

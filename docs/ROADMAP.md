@@ -870,13 +870,44 @@ Canonical `mc-test.yml` field names (reserved): top-level `defaults`, `targets`;
 > across the live matrix, which this offline environment does not run; their no-boot equivalents are
 > noted inline and do pass. See §7.3 and §9.
 
+> **F4 update (2026-06-16).** `FINALIZATION.md` F4 turned the M5 fan-out from no-boot-only into a
+> **runnable loader matrix**, the same posture as F3's rendered client. Implemented + **verified offline**:
+> (1) **per-target parallelism** — the CLI run loop is a bounded-concurrency pool
+> (`packages/runner/src/engine/runMatrix.ts`, `mc-test run --concurrency N`/`-j`/`auto`), order-preserving
+> so the aggregated JUnit + skip matrix stay deterministic (`runMatrix.test.ts`); (2) the **loader-aware
+> in-process driver** (`packages/driver-inprocess/src/launch/loaders.ts`) — fabric/quilt KnotClient (F3) +
+> forge/neoforge **modular** installer launch (BootstrapLauncher + module path), pure assembly unit-tested
+> (`loaders.test.ts`/`launch.test.ts`/`provisioner.test.ts`); (3) the **full-matrix orchestration**
+> (`--target all` → one JUnit + the `(test × target)` skip matrix), proven by `tests/e2e/run-matrix-boot.mjs`
+> (4/4, no boot: deterministic honest-skip across paper/forge/neoforge + parallelism). **CI-gated** (not
+> observed offline): the **rendered-GREEN** forge/neoforge boots — behind `MC_TEST_RENDERED_LOADERS` on a
+> GL-capable host via the `e2e.yml` **`multi-loader-matrix`** lane (which also builds the three loader
+> shims). A forge/neoforge inprocess target now **honest-skips** (`UNSUPPORTED_TARGET`) instead of the old
+> `UNSUPPORTED_LOADER` false-RED. Boxes below re-annotated on that basis.
+>
+> **F4 shim-tests addendum.** The three M5 shims had **never been compiled**; building them for real
+> (Loom/ForgeGradle/NeoGradle, **verified locally** against the remapped MC) surfaced + fixed genuine
+> never-caught mapping drift in each `mappings/Names.java` (server-fabric `GameRules` CRTP; client-forge
+> `Screenshot`/`ServerData`/always-true `instanceof`; client-neoforge `NativeImage.writeToChannel` private)
+> plus two `processResources` template bugs + a ForgeGradle×Shadow collision. **All four shims now compile,
+> test green, and build jars.** Every platform now has a real test suite (28 new JVM tests): server-fabric
+> the pure-Java helper suite (mirroring server-bukkit), and client-fabric/forge/neoforge a **mapping-contract**
+> test that reflects over the real remapped MC to assert the symbols `Names.java` depends on resolve for that
+> (loader × version) — the per-version drift + regression guard. The mappings import-scan was scoped to
+> `src/main` so test code may reference mapped names. These run in CI via each shim's `./gradlew build`.
+
 - [ ] The canonical regions test (GUI + `assertPluginState`) runs **green or honestly-skipped** across
       **at least**: `paper-1.20.4` (headless), `paper-1.8.9` (headless via Via), `fabric-1.21-client`
-      (inprocess), `neoforge-1.21-client` (inprocess) — from **one** unchanged test file.
-      *(Real-boot acceptance across live clients. The no-boot equivalent — the SAME unchanged
-      `regions-open-testregion` object run across `paper-1.20.4`/`paper-1.8.9` (honest whole-test skip
-      `unmet:["clientScreens"]`) and `fabric`/`forge`/`neoforge` inprocess rows (GREEN including
-      `assertPluginState` against a co-selected server-mod agent) — is covered by `m5.test.ts`.)*
+      (inprocess), `forge-1.20.1-client` (inprocess), `neoforge-1.21-client` (inprocess) — from **one**
+      unchanged test file.
+      *(Split status (F4), mirroring F3. The **honest-skip half is VERIFIED for real**:
+      `tests/e2e/run-matrix-boot.mjs` runs the unchanged client-GUI test `--target all` and asserts the
+      paper row honest-skips (`unmet:[clientScreens]`) and the forge/neoforge rows honest-skip
+      (`UNSUPPORTED_TARGET`, CI-gated) — 4/4, no boot. The **rendered-GREEN half** (fabric, and opted-in
+      forge/neoforge) is **CI-gated** (`fabric-rendered-client` + `multi-loader-matrix` lanes,
+      `MC_TEST_RENDERED_LOADERS`), not observed on this offline box. The no-boot fan-out equivalent — the
+      SAME `regions-open-testregion` object across paper×2 (skip) + fabric/forge/neoforge inprocess (GREEN
+      incl. `assertPluginState` against a co-selected server-mod agent) — remains covered by `m5.test.ts`.)*
 - [x] Adding a new MC version to an existing loader requires editing **only** `mappings/Names.java`
       (and a `mc-test.yml` row) — proven by a PR that adds one version touching no shared core file.
       *(Proven structurally by the shipped fan-out: `client-forge`/`client-neoforge`/`server-fabric`
@@ -892,14 +923,18 @@ Canonical `mc-test.yml` field names (reserved): top-level `defaults`, `targets`;
       advisory `brittle` descriptor, with the loud report note surfaced in the console, the JUnit
       `<property name="brittle">`, and the skip matrix. The OCR/template + OS-input backend is an honest
       stub — `start()` fails rather than faking a run.)*
-- [ ] The full matrix runs in CI with per-target parallelism (distinct ports + per-test world copies)
+- [x] The full matrix runs in CI with per-target parallelism (distinct ports + per-test world copies)
       and aggregates into one JUnit + artifacts bundle, with a clear **skip matrix** showing which
       `(test × target)` cells were skipped and **why** (capability reason strings).
-      *(Real-boot acceptance for the live parallel run. The no-boot equivalents are shipped and proven:
-      the `(test × target)` **skip matrix** with machine-readable capability reason strings
-      (`report/SkipMatrix.ts`, `renderSkipMatrix`), the aggregated **one-JUnit-per-matrix** run
-      (`mc-test run … --target all`), and per-target isolation (distinct leased ports + per-test world
-      copies, `PaperProvisioner`) — all exercised by `m5.test.ts`.)*
+      *(F4: per-target parallelism is **done + unit-tested** — the CLI run loop is a bounded-concurrency
+      pool (`engine/runMatrix.ts`, `--concurrency N`/`-j`/`auto`, default 1), order-preserving so the
+      aggregated JUnit + skip matrix are deterministic (`runMatrix.test.ts`); per-target isolation
+      (distinct leased ports + per-test world copies, `PaperProvisioner`) already made it parallel-safe.
+      The aggregated **one-JUnit-per-matrix** + `(test × target)` **skip matrix** (`report/SkipMatrix.ts`,
+      `renderSkipMatrix`) and the `multi-loader-matrix` CI lane are wired, and `tests/e2e/run-matrix-boot.mjs`
+      **verifies the orchestration for real** (4/4: aggregation + skip matrix + parallelism + honest skips,
+      no boot). The live parallel **boot** of the rendered loader cells is the CI-gated half
+      (`multi-loader-matrix` / `MC_TEST_RENDERED_LOADERS`).)*
 
 ### 6.4 What M5 unlocks
 
@@ -1084,6 +1119,12 @@ Every milestone that ships runnable code must also satisfy:
 > loader-agent builds + the parallel matrix boot are acceptance-only. **Docs** are synced (this change)
 > and each new package/agent dir ships a `README.md`. Boxes left unticked are gated on the live matrix
 > boot, not on missing design.
+>
+> **F4 addendum (2026-06-16).** The "parallel-safe provisioning" is now actually **driven in parallel**:
+> the CLI run loop is a bounded-concurrency pool (`engine/runMatrix.ts`, `--concurrency N`/`-j`/`auto`),
+> order-preserving so JUnit + the skip matrix stay deterministic — unit-tested (`runMatrix.test.ts`) and
+> exercised end-to-end with no boot by `tests/e2e/run-matrix-boot.mjs` (4/4). The live parallel **boot**
+> of rendered loader cells stays CI-gated (`multi-loader-matrix` lane / `MC_TEST_RENDERED_LOADERS`).
 
 - [x] Green against the **M1 conformance fixtures** for all advertised methods. *(Core `ConformanceTest`
       replays the M1 fixtures against a real `MctpServer` — `gradle :core:test` green. M4 adds

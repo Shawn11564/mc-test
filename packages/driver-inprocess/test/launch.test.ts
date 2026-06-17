@@ -84,4 +84,32 @@ describe("buildClientLaunch", () => {
     expect(args[args.indexOf("--width") + 1]).toBe("800");
     expect(args[args.indexOf("--height") + 1]).toBe("600");
   });
+
+  // ---- F4: the modular (Forge/NeoForge) BootstrapLauncher launch ------------
+  it("uses the loader launch profile for a modular loader (Forge) and substitutes identity", () => {
+    const modular: ResolvedClient = {
+      ...fakeClient("linux"),
+      loader: "forge",
+      mainClass: "cpw.mods.bootstraplauncher.BootstrapLauncher",
+      // path/version placeholders already substituted at provision time; identity left.
+      launchProfile: {
+        jvmArgs: ["-DlibraryDirectory=/cache/libraries", "-p", "/cache/libraries/forge.jar"],
+        gameArgs: ["--username", "${auth_player_name}", "--uuid", "${auth_uuid}", "--launchTarget", "forgeclient"],
+      },
+    };
+    const { args } = buildClientLaunch({ client: modular, display: xvfb, agentPort: 25600 });
+    // The BootstrapLauncher main class appears before the game args.
+    const mainIdx = args.indexOf("cpw.mods.bootstraplauncher.BootstrapLauncher");
+    expect(mainIdx).toBeGreaterThan(0);
+    // Identity placeholders are substituted by the launcher (offline identity).
+    expect(args[args.indexOf("--username") + 1]).toBe("Tester");
+    expect(args[args.indexOf("--uuid") + 1]).toBe("00000000-0000-0000-0000-000000000000");
+    // The loader's own forge args survive.
+    expect(args).toContain("forgeclient");
+    expect(args).toContain("-DlibraryDirectory=/cache/libraries");
+    // NOT the Fabric emulation flag (that is fabric-only).
+    expect(args).not.toContain("-DFabricMcEmu=net.minecraft.client.main.Main");
+    // Still no Microsoft session token.
+    expect(args.join(" ")).not.toMatch(/sessionToken|msa|microsoft/i);
+  });
 });
