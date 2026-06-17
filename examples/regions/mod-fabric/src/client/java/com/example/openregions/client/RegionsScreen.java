@@ -7,16 +7,16 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 
 /**
- * Root OpenRegions client Screen (title "Regions"), opened by {@code /or}.
+ * Root OpenRegions client Screen (title "OpenRegions"), opened by {@code /or} — the client-Screen twin
+ * of the plugin's root chest menu.
  *
- * <p>Holds a single "Regions" button. The button is a {@link TestIdButton} carrying the canonical
- * testId {@code "regions:root:regions"} (the SAME id the plugin stamps onto its "Regions" item),
- * so the client agent resolves {@code click({ testId: "regions:root:regions" })} deterministically.
- * Pressing it opens {@link RegionsListScreen}.
+ * <p>Holds a single "Regions" button carrying the canonical testId {@code "regions:root:regions"} (the
+ * SAME id the plugin stamps onto its "Regions" item), so an agent can resolve it by either the visible
+ * label or the testId. Pressing it opens {@link RegionsListScreen}.
  */
 public final class RegionsScreen extends Screen {
 
-  static final String TITLE = "Regions";
+  static final String TITLE = "OpenRegions";
 
   public RegionsScreen() {
     super(Text.literal(TITLE));

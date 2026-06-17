@@ -1,0 +1,31 @@
+# OpenRegions (NeoForge SUT) manifest — NeoForge 1.20.5+ format. Tokens stamped by processResources.
+modLoader = "javafml"
+loaderVersion = "${loaderVersionRange}"
+license = "MIT"
+issueTrackerURL = "https://github.com/mc-test/mc-test/issues"
+
+[[mods]]
+modId = "openregions"
+version = "${version}"
+displayName = "OpenRegions (NeoForge)"
+authors = "mc-test examples"
+displayTest = "IGNORE_ALL_VERSION"
+description = '''
+The canonical "regions" SUT in NeoForge client-mod form. /or opens a client Screen with a Regions list
+(load / create-by-typing a name / delete). Drives the chat half of the mc-test assertion; the
+server-truth half is seeded via a fixture and read by the Paper-side server-bukkit agent. Client-only.
+'''
+
+[[dependencies.openregions]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neoVersionRange}"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.openregions]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraftVersionRange}"
+ordering = "NONE"
+side = "CLIENT"

@@ -17,17 +17,19 @@ import net.minecraft.client.MinecraftClient;
  * negative-control SUT proving "clientScreens" is genuinely needed (the headless bot provably
  * cannot inspect or click these widgets).
  *
- * <p>{@code /or} (a CLIENT command — no server round-trip needed) opens {@link RegionsScreen} with
- * a "Regions" button leading to {@link RegionsListScreen}'s "TestRegion" entry. Clicking
- * "TestRegion" prints {@code Region loaded: TestRegion} to the client chat HUD, driving the
- * chat half of the canonical assertion. The widgets implement
- * {@code io.mctest.agent.core.client.TestIdHolder} so the client agent reads stable testIds
- * ({@code regions:root:regions}, {@code regions:entry:TestRegion}) — exactly the testIds the
- * plugin stamps onto its items.
+ * <p>{@code /or} (a CLIENT command — no server round-trip needed) opens {@link RegionsScreen}, whose
+ * "Regions" button leads to {@link RegionsListScreen}: a list of region entries (load), a name field
+ * + "Create", and "Delete". Loading/creating/deleting prints {@code Region loaded/created/deleted:
+ * <name>} via a chat line that round-trips through the server, driving the chat half of the
+ * assertions. Widgets implement {@code io.mctest.agent.core.client.TestIdHolder} so an agent can read
+ * stable testIds — exactly the testIds the plugin stamps — but the cross-loader test selects by label
+ * + the input's role, so it does not depend on testId visibility across mod classloaders.
  *
- * <p>The server-truth half (does region "TestRegion" exist on the server?) pairs with a server
- * agent — mocked in M4 CI, the real {@code server-fabric} agent in M5. Until then the
- * {@code assertPluginState} step honestly skips with {@code unmet:[pluginState]}.
+ * <p>The server-truth half (does region X exist on the server?) is authored separately: a client mod
+ * cannot mutate server state, so the rendered test SEEDS the server via a {@code fixture} step
+ * (handled by the Paper-side {@code server-bukkit} agent + the plugin's fixture provider) and asserts
+ * {@code regions.exists} against that. With no server agent the {@code assertPluginState} step honestly
+ * skips with {@code unmet:[pluginState]} — the chat half still proves the GUI flow.
  */
 public final class OpenRegionsClient implements ClientModInitializer {
 

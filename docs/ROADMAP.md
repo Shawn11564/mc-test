@@ -677,7 +677,7 @@ fan-out re-implements only that file.
 
 > **F3 update (2026-06-16).** The `FINALIZATION.md` F3 phase ("Rendered-client path for real")
 > closed the M4 "never built / never launched" gap. The JVM jars now **build via Loom 1.7.4**
-> (Gradle 8.10.2, JDK 21): `examples/regions/mod` → **`openregions.jar`** and `/agents/client-fabric`
+> (Gradle 8.10.2, JDK 21): `examples/regions/mod-fabric` → **`openregions-fabric.jar`** and `/agents/client-fabric`
 > → **`agent-client-fabric.jar`** (shaded `/agents/core` + Java-WebSocket as jar-in-jar), with the
 > per-version Yarn mapping fixes confined to `agents/client-fabric/.../mappings/Names.java` (the
 > quarantine file: `ConnectScreen` moved to `net.minecraft.client.gui.screen.multiplayer` at 1.20.4+;
@@ -832,7 +832,7 @@ targets:
     loader: fabric
     mc: "1.21"
     driver: inprocess         # rendered client
-    mods: [ ./examples/regions/mod ]
+    mods: [ ./examples/regions/mod-fabric ]
     agents: [ client-fabric, server-fabric ]
     display: xvfb
   - id: neoforge-1.21-client

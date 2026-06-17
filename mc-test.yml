@@ -101,7 +101,7 @@ targets:
     plugins:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     mods:
-      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+      - { path: ./examples/regions/mod-fabric/build/libs/openregions-fabric.jar, as: regions.jar }
     display: xvfb # Linux CI headless surface; "desktop" on a windowed runner.
     # The client-fabric agent (Yarn) is injected into the rendered client by the in-process
     # driver; the BUKKIT server agent is co-selected (the server is Paper) so the canonical
@@ -116,9 +116,9 @@ targets:
   # loader/loaderVersion/client-agent — proving "add a loader = one new mappings/Names.java +
   # a matrix row" (ROADMAP §6.3). NeoForge/Forge use the in-process driver's MODULAR launch:
   # implemented + pure parts unit-tested, the live boot is CI-GATED behind
-  # MC_TEST_RENDERED_LOADERS=neoforge (a GL-capable host with the NeoGradle-built agent + a
-  # NeoForge build of the SUT mod). Without that opt-in this row HONEST-SKIPS
-  # (UNSUPPORTED_TARGET — never a false green); the no-boot fan-out equivalent is m5.test.ts.
+  # MC_TEST_RENDERED_LOADERS=neoforge (a GL-capable host with the NeoGradle-built agent + the
+  # NeoForge build of the SUT mod, examples/regions/mod-neoforge). Without that opt-in this row
+  # HONEST-SKIPS (UNSUPPORTED_TARGET — never a false green); the no-boot fan-out equivalent is m5.test.ts.
   - id: neoforge-1.21-client
     loader: neoforge
     mc: "1.21.1"
@@ -129,8 +129,8 @@ targets:
     plugins:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     mods:
-      # The example mod is Fabric-only; a real NeoForge run needs a NeoForge build of the SUT.
-      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+      # The NeoForge build of the OpenRegions SUT (examples/regions/mod-neoforge), MC 1.21.1.
+      - { path: ./examples/regions/mod-neoforge/build/libs/openregions-neoforge.jar, as: regions.jar }
     display: xvfb
     agents: [ client-neoforge, server-bukkit ]
     world: { ref: regions-world }
@@ -140,8 +140,9 @@ targets:
   # loader/loaderVersion/mc/client-agent, which is exactly the "add a loader = one Names.java +
   # one yml row" promise: the Forge shim pins MC 1.20.1 / Forge 47.2.0 (ForgeGradle build).
   # Same modular-launch posture as neoforge: HONEST-SKIPS unless opted in via
-  # MC_TEST_RENDERED_LOADERS=forge on a GL-capable host (with the ForgeGradle-built agent + a
-  # Forge build of the SUT mod). The server is Paper 1.20.1 so the truth half is server-bukkit.
+  # MC_TEST_RENDERED_LOADERS=forge on a GL-capable host (with the ForgeGradle-built agent + the
+  # Forge build of the SUT mod, examples/regions/mod-forge). The server is Paper 1.20.1 so the truth
+  # half is server-bukkit.
   - id: forge-1.20.1-client
     loader: forge
     mc: "1.20.1"
@@ -151,8 +152,8 @@ targets:
     plugins:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     mods:
-      # The example mod is Fabric-only; a real Forge run needs a Forge build of the SUT.
-      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+      # The Forge build of the OpenRegions SUT (examples/regions/mod-forge), MC 1.20.1.
+      - { path: ./examples/regions/mod-forge/build/libs/openregions-forge.jar, as: regions.jar }
     display: xvfb
     agents: [ client-forge, server-bukkit ]
     world: { ref: regions-world }

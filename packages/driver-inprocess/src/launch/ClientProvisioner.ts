@@ -244,9 +244,15 @@ export async function provisionClient(opts: ProvisionOptions): Promise<ResolvedC
     }
   }
 
-  // 6) Per-instance game dir: fresh mods/ with the SUT mods + the client agent.
+  // 6) Per-instance game dir: fresh mods/ with the SUT mods + the client agent (+ Fabric API on
+  //    Fabric/Quilt, since both the agent and the SUT mods hard-depend on it).
   const gameDir = opts.gameDir ?? join(opts.workDir ?? join(tmpdir(), "mc-test-clients"), `${loader}-${opts.mc}`);
-  stageMods(gameDir, opts.mods ?? [], opts.clientAgentJar, log);
+  const runtimeMods = [...(opts.mods ?? [])];
+  if (isFabricLike(loader)) {
+    const apiJar = await resolveFabricApiJar(f, opts.mc, cacheDir, log);
+    if (apiJar) runtimeMods.push(apiJar);
+  }
+  stageMods(gameDir, runtimeMods, opts.clientAgentJar, log);
 
   return {
     mc: opts.mc,
@@ -440,6 +446,46 @@ async function defaultRunInstaller(input: RunInstallerInput): Promise<LoaderProf
 async function resolveFabricLoader(f: typeof fetch, mc: string): Promise<string> {
   const loaders = await fetchJson<FabricLoaderEntry[]>(f, `${FABRIC_META}/versions/loader/${mc}`);
   return pickFabricLoader(loaders);
+}
+
+/** Fabric's maven (hosts the production, intermediary-mapped Fabric API mod jar). */
+const FABRIC_MAVEN = "https://maven.fabricmc.net";
+
+/**
+ * Resolve + download the **Fabric API** mod jar for `mc` and return its cached path. The client-fabric
+ * agent AND the SUT mods declare `depends: fabric-api`, so a Fabric/Quilt client refuses to launch
+ * (`HARD_DEP_NO_CANDIDATE … fabric-api`) without it staged into `mods/`. Versions look like
+ * `0.103.0+1.21.1`; we pick the newest whose `+<mc>` suffix matches. Robust: returns `null` (with a
+ * warning) if it cannot resolve, so the boot still attempts (and fails loudly at the loader) rather
+ * than the provisioner throwing.
+ */
+async function resolveFabricApiJar(
+  f: typeof fetch,
+  mc: string,
+  cacheDir: string,
+  log: (l: string) => void,
+): Promise<string | null> {
+  let version: string | undefined;
+  try {
+    const res = await f(`${FABRIC_MAVEN}/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml`, {
+      redirect: "follow",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const xml = await res.text();
+    const all = [...xml.matchAll(/<version>([^<]+)<\/version>/g)].map((m) => m[1]!);
+    const matching = all.filter((v) => v.endsWith(`+${mc}`)); // metadata is ascending → newest last
+    version = matching[matching.length - 1];
+  } catch (err) {
+    log(`Could not resolve fabric-api for ${mc}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!version) {
+    log(`WARN: no fabric-api build found for ${mc}; mods depending on it will fail to load.`);
+    return null;
+  }
+  const jar = join(cacheDir, "fabric-api", `fabric-api-${version}.jar`);
+  log(`Resolving Fabric API ${version} for ${mc}…`);
+  await download(f, `${FABRIC_MAVEN}/net/fabricmc/fabric-api/fabric-api/${version}/fabric-api-${version}.jar`, jar);
+  return jar;
 }
 
 /** Reset the instance `mods/` to exactly the SUT mods + the client agent jar. */

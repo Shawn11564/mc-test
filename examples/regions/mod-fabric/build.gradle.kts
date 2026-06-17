@@ -15,13 +15,13 @@ plugins {
 }
 
 base {
-    // Output → build/libs/openregions.jar (the name the mc-test.yml inprocess row injects as regions.jar).
-    archivesName.set("openregions")
+    // Output → build/libs/openregions-fabric.jar (injected as regions.jar by the fabric-1.21-client row).
+    archivesName.set("openregions-fabric")
 }
 
 // Drop the version suffix from ALL archive tasks (jar + Loom's remapJar) so the produced jar is exactly
-// `openregions.jar` — matching the mc-test.yml `mods:` path. (project.version is still used for the maven
-// coordinate + the fabric.mod.json ${version} stamp; only the file name is pinned.)
+// `openregions-fabric.jar` — matching the mc-test.yml `mods:` path. (project.version is still used for the
+// maven coordinate + the fabric.mod.json ${version} stamp; only the file name is pinned.)
 tasks.withType<AbstractArchiveTask>().configureEach {
     archiveVersion.set("")
 }

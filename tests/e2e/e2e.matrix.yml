@@ -47,6 +47,7 @@ targets:
   # regions PLUGIN + the Bukkit truth agent so assertPluginState resolves real state. MC 1.21.1
   # matches the pinned Loom build of both openregions.jar and agent-client-fabric.jar. The
   # clientgui test RUNS here (clientScreens) and SKIPS on the headless paper-agent target above.
+  # (The SUT mod is examples/regions/mod-fabric → openregions-fabric.jar.)
   - id: fabric-client
     loader: fabric
     mc: "1.21.1"
@@ -57,7 +58,7 @@ targets:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     # Client SUT mod, injected into the rendered client alongside the client-fabric agent.
     mods:
-      - { path: ./examples/regions/mod/build/libs/openregions.jar, as: regions.jar }
+      - { path: ./examples/regions/mod-fabric/build/libs/openregions-fabric.jar, as: regions.jar }
     display: xvfb # Linux CI headless surface; "desktop" on a windowed runner.
     # Bukkit server agent (server is Paper) for the truth half; client-fabric is injected
     # implicitly by driver: inprocess (default client agent).

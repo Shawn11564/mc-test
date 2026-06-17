@@ -7,18 +7,29 @@ requires:
 target: ${matrix} # filled by the mc-test.yml row selected with --target
 steps:
   - join: { host: localhost, port: 25565, username: Tester }
-  - command: "or" # runs /or
+  - command: "or" # runs /or — opens the server-driven "OpenRegions" chest menu
   - waitForScreen: { titleContains: "OpenRegions" }
-  - click: { label: "Regions" }
-  - click: { label: "TestRegion" }
-  - assertChat: { contains: "Region loaded" }
-  # The server-truth half. With the server-bukkit agent co-selected (the target's
-  # `agents: [ server-bukkit ]`), this RUNS against real plugin state — asserting
-  # the region truly exists, not just that chat said so. With no agent it honestly
-  # SKIPS with unmet:[pluginState] (the M2 behavior is preserved).
+  - click: { label: "Regions" } # → opens the "Regions" list menu (seeded TestRegion/Spawn/Market)
+  # `click` retries until the list menu is up, so no explicit waitForScreen is needed here.
+  - click: { label: "Spawn" } # load a region: marks it active + prints chat (menu stays open)
+  - assertChat: { contains: "Region loaded: Spawn" }
+  # The active region is REAL server state set by the click — not just chat. (equals predicate)
+  - assertPluginState:
+      requires: { pluginState: true }
+      plugin: "OpenRegions"
+      query: "regions.active"
+      expect: { equals: "Spawn" }
+  - click: { label: "Create" } # create a region through the GUI: mutates authoritative state (3 → 4)
+  - assertChat: { contains: "Region created: Sanctuary" }
+  # The created region truly exists in server state, and the count grew — action→truth, not chat.
   - assertPluginState:
       requires: { pluginState: true }
       plugin: "OpenRegions"
       query: "regions.exists"
-      args: { name: "TestRegion" }
+      args: { name: "Sanctuary" }
       expect: true
+  - assertPluginState:
+      requires: { pluginState: true }
+      plugin: "OpenRegions"
+      query: "regions.count"
+      expect: { equals: 4 }

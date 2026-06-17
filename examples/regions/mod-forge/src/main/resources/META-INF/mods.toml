@@ -1,0 +1,31 @@
+# OpenRegions (Forge SUT) manifest. Tokens are stamped at build time by processResources.
+modLoader = "javafml"
+loaderVersion = "[${loaderRange},)"
+license = "MIT"
+issueTrackerURL = "https://github.com/mc-test/mc-test/issues"
+
+[[mods]]
+modId = "openregions"
+version = "${version}"
+displayName = "OpenRegions (Forge)"
+displayTest = "IGNORE_ALL_VERSION"
+authors = "mc-test examples"
+description = '''
+The canonical "regions" SUT in Forge client-mod form. /or opens a client Screen with a Regions list
+(load / create-by-typing a name / delete). Drives the chat half of the mc-test assertion; the
+server-truth half is seeded via a fixture and read by the Paper-side server-bukkit agent. Client-only.
+'''
+
+[[dependencies.openregions]]
+    modId = "forge"
+    mandatory = true
+    versionRange = "[${forgeRange},)"
+    ordering = "NONE"
+    side = "CLIENT"
+
+[[dependencies.openregions]]
+    modId = "minecraft"
+    mandatory = true
+    versionRange = "[${minecraftVersion}]"
+    ordering = "NONE"
+    side = "CLIENT"

@@ -87,4 +87,17 @@ describe("startDisplay (lifecycle)", () => {
     expect(session.env["LIBGL_ALWAYS_SOFTWARE"]).toBe("1");
     await session.stop(); // kill() → exit → resolves
   });
+
+  it("xvfb requested but Xvfb is unavailable (no ambient display) → falls back to the desktop display", async () => {
+    // Simulate a desktop OS with no Xvfb binary: the spawn fails (ENOENT). Rather than crashing the
+    // boot with `spawn Xvfb ENOENT`, startDisplay renders on the native desktop display.
+    const spawn: XvfbSpawner = () => ({
+      child: fakeChild() as never,
+      ready: Promise.reject(new Error("spawn Xvfb ENOENT")),
+    });
+    const session = await startDisplay({ platform: "win32", pref: "xvfb", existingDisplay: undefined, spawn });
+    expect(session.choice.backend).toBe("desktop");
+    expect(session.env).toEqual({});
+    await session.stop();
+  });
 });

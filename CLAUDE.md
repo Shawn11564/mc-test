@@ -59,7 +59,7 @@ protocol.
 /agents/client-neoforge       thin NeoForge client mod (Mojmap-mapped)
 /agents/server-bukkit         Bukkit/Paper plugin agent — world-truth + fixtures + plugin-state (stable Bukkit API; no mappings)
 /agents/server-fabric         server-mod truth agent (Fabric/NeoForge server)
-/examples/regions             canonical sample test + minimal "regions" target (plugin + mod forms)
+/examples/regions             canonical sample test + "regions" SUT in all forms (plugin + fabric/forge/neoforge client mods)
 /tests                        suites authored against the framework
 mc-test.yml                   the environment matrix (per-target loader/mc/driver/world/plugins/mods)
 ```

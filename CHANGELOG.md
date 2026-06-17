@@ -11,6 +11,34 @@ All notable changes to this project are recorded here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **Canonical OpenRegions SUT built for every target + richer behavior.** `examples/regions` now exists in
+  **four forms** — the Bukkit/Paper [plugin](examples/regions/plugin) plus a **Fabric**, **Forge**, and
+  **NeoForge** client mod (`examples/regions/mod-{fabric,forge,neoforge}`; the old `mod` is renamed to
+  `mod-fabric`) — so every loader row in the matrix drives a **real** SUT instead of reusing the Fabric jar
+  as a placeholder. Behavior is enriched from one button to a **CRUD flow**: a multi-region list (seeded
+  `TestRegion`/`Spawn`/`Market`) with load, **create-by-typing** a name (mods) / a preset Create (plugin),
+  delete, and richer queryable state (`regions.exists`/`count`/`list`/`active`). The Forge/NeoForge mods are
+  plain mods with **zero mc-test coupling**, driven purely by `label` + `role` selectors; the Fabric mod
+  additionally exposes `TestIdHolder` testIds. All four artifacts build on this Windows box
+  (`regions-plugin.jar` via Maven; `openregions-{fabric,forge,neoforge}.jar` via Loom/ForgeGradle/NeoGradle,
+  the Forge jar reobfuscated to SRG). (`examples/regions/**`, `mc-test.yml`, `tests/e2e/*.matrix.yml`,
+  `.github/workflows/e2e.yml`.)
+- **Tests + mock peers updated to the CRUD flow in lockstep.** `regions.mctest.yml` (headless) and
+  `regions.clientgui.mctest.yml` (rendered — now selecting by `label` + `role:input`, so the SINGLE file
+  runs unchanged across Fabric/Forge/NeoForge) drive the richer flow; `regions.fluent.test.ts` stays `≡`
+  the YAML; the scripted mock agent and the F1/F3 e2e harness markers were updated to match. Full unit
+  suite green: **393 tests** (incl. the 217 protocol conformance fixtures + the fluent≡YAML equivalence).
+  The headless plugin path is **real-boot-verified**: `tests/e2e/run-real-boot.mjs` boots real Paper
+  1.20.4, drives the enriched CRUD flow via a Mineflayer agent, and passes **5/5** — the positive run green
+  including `assertPluginState` (active/exists/count from real state), plus the truth/UI-divergence (→RED)
+  and capability-skip controls. The rendered **Fabric** client now **PASSES for real, fully off-screen** (a
+  Linux container under Xvfb + Mesa software GL — see `scripts/run-rendered-docker.sh`): the client agent
+  drives the SUT's client `Screen` end-to-end to a GREEN result — `/or` → screen "OpenRegions" → click
+  "Regions" → **type** "Sanctuary" → Create → assertChat "Region created" → click "TestRegion" → assertChat
+  "Region loaded" → assertPluginState `regions.exists = true` (real server state) — with `screenshot`
+  honest-skipped, after the join→command race and capability-union fixes below. Forge/NeoForge
+  rendered boots stay opt-in (`MC_TEST_RENDERED_LOADERS`) with their SUTs built + wired and the same agent
+  fix applied; the multi-loader orchestration harness passes 4/4 (honest skips).
 - **F2 — native old-version support (v2):** old Minecraft versions now run on the headless path
   *without* a proxy. The bot connects at the target's `mc` natively (Mineflayer + minecraft-data
   span ~1.8–1.21), and the provisioner boots an explicit, integrity-checked
@@ -40,6 +68,31 @@ All notable changes to this project are recorded here. The format is based on
   display-name / NBT normalization (`packages/driver-headless/src/normalize.ts`) and container-GUI
   element mapping (`primitives/containerGui.ts`), with a new `Target` field + `PaperProvisioner`
   wiring and a CLI flag. Adds headless-driver test coverage. (`6305f72`)
+
+### Fixed
+- **Rendered client on a desktop OS without Xvfb.** `startDisplay` now falls back to the **native
+  desktop display** when an `xvfb` display is requested but `Xvfb` cannot be spawned (Windows/macOS, or
+  a Linux box without it) — previously the boot died with `spawn Xvfb ENOENT`. Selection still honors an
+  explicit `xvfb` pref; this is a runtime safety net so a `display: xvfb` matrix row also runs on a real
+  desktop. Surfaced by the first real rendered boot on Windows. (`driver-inprocess/launch/Display.ts`.)
+- **Fabric/Quilt client missing Fabric API.** The in-process driver now resolves + stages **fabric-api**
+  into the rendered Fabric client's `mods/` (newest build for the target MC, from `maven.fabricmc.net`).
+  The `client-fabric` agent AND the SUT mods hard-depend on it, so the client previously refused to launch
+  (`HARD_DEP_NO_CANDIDATE … fabric-api`). Surfaced by the first real rendered boot.
+  (`driver-inprocess/launch/ClientProvisioner.ts`.)
+- **Client-agent join→command race (THE rendered-GUI blocker).** `world.join` returned as soon as the
+  connection was *initiated*, but `client.player` stays null for several render ticks after — so a command
+  or chat issued immediately after join (the canonical `/or`) ran while `client.player` was null and was
+  **silently dropped** by `runCommand`/`sendChat`, so the SUT screen never opened and `waitForScreen` timed
+  out. `joinServer` now **waits (off the render thread) for the player to spawn** before returning, in all
+  three client agents (`agents/client-{fabric,forge,neoforge}/.../mappings/Names.java`). This — not the
+  foreground/focus — was why the rendered clientgui flow never reached the GUI; with it, the off-screen
+  Fabric run drives `/or` → screen → click → **type** → create → load → assertChat end-to-end.
+- **Per-step capability union now reflects the LIVE grant, not the static descriptor.** A driver
+  connection contributes its **session's granted** caps to the per-step union (like agents already did),
+  so a step requiring a capability the agent did not live-grant honestly **skips** instead of failing —
+  e.g. `screenshot` on a rendered client whose agent computed caps at startup before the framebuffer
+  existed. (`engine/SessionGroup.ts`; the documented CAPABILITIES.md §4 follow-up.)
 
 ## [1.0.0] — 2026-06-16
 

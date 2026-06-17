@@ -53,6 +53,9 @@ function makeFetch(): typeof fetch {
     if (u === PROFILE_URL) return new Response(JSON.stringify(profile));
     if (u === ASSET_INDEX_URL) return new Response(JSON.stringify({ objects: {} }));
     if (u === NATIVES_URL) return new Response(nativesJar);
+    // Fabric API metadata (the agent + SUT mods hard-depend on fabric-api → staged into mods/).
+    if (u.includes("fabric-api/maven-metadata.xml"))
+      return new Response("<metadata><versioning><versions><version>0.103.0+1.21.1</version></versioning></metadata>");
     if (u.endsWith(".jar")) return new Response(Buffer.from(`fake:${u}`));
     throw new Error(`unexpected fetch: ${u}`);
   }) as typeof fetch;
@@ -108,9 +111,9 @@ describe("provisionClient (injected fetch)", () => {
     // Asset index file was fetched even with object download disabled.
     expect(existsSync(join(cacheDir, "assets", "indexes", "17.json"))).toBe(true);
 
-    // The instance mods/ holds exactly the SUT mod + the client agent jar.
+    // The instance mods/ holds the SUT mod + the client agent jar + the resolved Fabric API jar.
     const staged = readdirSync(join(client.gameDir, "mods")).sort();
-    expect(staged).toEqual(["agent-client-fabric.jar", "openregions.jar"]);
+    expect(staged).toEqual(["agent-client-fabric.jar", "fabric-api-0.103.0+1.21.1.jar", "openregions.jar"]);
   });
 
   it("HONEST-SKIPs a modular loader (forge) that is not opted in — never a crash or false green", async () => {

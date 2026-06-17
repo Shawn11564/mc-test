@@ -12,16 +12,18 @@ export interface MockAgentOptions {
   capabilities?: string[];
   /** The root-menu button label (set to "Zones" for the mutation negative control). */
   regionsButtonLabel?: string;
-  /** The list entry label. */
-  listEntryLabel?: string;
-  /** Chat line emitted when the entry is selected. */
-  chatOnSelect?: string;
-  /** How many `clickElement(entry)` attempts return ELEMENT_NOT_FOUND before the
-   *  list "populates" — exercises runner-side SelectorWaits retries. */
+  /** The list entries (each clickable → "Region loaded: <entry>"). Default: the seeded set. */
+  listEntries?: string[];
+  /** How many entry-click attempts return ELEMENT_NOT_FOUND before the list "populates"
+   *  — exercises runner-side SelectorWaits retries. */
   listAppearAfter?: number;
 }
 
 const DEFAULT_CAPS = ["chat", "command", "containerGui", "typeText", "pressKey"];
+/** Regions the enriched list shows by default (mirrors the plugin's seeded set). */
+const DEFAULT_ENTRIES = ["TestRegion", "Spawn", "Market"];
+/** The deterministic region the "Create" button adds (mirrors the plugin). */
+const CREATE_REGION = "Sanctuary";
 
 function labelEq(a: string | undefined, b: string | undefined): boolean {
   return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
@@ -32,19 +34,18 @@ export class MockAgent {
   private url = "";
   private readonly caps: string[];
   private readonly regionsLabel: string;
-  private readonly entryLabel: string;
-  private readonly chatLine: string;
+  private readonly entries: string[];
   private listReveals: number;
 
   // per-connection-ish state (single session for tests)
   private screen: "none" | "root" | "list" = "none";
   private chat: string[] = [];
+  private active: string | null = null;
 
   constructor(opts: MockAgentOptions = {}) {
     this.caps = opts.capabilities ?? DEFAULT_CAPS;
     this.regionsLabel = opts.regionsButtonLabel ?? "Regions";
-    this.entryLabel = opts.listEntryLabel ?? "TestRegion";
-    this.chatLine = opts.chatOnSelect ?? "Region loaded: TestRegion";
+    this.entries = opts.listEntries ?? [...DEFAULT_ENTRIES];
     this.listReveals = opts.listAppearAfter ?? 0;
   }
 
@@ -74,7 +75,12 @@ export class MockAgent {
 
   private elements(): { label: string; slot: number }[] {
     if (this.screen === "root") return [{ label: this.regionsLabel, slot: 4 }];
-    if (this.screen === "list") return [{ label: this.entryLabel, slot: 11 }];
+    if (this.screen === "list") {
+      const out = this.entries.map((label, i) => ({ label, slot: 10 + i * 2 }));
+      out.push({ label: "Create", slot: 22 });
+      out.push({ label: "Delete", slot: 24 });
+      return out;
+    }
     return [];
   }
 
@@ -179,8 +185,10 @@ export class MockAgent {
       }
       case "screen.clickElement": {
         const selector = params["selector"] as { label?: string; testId?: string };
-        // Simulate a list that populates a few polls late (SelectorWaits exercise).
-        if (this.screen === "list" && labelEq(selector.label, this.entryLabel) && this.listReveals > 0) {
+        const isEntry = this.screen === "list" && this.entries.some((e) => labelEq(e, selector.label));
+        // Simulate a list that populates a few polls late (SelectorWaits exercise): an entry click
+        // 404s until listReveals is exhausted, then resolves.
+        if (isEntry && this.listReveals > 0) {
           this.listReveals--;
           this.err(-32000, "ELEMENT_NOT_FOUND", "list not ready", { selector });
         }
@@ -190,9 +198,17 @@ export class MockAgent {
           this.screen = "list";
           return { ok: true, screenChanged: true, resolved: { via: "label", slot: match!.slot } };
         }
-        if (this.screen === "list" && labelEq(match!.label, this.entryLabel)) {
-          this.chat.push(this.chatLine);
-          return { ok: true, screenChanged: false, resolved: { via: "label", slot: match!.slot } };
+        if (this.screen === "list") {
+          if (isEntry) {
+            // Load: mark active + emit the chat line (mirrors the SUT's action→chat).
+            this.active = match!.label;
+            this.chat.push(`Region loaded: ${match!.label}`);
+          } else if (labelEq(match!.label, "Create")) {
+            this.chat.push(`Region created: ${CREATE_REGION}`);
+          } else if (labelEq(match!.label, "Delete") && this.active) {
+            this.chat.push(`Region deleted: ${this.active}`);
+            this.active = null;
+          }
         }
         return { ok: true, screenChanged: false, resolved: { via: "label", slot: match!.slot } };
       }

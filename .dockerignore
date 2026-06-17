@@ -1,0 +1,16 @@
+# Keep the Docker build context tiny. Dockerfile.rendered COPYs nothing (it only installs the
+# toolchain); the repo is bind-mounted at run time. Excluding these avoids sending gigabytes
+# (node_modules, booted-server instances, build outputs, the artifact cache) to the daemon.
+node_modules
+**/node_modules
+**/build
+**/dist
+**/target
+**/.gradle
+.git
+.mc-test
+mc-test-report
+graphify-out
+logs
+*.log
+_build.log

@@ -15,29 +15,25 @@
 # Build:
 #   docker build -f Dockerfile.rendered -t mc-test/rendered:21 .
 #
-# Run the rendered-client harness inside it (mount the repo, build everything, then drive
-# the client under a virtual display via xvfb-run):
-#   docker run --rm -v "$PWD":/work -w /work mc-test/rendered:21 bash -lc '
-#     npm ci &&
-#     npm run build -w @mc-test/protocol &&
-#     npm run build -w @mc-test/driver-headless &&
-#     npm run build -w @mc-test/driver-inprocess &&
-#     npm run build -w @mc-test/driver-pixel &&
-#     npm run build -w @mc-test/runner &&
-#     gradle -p agents :core:publishToMavenLocal :server-bukkit:jar &&
-#     mvn -B -f examples/regions/plugin/pom.xml package &&
-#     (cd agents/client-fabric && ./gradlew build) &&
-#     (cd examples/regions/mod && ./gradlew build) &&
-#     xvfb-run -a node tests/e2e/run-rendered-boot.mjs --flake=1
-#   '
+# Run the rendered-client harness OFF-SCREEN inside it. The image carries only Node + JDK + Xvfb +
+# Mesa (no Maven/Gradle): the JVM jars (regions plugin, server-bukkit, client-fabric agent, the SUT
+# mods) are PORTABLE bytecode built once on the host and bind-mounted; only the Node side is built in
+# the container. Use the helper, which also shadows node_modules with anonymous volumes so `npm ci`
+# never touches your host install:
+#   scripts/run-rendered-docker.sh            # → npm ci + npm run build + xvfb-run run-rendered-boot.mjs
+# (Build the host jars first per examples/regions/README.md: the plugin via Maven, the Fabric agent +
+# SUT mod via Loom. A fully self-contained in-container build would additionally need Maven + Gradle.)
 
 # Pinned JDK 21 base (MC 1.20.5+ / the 1.21.x rendered-client matrix rows need Java 21).
 FROM eclipse-temurin:21-jdk
 
 # Xvfb virtual display + Mesa software GL (llvmpipe) so LWJGL/OpenGL renders with no GPU;
-# mesa-utils ships glxinfo for diagnostics. Node 22 is installed from NodeSource (pinned
-# major) for the TypeScript runner/drivers. git + ca-certificates support the Loom/Spigot
-# builds and HTTPS artifact fetches. Cleaned in the same layer to keep the image small.
+# mesa-utils ships glxinfo for diagnostics. The X11 client libs (libxtst6, libxi6, libxrandr2,
+# libxcursor1, libxxf86vm1, libxext6, libxrender1, libx11-6) are REQUIRED at runtime by both the
+# Minecraft CLIENT (LWJGL/GLFW windowing + input) AND the Paper SERVER's AWT (which loads
+# libawt_xawt → libXtst even with `nogui`; without them the server exits "headless JRE distribution,
+# missing graphic libraries"). libfreetype6 + libglu1-mesa round out font/GL. Node 22 from NodeSource
+# (pinned major) for the TypeScript runner/drivers; git + ca-certificates for HTTPS artifact fetches.
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -47,7 +43,18 @@ RUN apt-get update \
       xvfb \
       libgl1 \
       libgl1-mesa-dri \
+      libglu1-mesa \
       mesa-utils \
+      libx11-6 \
+      libxext6 \
+      libxrender1 \
+      libxtst6 \
+      libxi6 \
+      libxrandr2 \
+      libxcursor1 \
+      libxxf86vm1 \
+      libxss1 \
+      libfreetype6 \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && apt-get clean \

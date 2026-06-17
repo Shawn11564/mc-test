@@ -22,6 +22,11 @@ public final class RegionStore {
   // (the MCTP server runs its own threads), so guard with the instance monitor.
   private final Set<String> regions = new LinkedHashSet<>();
 
+  // The "active" region — the last one loaded via the GUI. Part of the authoritative state so a
+  // test can assert which region the UI selected (truth.assertPluginState query=regions.active),
+  // not merely that a chat line was printed.
+  private String active;
+
   /** Add a region. Returns true if it was newly added (false if already present). */
   public synchronized boolean add(String name) {
     return regions.add(name);
@@ -45,5 +50,15 @@ public final class RegionStore {
   /** Immutable snapshot of region names in insertion order. */
   public synchronized List<String> names() {
     return Collections.unmodifiableList(new CopyOnWriteArrayList<>(regions));
+  }
+
+  /** Marks {@code name} as the active region (the last one "loaded" via the GUI). */
+  public synchronized void setActive(String name) {
+    this.active = name;
+  }
+
+  /** The active region name, or {@code null} if none has been loaded. */
+  public synchronized String getActive() {
+    return active;
   }
 }

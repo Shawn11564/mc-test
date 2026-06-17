@@ -111,19 +111,30 @@ export async function startDisplay(opts: {
 
   const spawner = opts.spawn ?? defaultXvfbSpawner;
   const display = choice.display ?? DEFAULT_XVFB_DISPLAY;
-  const { child, ready } = spawner(xvfbArgs(display, opts.width ?? 1280, opts.height ?? 720));
-  const num = await ready;
-  const resolved = num.startsWith(":") ? num : `:${num}`;
-  const env = { DISPLAY: resolved, LIBGL_ALWAYS_SOFTWARE: "1" };
-  return {
-    choice: { ...choice, display: resolved, env },
-    env,
-    stop: async () =>
-      new Promise<void>((resolve) => {
-        child.once("exit", () => resolve());
-        child.kill();
-      }),
-  };
+  try {
+    const { child, ready } = spawner(xvfbArgs(display, opts.width ?? 1280, opts.height ?? 720));
+    const num = await ready;
+    const resolved = num.startsWith(":") ? num : `:${num}`;
+    const env = { DISPLAY: resolved, LIBGL_ALWAYS_SOFTWARE: "1" };
+    return {
+      choice: { ...choice, display: resolved, env },
+      env,
+      stop: async () =>
+        new Promise<void>((resolve) => {
+          child.once("exit", () => resolve());
+          child.kill();
+        }),
+    };
+  } catch (err) {
+    // Xvfb isn't available — e.g. a desktop OS that has no Xvfb binary (Windows/macOS), or a Linux
+    // box that lacks it. Rather than failing the boot with `spawn Xvfb ENOENT`, fall back to rendering
+    // on the native desktop display. (Selection still honors the explicit `xvfb` pref per its contract;
+    // this is a runtime safety net so a `display: xvfb` matrix row also runs on a real desktop.)
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[mc-test] Xvfb unavailable (${reason}); falling back to the desktop display.`);
+    const desktop: DisplayChoice = { backend: "desktop", env: {} };
+    return { choice: desktop, env: desktop.env, stop: async () => {} };
+  }
 }
 
 /** Real `Xvfb` spawner: reads the chosen display number from `-displayfd` (stdout). */

@@ -169,14 +169,14 @@ jobs:
 
       # Client side (Loom, standalone projects with their own wrappers): the client-fabric
       # agent jar (agent-client-fabric.jar) the in-process driver injects, and the SUT's
-      # client mod jar (openregions.jar). Both download Minecraft + Yarn at build time.
+      # client mod jar (openregions-fabric.jar). Both download Minecraft + Yarn at build time.
       # `build` also runs client-fabric's mapping-contract test (reflects over the real Yarn-remapped MC).
       - name: Build + test client-fabric agent (Loom)
         run: ./gradlew build
         working-directory: agents/client-fabric
       - name: Build regions client mod jar (Loom)
         run: ./gradlew build
-        working-directory: examples/regions/mod
+        working-directory: examples/regions/mod-fabric
 
       # The rendered boot: honest-skip on headless + the positive rendered run (GUI flow +
       # assertPluginState) + screenshot artifact + flake budget, all under a virtual display.
@@ -262,6 +262,19 @@ jobs:
         run: ./gradlew build
         working-directory: agents/server-fabric
 
+      # The per-loader SUT mods (the same OpenRegions behavior built for Forge/NeoForge). These pair
+      # with the client-forge/client-neoforge agents above in a rendered client. Like the shims they are
+      # standalone, network-heavy (download MC/Forge/NeoForge) → continue-on-error compile checks here;
+      # the rendered GREEN boot is gated behind MC_TEST_RENDERED_LOADERS on a GL host.
+      - name: Build regions SUT mod (Forge, ForgeGradle MC 1.20.1)
+        continue-on-error: true
+        run: ./gradlew build
+        working-directory: examples/regions/mod-forge
+      - name: Build regions SUT mod (NeoForge, NeoGradle MC 1.21.1)
+        continue-on-error: true
+        run: ./gradlew build
+        working-directory: examples/regions/mod-neoforge
+
       - name: Upload matrix report + built shim jars
         if: always()
         uses: actions/upload-artifact@v4
@@ -272,4 +285,6 @@ jobs:
             agents/client-forge/build/libs/*.jar
             agents/client-neoforge/build/libs/*.jar
             agents/server-fabric/build/libs/*.jar
+            examples/regions/mod-forge/build/libs/*.jar
+            examples/regions/mod-neoforge/build/libs/*.jar
           if-no-files-found: ignore

@@ -1,35 +1,42 @@
+# yaml-language-server: $schema=../../packages/protocol/schema/mctest-stepfile.schema.json
 name: regions-clientgui-open-testregion
-# The CLIENT-GUI variant of the canonical regions test. Same semantic flow as
-# regions.mctest.yml, but it drives a REAL client Screen (the mod SUT) instead of a
-# server-driven chest menu — so it requires `clientScreens`, which ONLY the in-process
-# client driver advertises. On a headless target this whole test honestly SKIPS with
-# unmet:["clientScreens"] (capability negotiation), never a false green.
+# The CLIENT-GUI variant of the canonical regions test. Same semantic flow as regions.mctest.yml, but it
+# drives a REAL client Screen (the mod SUT) instead of a server-driven chest menu — so it requires
+# `clientScreens`, which ONLY the in-process client driver advertises. On a headless target this whole
+# test honestly SKIPS with unmet:["clientScreens"] (capability negotiation), never a false green.
+#
+# It selects by visible LABEL + the input's ROLE (not testId), so the SINGLE test file runs unchanged
+# across the Fabric/Forge/NeoForge SUTs — the Forge/NeoForge mods have no mc-test coupling at all.
 requires:
   command: true
   chat: true
   clientScreens: true
-target: ${matrix} # filled by the mc-test.yml row selected with --target (fabric-1.21-client)
+target: ${matrix} # filled by the mc-test.yml row selected with --target (fabric/forge/neoforge -client)
 steps:
   - join: { host: localhost, port: 25565, username: Tester }
-  - command: "or" # runs /or — opens the client RegionsScreen
-  # The client Screen's title is "Regions" (titleContains tolerates decoration).
-  - waitForScreen: { titleContains: "Regions" }
-  # Select by testId (the colon-form canonical id the widget exposes via TestIdHolder),
-  # the most robust selector for cooperating SUTs we control.
-  - click: { testId: "regions:root:regions" }
-  - click: { testId: "regions:entry:TestRegion" }
-  - assertChat: { contains: "Region loaded" }
-  # Capture the framebuffer as an artifact. The in-process driver advertises `screenshot`
-  # (it always launches a real rendered client under a display), so on this target the step
-  # RUNS. (The Java agent gates pixel capture on a live framebuffer at session.create; on a
-  # genuinely render-less client it would refuse screenshot — surfaced as a step failure, not
-  # yet an honest skip, since the runner's per-step union reads the static driver descriptor.
-  # Aligning the union with the live grant is a documented follow-up — CAPABILITIES.md §4.)
+  - command: "or" # /or is a CLIENT command (the mod intercepts it) — opens the client RegionsScreen
+  - waitForScreen: { titleContains: "OpenRegions" }
+  - click: { label: "Regions" } # → the list Screen (entries + name field + Create/Delete)
+  # Type a new region name into the field (selected by role:input) and create it — exercises typeText.
+  - type:
+      selector: { role: "input" }
+      text: "Sanctuary"
+  - click: { label: "Create" }
+  - assertChat: { contains: "Region created: Sanctuary" } # client GUI surface (round-trips via chat)
+  - click: { label: "TestRegion" } # load a seeded region
+  - assertChat: { contains: "Region loaded: TestRegion" }
+  # Capture the framebuffer as an artifact (best-effort). The runner's per-step capability union now
+  # reflects the client agent's LIVE granted caps, so if the agent did not grant `screenshot` (it computes
+  # caps at startup, before the framebuffer exists) this step honestly SKIPS (unmet:[screenshot]) rather
+  # than failing — the GUI-flow proof above stands regardless. (Granting screenshot for a rendered client
+  # via lazy cap eval is a follow-up.)
   - screenshot:
       requires: { screenshot: true }
-  # The server-truth half. The in-process client driver CANNOT author plugin state, so this
-  # pairs with a co-selected server agent (server-fabric, M5). With no agent it honestly
-  # SKIPS with unmet:[pluginState] — the chat half above still proves the GUI flow.
+  # Server-truth half: a client mod can't author server state, so this asserts the PLUGIN's authoritative
+  # state via the co-selected server-bukkit agent. "TestRegion" is seeded by the plugin, so this is
+  # honestly green and INDEPENDENT of the client GUI — the truth/UI-divergence control (a never-created
+  # region → RED) is what proves the truth half isn't just rubber-stamping chat. With no server agent it
+  # honestly SKIPS with unmet:[pluginState]; the chat half above still proves the GUI flow.
   - assertPluginState:
       requires: { pluginState: true }
       plugin: "OpenRegions"

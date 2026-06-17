@@ -14,7 +14,6 @@
 import { PROTOCOL_VERSION, matchCapabilities, type Capabilities, type CapabilityKey } from "@mc-test/protocol";
 import { MctpClient, MctpRpcError } from "../drivers/MctpClient.js";
 import { Session } from "./Session.js";
-import { advertisedKeys } from "./CapabilityMatch.js";
 import type { StepCapReq } from "./StepExecutor.js";
 
 /** One connection to open and negotiate within the group. */
@@ -115,10 +114,14 @@ export class SessionGroup {
         }
         continue;
       }
-      // The driver's advertised set is authoritative for routing GUI/chat verbs; carry
-      // its target descriptors (loader/mcVersionRange) for negotiation parity.
-      for (const key of advertisedKeys(c.def.advertised)) {
-        union[key] = true;
+      // The driver connection contributes its SESSION's live granted caps (capability discovery),
+      // NOT the static descriptor — so e.g. an in-process client that doesn't grant `screenshot`
+      // (no live framebuffer when the agent computed its caps at startup) honestly SKIPS screenshot
+      // steps instead of failing them. The static descriptor still drives DRIVER SELECTION upstream
+      // and verb ROUTING below; only per-step skip decisions use the live grant. Carry the target
+      // descriptors (loader/mcVersionRange) from the descriptor for negotiation parity.
+      for (const key of c.session.granted) {
+        union[key as CapabilityKey] = true;
       }
       if (c.def.advertised.loader !== undefined) union.loader = c.def.advertised.loader;
       if (c.def.advertised.mcVersionRange !== undefined) union.mcVersionRange = c.def.advertised.mcVersionRange;

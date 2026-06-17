@@ -19,6 +19,7 @@ import java.util.Map;
  *   <li>{@code regions.exists} — args {@code {name}} → {@link Boolean} (region exists)</li>
  *   <li>{@code regions.count} — → {@link Integer} (number of regions)</li>
  *   <li>{@code regions.list} — → {@link java.util.List} of region names</li>
+ *   <li>{@code regions.active} — → {@link String} (last region loaded via the GUI) or {@code null}</li>
  * </ul>
  */
 public final class RegionsStateProvider implements McTestStateProvider {
@@ -38,6 +39,10 @@ public final class RegionsStateProvider implements McTestStateProvider {
         return store.size();
       case "regions.list":
         return store.names();
+      case "regions.active":
+        // The active region (last loaded via the GUI), or null if none — the predicate
+        // `equals` against null is honestly false, never a spurious pass.
+        return store.getActive();
       default:
         // Unknown query — the agent maps this to -32006 ASSERT_FAILED.
         throw new IllegalArgumentException("unknown query: " + query);

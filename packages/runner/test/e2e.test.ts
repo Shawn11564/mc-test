@@ -60,14 +60,28 @@ function fluentRegions(): NormalizedTest {
     .command("or")
     .waitForScreen({ titleContains: "OpenRegions" })
     .click({ label: "Regions" })
-    .click({ label: "TestRegion" })
-    .assertChat({ contains: "Region loaded" })
+    .click({ label: "Spawn" })
+    .assertChat({ contains: "Region loaded: Spawn" })
+    .assertPluginState({
+      requires: { pluginState: true },
+      plugin: "OpenRegions",
+      query: "regions.active",
+      expect: { equals: "Spawn" },
+    })
+    .click({ label: "Create" })
+    .assertChat({ contains: "Region created: Sanctuary" })
     .assertPluginState({
       requires: { pluginState: true },
       plugin: "OpenRegions",
       query: "regions.exists",
-      args: { name: "TestRegion" },
+      args: { name: "Sanctuary" },
       expect: true,
+    })
+    .assertPluginState({
+      requires: { pluginState: true },
+      plugin: "OpenRegions",
+      query: "regions.count",
+      expect: { equals: 4 },
     })
     .build();
 }

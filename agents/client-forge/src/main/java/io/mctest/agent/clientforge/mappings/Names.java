@@ -260,6 +260,21 @@ public final class Names implements ClientBridge {
         ServerAddress address = new ServerAddress(host, port);
         runOnClient(() -> ConnectScreen.startConnecting(
                 new TitleScreen(), client, address, info, false));
+        // world.join must mean "joined AND ready". ConnectScreen.startConnecting only INITIATES the
+        // connection; client.player stays null for several render ticks afterwards. Without this wait,
+        // a command/chat issued immediately after join (e.g. /or) runs while client.player is null and
+        // is SILENTLY DROPPED by runCommand/sendChat. Poll OFF the render thread (this runs on the MCTP
+        // handler thread) so the render thread stays free to spawn the player; bounded so a failed
+        // connect still returns.
+        long deadline = System.currentTimeMillis() + 30000L;
+        while (client.player == null && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
     }
 
     @Override

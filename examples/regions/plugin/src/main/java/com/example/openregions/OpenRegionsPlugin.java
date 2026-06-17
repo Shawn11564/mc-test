@@ -23,15 +23,17 @@ import io.mctest.agent.core.McTestFixtureProvider;
 import io.mctest.agent.core.McTestStateProvider;
 
 /**
- * OpenRegions — the canonical "regions" SUT for mc-test (M2 headless/chest-menu form).
+ * OpenRegions — the canonical "regions" SUT for mc-test (headless/chest-menu form).
  *
- * {@code /or} opens a server-driven chest GUI titled "OpenRegions" with a "Regions"
- * button. Clicking it opens a "Regions" list GUI with a "TestRegion" entry. Clicking
- * "TestRegion" prints "Region loaded: TestRegion" to chat AND adds "TestRegion" to the
- * authoritative {@link RegionStore} — so the server-truth assertion
- * ({@code truth.assertPluginState query=regions.exists}) reflects real runtime state, not
- * just chat. Items are stamped with an invisible testId (PDC key mc-test:test_id) so
- * cooperating drivers can select robustly, but the canonical test selects by visible label.
+ * <p>{@code /or} opens a server-driven chest GUI titled "OpenRegions" with a "Regions" button.
+ * Clicking it opens the "Regions" list: one entry per region (seeded with {@code TestRegion},
+ * {@code Spawn}, {@code Market}) plus "Create" and "Delete" buttons. Clicking an entry "loads" it
+ * (marks it active + prints "Region loaded: &lt;name&gt;"); "Create" adds a region; "Delete" removes
+ * the active one. Every action mutates the authoritative {@link RegionStore} AND prints chat, so the
+ * server-truth assertions ({@code truth.assertPluginState} query {@code regions.exists}/{@code count}/
+ * {@code active}) reflect real runtime state, not just chat. The menu stays open across actions so one
+ * test can load → create → delete in sequence. Items carry an invisible testId (PDC key
+ * mc-test:test_id) so cooperating drivers can select robustly; the canonical test selects by label.
  *
  * <p>When the mc-test server agent ({@code mc-test-agent}) is present, this plugin registers
  * a {@link RegionsStateProvider} and {@link RegionsFixtureProvider} via the Bukkit
@@ -43,12 +45,20 @@ public final class OpenRegionsPlugin extends JavaPlugin implements Listener, Com
   static final String ROOT_TITLE = "OpenRegions";
   static final String LIST_TITLE = "Regions";
 
+  /** Regions present at startup, so the store has substance before any GUI action. */
+  static final String[] SEED_REGIONS = {"TestRegion", "Spawn", "Market"};
+  /** The region the "Create" button adds (a chest menu can't host a text field — see README). */
+  static final String CREATE_REGION = "Sanctuary";
+
   private NamespacedKey testIdKey;
   private final RegionStore regions = new RegionStore();
 
   @Override
   public void onEnable() {
     this.testIdKey = new NamespacedKey("mc-test", "test_id");
+    for (String seed : SEED_REGIONS) {
+      regions.add(seed);
+    }
     getServer().getPluginManager().registerEvents(this, this);
     PluginCommand or = getCommand("or");
     if (or != null) {
@@ -96,8 +106,27 @@ public final class OpenRegionsPlugin extends JavaPlugin implements Listener, Com
 
   private void openList(Player player) {
     Inventory inv = Bukkit.createInventory(new Menu(Menu.Kind.LIST), 27, LIST_TITLE);
-    inv.setItem(11, button(Material.FILLED_MAP, "TestRegion", "regions:entry:TestRegion"));
+    renderList(inv);
     player.openInventory(inv);
+  }
+
+  /**
+   * (Re)draws the list menu from current state: one entry per region (click → load), plus a "Create"
+   * button (adds {@value #CREATE_REGION}) and a "Delete" button (removes the active region). Called on
+   * open and after every create/delete so the open window reflects the store.
+   */
+  private void renderList(Inventory inv) {
+    inv.clear();
+    int slot = 10;
+    for (String name : regions.names()) {
+      inv.setItem(slot, button(Material.FILLED_MAP, name, "regions:entry:" + name));
+      slot += 2;
+      if (slot > 16) {
+        break; // cap the visible entries to the middle row
+      }
+    }
+    inv.setItem(22, button(Material.EMERALD, "Create", "regions:action:create"));
+    inv.setItem(24, button(Material.BARRIER, "Delete", "regions:action:delete"));
   }
 
   private ItemStack button(Material material, String name, String testId) {
@@ -107,6 +136,14 @@ public final class OpenRegionsPlugin extends JavaPlugin implements Listener, Com
     meta.getPersistentDataContainer().set(testIdKey, PersistentDataType.STRING, testId);
     item.setItemMeta(meta);
     return item;
+  }
+
+  /** Reads the invisible mc-test testId stamped into an item's PDC ({@code null} if absent). */
+  private String readTestId(ItemStack item) {
+    if (item == null || !item.hasItemMeta()) {
+      return null;
+    }
+    return item.getItemMeta().getPersistentDataContainer().get(testIdKey, PersistentDataType.STRING);
   }
 
   @EventHandler
@@ -128,13 +165,35 @@ public final class OpenRegionsPlugin extends JavaPlugin implements Listener, Com
       return;
     }
     String name = clicked.getItemMeta().getDisplayName();
+    String testId = readTestId(clicked);
     if (menu.kind == Menu.Kind.ROOT && "Regions".equals(name)) {
       openList(player);
-    } else if (menu.kind == Menu.Kind.LIST && "TestRegion".equals(name)) {
-      player.closeInventory();
-      // Mutate authoritative state AND notify chat, so server-truth and the chat assertion agree.
-      regions.add("TestRegion");
-      player.sendMessage("Region loaded: TestRegion");
+      return;
+    }
+    if (menu.kind != Menu.Kind.LIST) {
+      return;
+    }
+    // The list menu stays OPEN across actions so one test can load → create → delete in sequence.
+    Inventory list = event.getInventory();
+    if ("regions:action:create".equals(testId)) {
+      // The chest form has no text field, so "Create" adds a deterministic region (the mod form types
+      // a name). Mutating the store is what makes regions.exists/count real — not the chat line.
+      regions.add(CREATE_REGION);
+      player.sendMessage("Region created: " + CREATE_REGION);
+      renderList(list);
+    } else if ("regions:action:delete".equals(testId)) {
+      String active = regions.getActive();
+      if (active != null) {
+        regions.remove(active);
+        regions.setActive(null);
+        player.sendMessage("Region deleted: " + active);
+        renderList(list);
+      }
+    } else if (testId != null && testId.startsWith("regions:entry:")) {
+      // Load: mark active AND notify chat, so server-truth (regions.active) and the chat assertion
+      // agree — the basis of the truth/UI-divergence negative control.
+      regions.setActive(name);
+      player.sendMessage("Region loaded: " + name);
     }
   }
 
