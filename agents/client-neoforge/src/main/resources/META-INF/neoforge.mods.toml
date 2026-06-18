@@ -13,7 +13,7 @@ license = "Apache-2.0"
 issueTrackerURL = "https://github.com/mc-test/mc-test/issues"
 
 [[mods]]
-modId = "mc-test-client-neoforge"
+modId = "mctestclientneoforge"
 version = "${version}"
 displayName = "mc-test client agent (NeoForge)"
 authors = "mc-test"
@@ -28,14 +28,14 @@ io.mctest:mc-test-agent-core; this mod only supplies the entrypoint and the Mojm
 '''
 
 # Depend on NeoForge (the loader) and Minecraft, pinned to the build's (loader × MC) line.
-[[dependencies.mc-test-client-neoforge]]
+[[dependencies.mctestclientneoforge]]
 modId = "neoforge"
 type = "required"
 versionRange = "${neoVersionRange}"
 ordering = "NONE"
 side = "CLIENT"
 
-[[dependencies.mc-test-client-neoforge]]
+[[dependencies.mctestclientneoforge]]
 modId = "minecraft"
 type = "required"
 versionRange = "${minecraftVersionRange}"

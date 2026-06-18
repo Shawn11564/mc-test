@@ -217,6 +217,10 @@ async function defaultSpawn(launch: ClientLaunch, ctx: SpawnContext): Promise<Sp
   const onLog = ctx.onLog ?? (() => {});
   const timeoutMs = ctx.readyTimeoutMs ?? 180_000;
 
+  // Record the exact launch invocation at the top of the client log — invaluable when a modular
+  // (Forge/NeoForge) BootstrapLauncher boot fails on classpath/module-path layout.
+  logStream?.write(`=== mc-test client launch ===\n${launch.command} \\\n  ${launch.args.join(" \\\n  ")}\n=== end launch ===\n`);
+
   const port = await new Promise<number>((resolve, reject) => {
     let buffer = "";
     let settled = false;

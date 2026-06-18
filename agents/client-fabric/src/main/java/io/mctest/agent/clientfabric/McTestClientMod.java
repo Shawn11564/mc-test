@@ -8,6 +8,7 @@ import io.mctest.agent.core.MctpServer;
 import io.mctest.agent.core.client.ClientAgent;
 import io.mctest.agent.core.client.ClientBridge;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 
 /**
  * The mc-test client-side agent entrypoint (Fabric). A thin {@link ClientModInitializer} that, when the
@@ -37,6 +38,19 @@ public final class McTestClientMod implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // Defer hosting the MCTP server until the client has fully STARTED (window + framebuffer created,
+        // initial resource reload done, idle at the title screen). Starting in onInitializeClient — which
+        // runs mid-construction, BEFORE the framebuffer exists — meant ClientCapabilities.build saw
+        // hasFramebuffer()==false and dropped `screenshot`/`rendering` (so the screenshot step skipped),
+        // and a join racing the still-running resource reload could render the world with null shaders.
+        // CLIENT_STARTED fires once both are safely done — matching the Forge/NeoForge shims, which host
+        // at FMLClientSetupEvent (post-window) and so already grant screenshot.
+        ClientLifecycleEvents.CLIENT_STARTED.register(client -> startAgent());
+    }
+
+    /** Host the MCTP server around the loader-specific bridge (run once the client is fully started). */
+    private void startAgent() {
+        if (server != null) return; // idempotent — CLIENT_STARTED fires once, but guard anyway
         int port = resolvePort();
         LogSink logSink = (level, message) -> System.out.println("[mc-test-client-fabric] " + message);
 

@@ -32,6 +32,12 @@ export interface DriverLaunchContext {
   mods?: string[];
   clientAgentJar?: string;
   windowSize?: string;
+  /**
+   * `java` executable to launch the rendered client with. The client's LWJGL build is MC-version
+   * specific (e.g. LWJGL 3.3.1 in MC ≤1.20.x SIGSEGVs on Java 21 — "Unsupported JNI version"), so the
+   * runner resolves a JDK matching the target's MC version and threads it here. Absent → `"java"`.
+   */
+  javaPath?: string;
 }
 
 /** A registered driver candidate. */

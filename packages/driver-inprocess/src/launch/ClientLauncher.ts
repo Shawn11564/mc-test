@@ -129,6 +129,14 @@ export function buildClientLaunch(input: BuildLaunchInput): {
       ...(client.platform === "darwin" ? ["-XstartOnFirstThread"] : []),
       `-Djava.library.path=${client.nativesDir}`,
       `-Dorg.lwjgl.librarypath=${client.nativesDir}`,
+      // Disable FML's early-loading splash window. It opens a SECOND GL context (fmlearlydisplay) before
+      // the real client window; under Mesa/llvmpipe (software GL, no GPU) the context handoff can leave
+      // the client's core shaders uninitialised → `ShaderInstance is null` NPEs the first time a level
+      // renders. Turning the early window off makes the main client window the only GL context, so
+      // shaders compile/bind correctly. Both Forge (fml.earlyprogresswindow) and NeoForge
+      // (fml.earlyWindowControl) honour these; setting both is harmless on either.
+      "-Dfml.earlyprogresswindow=false",
+      "-Dfml.earlyWindowControl=false",
       ...(input.extraJvmArgs ?? []),
       ...substituteArgs(client.launchProfile.jvmArgs, identity),
     ];

@@ -33,7 +33,7 @@ import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
  * {@code chat, command, containerGui, clientScreens, typeText, pressKey, testIdTags} plus
  * {@code screenshot, rendering} when a framebuffer is present.
  */
-@Mod("mc-test-client-forge")
+@Mod("mctestclientforge")
 public final class McTestClientMod {
 
     /** MCTP port read from {@code MCTEST_AGENT_PORT}; the runner's driver-inprocess scrapes the log line. */

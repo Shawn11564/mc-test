@@ -36,7 +36,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 public final class McTestClientMod {
 
     /** The NeoForge modId; mirrors {@code neoforge.mods.toml} and the {@code @Mod} annotation. */
-    static final String MOD_ID = "mc-test-client-neoforge";
+    static final String MOD_ID = "mctestclientneoforge";
 
     /** MCTP port read from {@code MCTEST_AGENT_PORT}; the runner's driver-inprocess scrapes the log line. */
     static final int DEFAULT_PORT = 25599;

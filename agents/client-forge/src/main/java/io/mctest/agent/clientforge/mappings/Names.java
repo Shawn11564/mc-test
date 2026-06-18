@@ -255,6 +255,23 @@ public final class Names implements ClientBridge {
 
     @Override
     public void joinServer(String host, int port, String username) {
+        // Wait for the client's INITIAL resource reload (which compiles the core shaders) to FINISH and
+        // the title screen to come up before connecting. Connecting mid-reload makes the world start
+        // rendering while `ShaderInstance`s are still null → a render-thread NPE in LevelRenderer
+        // (the crash report's "Last reload … Finished: No"). The LoadingOverlay is present for the
+        // duration of that reload; once it's gone AND a screen is set, the client is idle at the title
+        // screen and safe to connect. Polled off the render thread (we're on the MCTP handler thread),
+        // bounded so a stuck load still returns and the join fails honestly rather than hanging.
+        long readyDeadline = System.currentTimeMillis() + 120000L;
+        while ((client.getOverlay() != null || client.screen == null)
+                && System.currentTimeMillis() < readyDeadline) {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
         // MC 1.20.1's ServerData(name, ip, boolean isLan) predates the 1.20.2+ ServerData.Type enum.
         ServerData info = new ServerData(username, host + ":" + port, false);
         ServerAddress address = new ServerAddress(host, port);

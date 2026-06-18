@@ -125,9 +125,29 @@ tasks.named<ShadowJar>("shadowJar") {
     // The shaded jar IS the mod jar (no classifier) — output is exactly `agent-client-forge.jar`.
     archiveClassifier.set("")
     configurations = listOf(shade)
+    // Forge/NeoForge run under the Java module system (BootstrapLauncher): shading slf4j here would make
+    // `mctestclientforge` and Forge's own `org.slf4j` module BOTH export `org.slf4j.*` → a split-package
+    // ResolutionException at boot. Forge already provides slf4j on the module path and our (automatic)
+    // module reads it, so drop the transitive copy Java-WebSocket pulled in. (Fabric needs no such
+    // exclude — KnotClassLoader is not strict JPMS.)
+    exclude("org/slf4j/**")
 }
 
-// Make `build` produce the shaded jar (ForgeGradle reobf hooks the primary jar in a real build).
+// Reobfuscate the SHADED jar from the official (Mojmap) names it was compiled against to the SRG names a
+// PRODUCTION Forge 1.20.1 client runs with. Without this, mappings/Names.java's `net.minecraft.*` calls
+// (e.g. `Minecraft.getInstance()`) throw `NoSuchMethodError` at runtime — dev mode uses official names but
+// our launcher boots a real (SRG) client. ForgeGradle's reobf already targets the plain `jar`; we add a
+// reobf for `shadowJar` so the artifact the runner actually loads (agent-client-forge.jar) is SRG-mapped.
+// Only mappings/Names.java carries net.minecraft references (the quarantine file); the shaded core +
+// Java-WebSocket classes have none, so reobf leaves them untouched.
+reobf {
+    create("shadowJar")
+}
+tasks.named<ShadowJar>("shadowJar") {
+    finalizedBy("reobfShadowJar")
+}
+
+// Make `build` produce the (reobfuscated) shaded jar.
 tasks.named("assemble") {
     dependsOn(tasks.named("shadowJar"))
 }

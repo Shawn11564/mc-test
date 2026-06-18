@@ -379,7 +379,21 @@ async function resolveModularLaunch(
     ctx.platform,
     ctx.arch,
   );
-  const classpath = [...allLibs.map((l) => join(ctx.librariesDir, l.path)), ctx.clientJarPath];
+  // The vanilla MC jar on a FORGE/NeoForge classpath MUST be named `<mc>.jar` (e.g. `1.20.1.jar`),
+  // NOT `client.jar`. FML's SecureModuleClassLoader claims the game jar as the `minecraft` module via
+  // its `-DignoreList`; a jar literally named `client.jar` instead auto-modules as `client` and then
+  // duplicates `com.mojang.blaze3d.platform` against forge's `minecraft` module → a launch-time
+  // `ResolutionException`. The loader installer already writes a correctly-named `versions/<mc>/<mc>.jar`;
+  // mirror that name (copy our downloaded `client.jar` to it when absent) so the classpath matches what
+  // the official launcher hands BootstrapLauncher.
+  const vanillaJar = join(dirname(ctx.clientJarPath), `${opts.mc}.jar`);
+  if (!existsSync(vanillaJar) && existsSync(ctx.clientJarPath)) copyFileSync(ctx.clientJarPath, vanillaJar);
+  // Deduplicate classpath entries by path. Merging the loader profile onto vanilla concatenates two
+  // library lists that overlap (both pin e.g. guava/gson at the same coord), so the same jar path can
+  // appear twice. NeoForge's BootstrapLauncher 2.0.2 / SecureJar builds a path→metadata map and THROWS
+  // `IllegalStateException: Duplicate key …guava….jar` on a repeat (Forge 1.1.2 silently tolerated it).
+  // First occurrence wins — loader libraries precede vanilla in the merge, so the loader's pin is kept.
+  const classpath = [...new Set([...allLibs.map((l) => join(ctx.librariesDir, l.path)), vanillaJar])];
   const gameDir = opts.gameDir ?? join(opts.workDir ?? join(tmpdir(), "mc-test-clients"), `${loader}-${opts.mc}`);
   const vars = launchVars({
     librariesDir: ctx.librariesDir,
@@ -391,6 +405,17 @@ async function resolveModularLaunch(
     assetIndex: version.assets ?? version.assetIndex?.id ?? "legacy",
     classpath: classpath.join(ctx.sep),
   });
+  // The vanilla MC jar is on the classpath (it carries the net.minecraft/blaze3d classes that
+  // neither client-extra nor the forge patch jar contains), but it must NOT be turned into its own
+  // automatic module — FML claims those packages for the `minecraft` module, so a second module from
+  // the same jar is a split-package `ResolutionException`. Forge's `-DignoreList` is exactly the
+  // mechanism for "leave this classpath entry off the module path for FML to own"; the installer
+  // profile lists `client-extra`/`forge-`/`<version_name>.jar` but NOT the inherited vanilla jar, so
+  // we append its basename here. (BootstrapLauncher matches ignoreList entries as filename substrings.)
+  const vanillaJarName = basename(vanillaJar);
+  const jvmArgs = substituteArgs(flattenArguments(merged.jvm, ctx.os), vars).map((a) =>
+    a.startsWith("-DignoreList=") ? `${a},${vanillaJarName}` : a,
+  );
   return {
     loaderVersion: opts.loaderVersion,
     mainClass: merged.mainClass,
@@ -398,7 +423,7 @@ async function resolveModularLaunch(
     downloadLibs: allLibs,
     natives,
     launchProfile: {
-      jvmArgs: substituteArgs(flattenArguments(merged.jvm, ctx.os), vars),
+      jvmArgs,
       gameArgs: substituteArgs(flattenArguments(merged.game, ctx.os), vars),
     },
   };
@@ -413,33 +438,88 @@ async function resolveModularLaunch(
  * Forge uses `--installClient <dir>`; NeoForge uses `--install-client <dir>`.
  */
 async function defaultRunInstaller(input: RunInstallerInput): Promise<LoaderProfileJson> {
+  const installTargetEarly = input.cacheDir;
+  // Idempotent: the install is slow (installer download + decompile/patch processors), so if a prior
+  // run already wrote the loader launcher profile, reuse it rather than re-installing.
+  const cached = readLoaderProfile(join(installTargetEarly, "versions"), input.mc);
+  if (cached) {
+    input.onLog(`Reusing cached ${input.loader} install (${join(installTargetEarly, "versions")})`);
+    return cached;
+  }
   const installer = loaderInstallerArtifact(input.loader, input.mc, input.loaderVersion);
-  const installRoot = join(input.cacheDir, "loaders", input.loader, input.loaderVersion);
-  const installerJar = join(installRoot, "installer.jar");
+  const installerJar = join(input.cacheDir, "loaders", input.loader, input.loaderVersion, "installer.jar");
   await download(input.fetchImpl, installer.url, installerJar);
+
+  // The Forge/NeoForge installer's client mode installs into a real Minecraft launcher
+  // directory: it both REQUIRES a `launcher_profiles.json` to exist there ("you need to run
+  // the launcher first!" → exit 1 otherwise) and writes the loader's patched libraries under
+  // `<dir>/libraries`. We therefore install into the SHARED client cache dir, whose `libraries`
+  // IS the launch classpath's `librariesDir` — so the forge-generated artifacts (a patched
+  // client jar, forge universal, etc. that are NOT on any maven) land exactly where the launch
+  // resolves them, and the later maven `download()` for the merged libraries simply cache-hits.
+  const installTarget = input.cacheDir;
+  mkdirSync(installTarget, { recursive: true });
+  const profilesFile = join(installTarget, "launcher_profiles.json");
+  if (!existsSync(profilesFile)) {
+    writeFileSync(
+      profilesFile,
+      JSON.stringify({ profiles: {}, selectedProfileName: "", clientToken: "", authenticationDatabase: {} }),
+    );
+  }
+
   const { spawn } = await import("node:child_process");
   const flag = input.loader === "forge" ? "--installClient" : "--install-client";
-  input.onLog(`java -jar ${installerJar} ${flag} ${installRoot}`);
+  const installerLog = `${installerJar}.run.log`;
+  const logStream = createWriteStream(installerLog, { flags: "w" });
+  input.onLog(`java -jar ${installerJar} ${flag} ${installTarget}`);
+  let tail = "";
   await new Promise<void>((resolveRun, reject) => {
-    const child = spawn(input.javaPath, ["-jar", installerJar, flag, installRoot], { stdio: "ignore" });
+    const child = spawn(input.javaPath, ["-jar", installerJar, flag, installTarget], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const onData = (chunk: Buffer): void => {
+      const text = chunk.toString();
+      logStream.write(text);
+      tail = (tail + text).slice(-2000); // keep the last ~2KB for the error message
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
     child.once("error", reject);
-    child.once("exit", (code) =>
-      code === 0
-        ? resolveRun()
-        : reject(new Error(`INSTALLER_FAILED: ${input.loader} installer exited ${code ?? "?"}`)),
-    );
+    child.once("exit", (code) => {
+      logStream.end();
+      if (code === 0) resolveRun();
+      else reject(new Error(`INSTALLER_FAILED: ${input.loader} installer exited ${code ?? "?"} — ${tail.trim()}`));
+    });
   });
-  // The installer writes one or more profiles under <installRoot>/versions/<id>/<id>.json;
-  // pick the loader profile (the one that inheritsFrom the vanilla version).
-  const versionsDir = join(installRoot, "versions");
+  // The installer writes one or more profiles under <installTarget>/versions/<id>/<id>.json;
+  // pick the loader profile (the one that inheritsFrom the vanilla version, not the vanilla id).
+  const versionsDir = join(installTarget, "versions");
+  const profile = readLoaderProfile(versionsDir, input.mc);
+  if (profile) return profile;
+  throw new Error(`INSTALLER_PROFILE_NOT_FOUND: no ${input.loader} launcher profile under ${versionsDir}`);
+}
+
+/**
+ * Read the loader launcher profile the installer wrote under `<versionsDir>/<id>/<id>.json`: the one
+ * that `inheritsFrom` the vanilla `mc` (or whose id isn't the vanilla id) — i.e. the forge/neoforge
+ * profile, not the vanilla one the installer also drops. Returns null if none is present yet.
+ */
+function readLoaderProfile(versionsDir: string, mc: string): LoaderProfileJson | null {
   const ids = existsSync(versionsDir) ? readdirSync(versionsDir) : [];
   for (const id of ids) {
     const p = join(versionsDir, id, `${id}.json`);
     if (!existsSync(p)) continue;
     const profile = JSON.parse(readFileSync(p, "utf8")) as LoaderProfileJson;
-    if (profile.inheritsFrom === input.mc || profile.id !== input.mc) return profile;
+    // The loader (forge/neoforge) profile both INHERITS the vanilla `mc` AND launches via
+    // BootstrapLauncher. Match BOTH: the install target dir is SHARED across loaders, so it can hold
+    // OTHER versions' profiles too (e.g. a forge 1.20.1 install's `1.20.1-forge-47.2.0` + vanilla
+    // `1.20.1` profiles sitting next to a neoforge 1.21.1 one). The previous loose `id !== mc` match
+    // returned the first foreign profile (the forge/vanilla 1.20.1 one) for a 1.21.1 neoforge read,
+    // contaminating the launch classpath with the wrong loader's libraries.
+    const isModular = (profile.mainClass ?? "").toLowerCase().includes("bootstraplauncher");
+    if (profile.inheritsFrom === mc && isModular) return profile;
   }
-  throw new Error(`INSTALLER_PROFILE_NOT_FOUND: no ${input.loader} launcher profile under ${versionsDir}`);
+  return null;
 }
 
 /** Newest stable Fabric loader version for `mc` (Fabric meta loader list). */

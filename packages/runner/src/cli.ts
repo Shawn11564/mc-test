@@ -24,7 +24,7 @@ import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPr
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
 import { resolveArtifact } from "./provision/sources.js";
-import { resolveJavaForMc } from "./provision/jdk.js";
+import { resolveJavaForMc, resolveJdk, requiredJavaMajor, javaMajorOf } from "./provision/jdk.js";
 import { resolveSpigotJar } from "./provision/buildtools.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
 import { writeHtml } from "./report/HtmlReporter.js";
@@ -199,7 +199,7 @@ function resolveClientAgentJar(target: MatrixTarget): string {
  * connects to; the rendered client itself is launched by the driver via this
  * context. (For M4's no-boot CI this path is wired but not exercised.)
  */
-function buildLaunchContext(target: MatrixTarget): DriverLaunchContext {
+function buildLaunchContext(target: MatrixTarget, clientJavaPath?: string): DriverLaunchContext {
   const mods = (target.mods ?? [])
     .filter((m) => m.path)
     .map((m) => resolve(m.path!));
@@ -209,8 +209,31 @@ function buildLaunchContext(target: MatrixTarget): DriverLaunchContext {
     ...(target.loaderVersion ? { loaderVersion: target.loaderVersion } : {}),
     ...(target.display ? { display: target.display } : {}),
     ...(mods.length ? { mods } : {}),
+    ...(clientJavaPath ? { javaPath: clientJavaPath } : {}),
     clientAgentJar: resolveClientAgentJar(target),
   };
+}
+
+/**
+ * Resolve the `java` to launch a RENDERED client with. Unlike the server (which runs fine on a newer
+ * host JDK), the client is pinned to its MC version's LWJGL build: MC ≤1.20.x ships LWJGL 3.3.1, which
+ * SIGSEGVs on Java 21 ("Unsupported JNI version detected"), so a Forge 1.20.1 client MUST run on Java 17
+ * while a 1.21.1 client wants Java 21. We therefore pick the EXACT LTS for the MC version
+ * (`requiredJavaMajor`): reuse the host `java` when it already matches, else resolve/fetch that JDK.
+ */
+async function resolveClientJava(
+  mc: string | undefined,
+  prov: NonNullable<MatrixFile["provision"]>,
+): Promise<string | undefined> {
+  if (!mc) return undefined;
+  const want = requiredJavaMajor(mc);
+  if (javaMajorOf("java") === want) return "java";
+  return resolveJdk(want, {
+    cacheDir: expandHome(prov.cacheDir ?? "~/.mc-test/cache"),
+    ...(prov.jdks ? { configured: prov.jdks } : {}),
+    ...(prov.downloadJdks !== undefined ? { download: prov.downloadJdks } : {}),
+    onLog: (line) => console.log(`  ${line}`),
+  });
 }
 
 function buildProvision(
@@ -340,17 +363,17 @@ function printResult(result: TestResult): void {
 }
 
 /** Build the `TargetMeta` for one matrix row (driver pin + inprocess launch ctx). */
-function targetMetaFor(target: MatrixTarget): TargetMeta {
+function targetMetaFor(target: MatrixTarget, clientJavaPath?: string): TargetMeta {
   // An `inprocess` target launches a rendered client: thread a launch context
-  // (mc/loader/display, SUT mods, client-agent jar) to the driver. The server is
-  // still provisioned (M3 wiring intact) for the client to connect to and for any
-  // co-listed server agent (pluginState).
+  // (mc/loader/display, SUT mods, client-agent jar, the MC-matched client JDK) to
+  // the driver. The server is still provisioned (M3 wiring intact) for the client to
+  // connect to and for any co-listed server agent (pluginState).
   return {
     target: target.id,
     loader: target.loader,
     mc: target.mc,
     ...(target.driver && target.driver !== "auto" ? { driverPin: target.driver } : {}),
-    ...(target.driver === "inprocess" ? { launch: buildLaunchContext(target) } : {}),
+    ...(target.driver === "inprocess" ? { launch: buildLaunchContext(target, clientJavaPath) } : {}),
   };
 }
 
@@ -443,8 +466,12 @@ async function runOneTarget(
     return pre;
   }
   console.log(`Running '${test.name}' against target '${target.id}' (${target.loader} ${target.mc})…`);
+  // A rendered (inprocess) client is pinned to its MC version's JDK (LWJGL compat); resolve it up front
+  // so the driver launches the client with the right `java` (headless targets need nothing here).
+  const clientJavaPath =
+    target.driver === "inprocess" ? await resolveClientJava(target.mc, matrix.provision ?? {}) : undefined;
   // `outDir` lets the screenshot verb persist PNGs + seed/diff baselines under it.
-  const result = await runner.runTarget(test, targetMetaFor(target), buildProvision(matrix, target), "Tester", outDir);
+  const result = await runner.runTarget(test, targetMetaFor(target, clientJavaPath), buildProvision(matrix, target), "Tester", outDir);
   printResult(result);
   return result;
 }
@@ -513,7 +540,24 @@ async function cmdRun(args: Args): Promise<number> {
   // output streams readably and we don't boot several servers at once unasked.
   // `runMatrix` preserves INPUT order in `results`, so the aggregated JUnit +
   // skip matrix are deterministic regardless of which job finishes first.
-  const jobs = targets.flatMap((target) => tests.map((test) => ({ target, test })));
+  // By default every test runs against every target (cross-product). With `--pair`,
+  // stepfiles and targets are zipped 1:1 in the order given — so a heterogeneous
+  // suite (e.g. a headless plugin test on `paper`, the client-GUI test on each
+  // rendered loader) aggregates into ONE report with exactly N cells and no
+  // wrong-driver skips. Requires an equal count of stepfiles and targets.
+  const pair = args.flags["pair"] === "true";
+  let jobs: { target: MatrixTarget; test: ReturnType<typeof loadSteps> }[];
+  if (pair) {
+    if (tests.length !== targets.length) {
+      console.error(
+        `--pair needs an equal number of stepfiles and targets (got ${tests.length} stepfile(s), ${targets.length} target(s)); they are zipped 1:1 in order.`,
+      );
+      return 2;
+    }
+    jobs = targets.map((target, i) => ({ target, test: tests[i]! }));
+  } else {
+    jobs = targets.flatMap((target) => tests.map((test) => ({ target, test })));
+  }
   const concurrency = resolveConcurrency(args.flags["concurrency"], jobs.length);
   if (concurrency > 1) {
     console.log(`Running ${jobs.length} (target × test) job(s) with concurrency ${concurrency}.`);
@@ -691,6 +735,7 @@ commands:
         [--target <id>|<id,id,...>|all] [--matrix mc-test.yml]
         [--plugin built-sut.jar] [--out dir] [--fail-on-skip]
         [--concurrency N|auto] (-j)     run the (target × test) matrix in parallel
+        [--pair]                        zip stepfiles↔targets 1:1 (not cross-product)
   list                                  list targets in the matrix [--matrix mc-test.yml]
   doctor                                check Java, ports, downloads, matrix [--matrix mc-test.yml]
   init                                  scaffold mc-test.yml + a sample test [--dir <dir>]

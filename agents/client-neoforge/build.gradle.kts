@@ -37,6 +37,19 @@ tasks.withType<AbstractArchiveTask>().configureEach {
     archiveVersion.set("")
 }
 
+// The RUNNABLE mod jar must carry the nested core + Java-WebSocket (jarJar output), and the runner
+// resolves it as exactly `agent-client-neoforge.jar`. By default NeoGradle's `jarJar` task emits the
+// nested jar with an `-all` classifier while the plain `jar` (no nested deps, ~12KB) owns the bare
+// name — so the runner would load a coreless jar and the agent would ClassNotFound at boot. Swap them:
+// give the plain jar a `slim` classifier and let `jarJar` own the canonical name. (Mirrors the forge
+// agent's shadowJar classifier handling.)
+tasks.named<AbstractArchiveTask>("jar") {
+    archiveClassifier.set("slim")
+}
+tasks.named<AbstractArchiveTask>("jarJar") {
+    archiveClassifier.set("")
+}
+
 java {
     // MC 1.21.x targets Java 21; core was published at release 17 so it loads fine.
     toolchain {
@@ -62,8 +75,11 @@ dependencies {
     // jarJar'd into the mod jar so the running client carries it without a separate jar.
     jarJar(implementation("io.mctest:mc-test-agent-core:0.1.0")!!)
 
-    // Java-WebSocket is the MCTP transport the core needs at runtime; nest it too.
-    jarJar(implementation("org.java-websocket:Java-WebSocket:1.5.7")!!)
+    // Java-WebSocket is the MCTP transport the core needs at runtime; nest it too. Exclude its slf4j-api
+    // transitive: NeoForge runs under the Java module system and already provides an `org.slf4j` module,
+    // so nesting slf4j here would split the `org.slf4j.*` packages → a boot-time ResolutionException
+    // (the same conflict the forge agent's shadowJar excludes). Java-WebSocket logs through NeoForge's slf4j.
+    jarJar(implementation("org.java-websocket:Java-WebSocket:1.5.7") { exclude(group = "org.slf4j") }!!)
 
     // --- Tests ---------------------------------------------------------------
     // The mapping-contract test reflects over the REAL remapped Minecraft (NeoGradle puts it on the test
