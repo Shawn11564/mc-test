@@ -1,46 +1,38 @@
 /**
- * Minimal M2 provisioner: download a Paper jar (PaperMC fill API), write an
- * offline `server.properties` + `eula.txt`, copy the world snapshot, drop the
- * SUT plugin, boot the server, wait for "Done (", and expose a teardown hook.
+ * Bukkit-family provisioner: download a Paper jar (PaperMC fill API), write an
+ * offline `server.properties` + `eula.txt`, copy the world snapshot (Bukkit
+ * sibling-dimension layout), drop the SUT plugin(s) + server agent into
+ * `plugins/`, boot the server, wait for "Done (", and expose a teardown hook.
  *
- * Full Testcontainers/Docker + agent installation are M3+ — intentionally not here.
+ * Shared boot primitives (ports, ops, server.properties, readiness, teardown,
+ * spawn) live in `./serverCommon.ts` and are reused by `./ModdedProvisioner.ts`.
  */
-import {
-  mkdirSync,
-  writeFileSync,
-  createWriteStream,
-  existsSync,
-  cpSync,
-  readdirSync,
-} from "node:fs";
+import { mkdirSync, writeFileSync, createWriteStream, existsSync, cpSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { createServer } from "node:net";
+import { hashFile } from "./sources.js";
+import {
+  findFreePort,
+  offlineUuid,
+  writeOps,
+  writeServerProperties,
+  hasWorldData,
+  waitForReady,
+  stopServer,
+  spawnFromLaunch,
+  type AgentSpec,
+  type AgentEndpoint,
+  type ProvisionedServer,
+} from "./serverCommon.js";
+
+// Re-exported so existing importers (index.ts, cli.ts) keep their import sites.
+export { findFreePort, offlineUuid };
+export type { AgentSpec, AgentEndpoint, ProvisionedServer };
 
 export interface PluginSpec {
   path: string;
   as?: string;
-}
-
-/**
- * A server agent to install alongside the SUT (M3): its built jar dropped into
- * `plugins/`, listening on its own `port` (a second MCTP port distinct from the
- * game port). The agent reads its port from `plugins/mc-test-agent/config.yml`.
- */
-export interface AgentSpec {
-  name: string;
-  jarPath: string;
-  port: number;
-}
-
-/** A resolved server-agent MCTP endpoint after boot. */
-export interface AgentEndpoint {
-  name: string;
-  url: string;
 }
 
 export interface PaperProvisionOptions {
@@ -69,51 +61,6 @@ export interface PaperProvisionOptions {
   javaPath?: string;
   bootTimeoutMs?: number;
   onLog?: (line: string) => void;
-}
-
-export interface ProvisionedServer {
-  host: string;
-  port: number;
-  logPath: string;
-  instanceDir: string;
-  /** Resolved server-agent MCTP endpoints (one per installed agent). */
-  agentEndpoints: AgentEndpoint[];
-  stop: () => Promise<void>;
-}
-
-// Runner-owned keys a target's serverProps cannot override (ENVIRONMENTS.md §2.7).
-const FORCED_PROPS = new Set([
-  "online-mode",
-  "server-port",
-  "server-ip",
-  "level-name",
-  "level-type",
-  "spawn-protection",
-  "sync-chunk-writes",
-]);
-
-function hashFile(path: string, algo: "sha256" | "sha1"): Promise<string> {
-  return new Promise((resolveHash, reject) => {
-    const hash = createHash(algo);
-    createReadStream(path)
-      .on("data", (d) => hash.update(d))
-      .on("end", () => resolveHash(hash.digest("hex")))
-      .on("error", reject);
-  });
-}
-
-/** Find a free TCP port at or above `from` (probes by binding on `host`). */
-export async function findFreePort(host: string, from: number, to: number): Promise<number> {
-  for (let port = from; port <= to; port++) {
-    const free = await new Promise<boolean>((res) => {
-      const srv = createServer();
-      srv.once("error", () => res(false));
-      srv.once("listening", () => srv.close(() => res(true)));
-      srv.listen(port, host);
-    });
-    if (free) return port;
-  }
-  throw new Error(`PORT_EXHAUSTED: no free port in [${from}, ${to}] on ${host}`);
 }
 
 interface PaperBuild {
@@ -199,163 +146,6 @@ export async function resolveMojangServerJar(mc: string, cacheDir: string): Prom
   return jarPath;
 }
 
-function writeServerProperties(opts: PaperProvisionOptions): void {
-  const props: Record<string, string> = {
-    "online-mode": "false",
-    "server-port": String(opts.gamePort),
-    "server-ip": opts.bindHost,
-    "level-name": opts.levelName ?? "world",
-    "level-type": "minecraft:flat",
-    "generate-structures": "false",
-    "spawn-protection": "0",
-    "spawn-monsters": "false",
-    "spawn-npcs": "false",
-    "spawn-animals": "false",
-    difficulty: "peaceful",
-    gamemode: "creative",
-    "allow-nether": "false",
-    "view-distance": "4",
-    "simulation-distance": "4",
-    "max-players": "8",
-    motd: "mc-test",
-    "enable-command-block": "false",
-    "sync-chunk-writes": "true",
-  };
-  for (const [k, v] of Object.entries(opts.serverProps ?? {})) {
-    if (!FORCED_PROPS.has(k)) props[k] = String(v);
-  }
-  const text = `${Object.entries(props)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n")}\n`;
-  writeFileSync(join(opts.instanceDir, "server.properties"), text);
-}
-
-/**
- * Bukkit's offline-player UUID for `name`: `UUID.nameUUIDFromBytes("OfflinePlayer:" + name)`
- * — an MD5 (type-3) UUID over UTF-8 bytes. Servers boot `online-mode=false` (§2.7), so this is
- * the UUID the bot actually joins with; ops.json must carry it for the op grant to apply.
- */
-export function offlineUuid(name: string): string {
-  const h = createHash("md5").update(`OfflinePlayer:${name}`, "utf8").digest();
-  h[6] = (h[6]! & 0x0f) | 0x30; // version 3
-  h[8] = (h[8]! & 0x3f) | 0x80; // IETF variant
-  const s = h.toString("hex");
-  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`;
-}
-
-/**
- * Write `ops.json` granting operator (level 4) to each name. The headless bot runs commands AS
- * the joined player, so a command gated by a Bukkit permission (e.g. ACF `@CommandPermission`)
- * requires the bot op'd. Written before boot so it is read on first start — race-free.
- */
-function writeOps(instanceDir: string, ops: string[]): void {
-  const entries = ops.map((name) => ({
-    uuid: offlineUuid(name),
-    name,
-    level: 4,
-    bypassesPlayerLimit: false,
-  }));
-  writeFileSync(join(instanceDir, "ops.json"), `${JSON.stringify(entries, null, 2)}\n`);
-}
-
-function hasWorldData(dir: string): boolean {
-  try {
-    return existsSync(join(dir, "level.dat")) || readdirSync(dir).some((f) => f !== "README.md");
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Resolves when the server has booted (`Done (`) AND every co-installed agent has bound its MCTP
- * port (`MCTP listening on :PORT`) — the readiness gate the runner relies on before connecting the
- * agent session. A trailing agent line (the WS bind is async, sometimes just after `Done (`) is
- * awaited up to `bootTimeoutMs`; if an agent never binds, fail with a precise BOOT_TIMEOUT rather
- * than returning a half-ready target.
- */
-function waitForReady(
-  proc: ChildProcess,
-  logStream: ReturnType<typeof createWriteStream>,
-  onLog: ((line: string) => void) | undefined,
-  bootTimeoutMs: number,
-  expectedAgentPorts: number[] = [],
-): Promise<void> {
-  return new Promise((resolveReady, reject) => {
-    let resolved = false;
-    let serverDone = false;
-    let buffer = "";
-    const pendingPorts = new Set(expectedAgentPorts);
-    const listening = /MCTP listening on :(\d+)/g;
-
-    const timer = setTimeout(() => {
-      if (resolved) return;
-      reject(
-        new Error(
-          serverDone
-            ? `BOOT_TIMEOUT: server agent(s) never bound MCTP port(s) ${[...pendingPorts].join(", ")}`
-            : "BOOT_TIMEOUT: server did not reach 'Done' in time",
-        ),
-      );
-    }, bootTimeoutMs);
-
-    const finish = (): void => {
-      if (!resolved && serverDone && pendingPorts.size === 0) {
-        resolved = true;
-        clearTimeout(timer);
-        resolveReady();
-      }
-    };
-
-    const onData = (chunk: Buffer): void => {
-      const s = chunk.toString();
-      logStream.write(s);
-      onLog?.(s);
-      if (resolved) return;
-      buffer += s;
-      if (!serverDone && buffer.includes("Done (")) serverDone = true;
-      if (pendingPorts.size) {
-        let m: RegExpExecArray | null;
-        while ((m = listening.exec(buffer)) !== null) pendingPorts.delete(Number(m[1]));
-        listening.lastIndex = 0;
-      }
-      if (buffer.length > 200000) buffer = buffer.slice(-50000);
-      finish();
-    };
-    // The agent logs via the server console — scan both streams so a line on either is caught.
-    proc.stdout?.on("data", onData);
-    proc.stderr?.on("data", onData);
-    proc.once("exit", (code) => {
-      if (!resolved) {
-        clearTimeout(timer);
-        reject(new Error(`server exited before ready (code ${code ?? "?"})`));
-      }
-    });
-  });
-}
-
-async function stopServer(proc: ChildProcess): Promise<void> {
-  if (proc.exitCode !== null || proc.signalCode !== null) return;
-  try {
-    proc.stdin?.write("stop\n");
-  } catch {
-    /* may already be gone */
-  }
-  await new Promise<void>((res) => {
-    const timer = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-      res();
-    }, 15000);
-    proc.once("exit", () => {
-      clearTimeout(timer);
-      res();
-    });
-  });
-}
-
 /** Provision and boot a Paper server; resolves when it is ready to accept the bot. */
 export async function provisionPaper(opts: PaperProvisionOptions): Promise<ProvisionedServer> {
   if (!opts.eulaAccepted) {
@@ -396,7 +186,13 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
   mkdirSync(join(opts.instanceDir, "plugins"), { recursive: true });
 
   writeFileSync(join(opts.instanceDir, "eula.txt"), "eula=true\n");
-  writeServerProperties(opts);
+  writeServerProperties({
+    instanceDir: opts.instanceDir,
+    gamePort: opts.gamePort,
+    bindHost: opts.bindHost,
+    ...(opts.levelName ? { levelName: opts.levelName } : {}),
+    ...(opts.serverProps ? { serverProps: opts.serverProps } : {}),
+  });
   if (opts.ops?.length) writeOps(opts.instanceDir, opts.ops);
 
   const level = opts.levelName ?? "world";
@@ -425,9 +221,13 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
 
   const logPath = join(opts.instanceDir, "logs", "server.log");
   const logStream = createWriteStream(logPath);
-  const proc = spawn(opts.javaPath ?? "java", ["-Xms1G", "-Xmx2G", "-jar", jar, "nogui"], {
+  const proc = spawnFromLaunch({
+    kind: "jar",
+    java: opts.javaPath ?? "java",
+    jvmArgs: ["-Xms1G", "-Xmx2G"],
+    jar,
+    programArgs: ["nogui"],
     cwd: opts.instanceDir,
-    stdio: ["pipe", "pipe", "pipe"],
   });
 
   try {

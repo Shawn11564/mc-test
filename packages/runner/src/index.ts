@@ -11,6 +11,8 @@ export { SessionGroup, type ConnDef } from "./engine/SessionGroup.js";
 export {
   DriverRegistry,
   defaultRegistry,
+  SERVER_DRIVER_CAPABILITIES,
+  SERVER_DRIVER_SENTINEL,
   type DriverDescriptor,
   type DriverHandle,
   type DriverLaunchContext,
@@ -72,6 +74,19 @@ export {
   type AgentSpec,
   type AgentEndpoint,
 } from "./provision/PaperProvisioner.js";
+export { provisionServer, type ServerProvisionOptions } from "./provision/provisionServer.js";
+export {
+  provisionModded,
+  loaderFamily,
+  fabricServerLauncherUrl,
+  loaderInstallerMaven,
+  findArgsFile,
+  type ModdedProvisionOptions,
+  type ModSpec,
+  type ServerLoaderFamily,
+} from "./provision/ModdedProvisioner.js";
+export { parseLoadedMods, modLoadResult, type ModLoad } from "./provision/serverCommon.js";
+export { resolveModrinth, type ModrinthRef } from "./provision/modrinth.js";
 export type { NormalizedTest, NormalizedStep } from "./model/Step.js";
 export type { MatrixFile, MatrixTarget, WorldDef, Source, ProvisionPolicy } from "./model/Target.js";
 export type { TestResult, StepResult, SuiteResult, SkipInfo, Outcome, BaselineDiffInfo } from "./model/result.js";

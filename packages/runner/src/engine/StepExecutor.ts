@@ -76,6 +76,14 @@ export interface ExecContext {
    * changing. Called zero-or-more times per step.
    */
   onArtifact?: (artifact: ScreenshotArtifact) => void;
+  /**
+   * Set by the Runner when the session is driven by the cost-1 `server` driver:
+   * the primary connection is a server-truth agent, not a player surface, so
+   * `join`/`leave` are no-ops (the agent registers no `world.join`/`world.leave`).
+   * Lets a server-truth-only test (e.g. `mod.loaded` on a Forge/NeoForge server,
+   * where no bot can join) include a `join` step without erroring.
+   */
+  serverTruthOnly?: boolean;
 }
 
 /**
@@ -176,6 +184,9 @@ export async function executeStep(
   const a = asObject(step.args);
   switch (step.verb) {
     case "join": {
+      // Server-truth-only session (cost-1 `server` driver): no player surface to
+      // join — the agent answers truth/fixture/state directly. No-op honestly.
+      if (ctx.serverTruthOnly) return "server-truth session (no world join)";
       const username = (a["username"] as string | undefined) ?? ctx.defaultUsername;
       const result = await session.call<{ playerName?: string }>("world.join", {
         host: ctx.host,
@@ -186,6 +197,7 @@ export async function executeStep(
       return `joined as ${result.playerName ?? username}`;
     }
     case "leave":
+      if (ctx.serverTruthOnly) return "server-truth session (no world leave)";
       await session.call("world.leave", {});
       return "left world";
     case "chat": {

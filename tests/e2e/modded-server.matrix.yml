@@ -1,0 +1,62 @@
+# F5 e2e matrix — REAL modded SERVER boots (Fabric/Forge/NeoForge) that download a real
+# third-party mod (FerriteCore) and assert over MCTP that the loader loaded it. Driven by
+# tests/e2e/run-modded-server-boot.mjs (the e2e.yml `modded-server` job). No display needed —
+# a dedicated server renders nothing; the only heavy parts are network + a JDK (+ the
+# acceptance-only server-* agent jars, which the harness gates on per loader).
+version: 1
+
+provision:
+  eulaAccepted: true # You accept Mojang's EULA by setting this; required to boot.
+  bindHost: 127.0.0.1
+  portRange: [25760, 25899]
+  cacheDir: ~/.mc-test/cache
+  workDir: .mc-test/run
+
+worlds:
+  regions-world:
+    snapshot: { path: ./examples/regions/world-snapshot }
+    levelName: world
+
+targets:
+  # Fabric SERVER — the showcase: the server-fabric agent (Loom) is the most likely to build in
+  # the e2e lane, giving a true MCTP mod.loaded GREEN. The Fabric launcher is fetched from the
+  # meta API by loaderVersion; FerriteCore + fabric-api come from Modrinth into mods/.
+  - id: fabric-server-1.21
+    loader: fabric
+    mc: "1.21.1"
+    loaderVersion: "0.19.3"
+    driver: server
+    mods:
+      - { modrinth: { project: ferrite-core, version: sOzRw3CG }, as: ferritecore.jar }
+      - { modrinth: { project: fabric-api, loader: fabric, gameVersion: "1.21.1" }, as: fabric-api.jar }
+    agents: [ server-fabric ]
+    expectMods: [ ferritecore ]
+    world: { ref: regions-world }
+
+  # NeoForge SERVER — installer (--installServer) + @args boot; FerriteCore from Modrinth.
+  - id: neoforge-server-1.21
+    loader: neoforge
+    mc: "1.21.1"
+    loaderVersion: "21.1.66"
+    driver: server
+    mods:
+      - { modrinth: { project: ferrite-core, version: x7kQWVju }, as: ferritecore.jar }
+    agents: [ server-neoforge ]
+    expectMods: [ ferritecore ]
+    world: { ref: regions-world }
+
+  # Forge SERVER — installer (--installServer) + @args boot under Java 17; FerriteCore from Modrinth.
+  - id: forge-server-1.20.1
+    loader: forge
+    mc: "1.20.1"
+    loaderVersion: "47.3.39"
+    driver: server
+    mods:
+      - { modrinth: { project: ferrite-core, version: DG5Fn9Sz }, as: ferritecore.jar }
+    agents: [ server-forge ]
+    expectMods: [ ferritecore ]
+    world: { ref: regions-world }
+
+# NOTE: the `driver: server` + no-agent honest-skip (NO_SERVER_AGENT) and the negative
+# mod.loaded assertion are covered fast + offline by packages/runner/test/f5-server-driver.test.ts;
+# this matrix is only the heavy REAL-boot proof, so it avoids booting a server just to skip.

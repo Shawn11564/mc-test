@@ -1,0 +1,44 @@
+# mc-test server agent (NeoForge) manifest — NeoForge 1.20.5+ format (META-INF/neoforge.mods.toml).
+#
+# Thin server shim for the mc-test server-truth driver: hosts an MCTP WebSocket server and answers the
+# world-truth / fixtures / plugin-state half of the protocol as MCTP primitives. agent.kind=serverMod.
+# fakePlayers is intentionally dropped on NeoForge (no Carpet backend). All wire logic lives in
+# io.mctest:mc-test-agent-core; this mod only supplies the entrypoint (@Mod McTestServerMod) and the
+# Mojmap-mapped server facade (mappings/Names.java). NeoForge mappings are OFFICIAL Mojang (Mojmap), so
+# there is no mappings dependency — only this one quarantined file carries the per-version tax.
+
+# NeoGradle stamps the placeholder tokens from build.gradle.kts at processResources time.
+modLoader = "javafml"
+loaderVersion = "${loaderVersionRange}"
+license = "Apache-2.0"
+issueTrackerURL = "https://github.com/mc-test/mc-test/issues"
+
+[[mods]]
+modId = "mctestserverneoforge"
+version = "${version}"
+displayName = "mc-test server agent (NeoForge)"
+authors = "mc-test"
+# SERVER-side mod: hosts an MCTP server and answers the world-truth / fixtures / plugin-state half of the
+# protocol. The server-lifecycle wiring runs on ServerStartedEvent, so it is a no-op on a client.
+displayTest = "IGNORE_ALL_VERSION"
+description = '''
+Thin NeoForge dedicated-server shim for the mc-test server-truth driver: hosts an MCTP WebSocket server \
+and answers the world-truth / fixtures / plugin-state half of the protocol as MCTP primitives. All wire \
+logic lives in io.mctest:mc-test-agent-core; this mod only supplies the entrypoint and the Mojmap-mapped \
+server facade (mappings/Names.java).
+'''
+
+# Depend on NeoForge (the loader) and Minecraft, pinned to the build's (loader × MC) line. side = SERVER.
+[[dependencies.mctestserverneoforge]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neoVersionRange}"
+ordering = "NONE"
+side = "SERVER"
+
+[[dependencies.mctestserverneoforge]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraftVersionRange}"
+ordering = "NONE"
+side = "SERVER"

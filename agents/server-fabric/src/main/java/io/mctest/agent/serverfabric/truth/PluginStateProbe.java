@@ -1,6 +1,7 @@
 package io.mctest.agent.serverfabric.truth;
 
 import com.google.gson.JsonObject;
+import io.mctest.agent.core.BuiltInStateQueries;
 import io.mctest.agent.core.McTestException;
 import io.mctest.agent.core.McTestSession;
 import io.mctest.agent.core.McTestStateProvider;
@@ -78,6 +79,13 @@ public final class PluginStateProbe {
 
     /** Resolves the query's value (server thread). Throws {@code ASSERT_FAILED} when unresolvable. */
     private Object resolve(String query, Map<String, Object> args) throws McTestException {
+        // F5: loader-provided built-in (mod.loaded/plugin.loaded), resolved BEFORE the SUT provider so a
+        // DOWNLOADED mod (no McTestStateProvider) can still be asserted present. Fabric presence is
+        // FabricLoader.isModLoaded (quarantined behind Names).
+        Object builtin = BuiltInStateQueries.resolve(query, args, names::isModLoaded);
+        if (builtin != BuiltInStateQueries.NOT_HANDLED) {
+            return builtin;
+        }
         McTestStateProvider provider = names.lookupStateProvider();
         if (provider != null) {
             try {

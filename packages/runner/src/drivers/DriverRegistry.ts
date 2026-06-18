@@ -95,21 +95,62 @@ export class DriverRegistry {
   }
 }
 
-const HEADLESS_COST = 2; // server(1) < headless(2) < inprocess(3) < pixel(4)
+const SERVER_COST = 1; // server(1) < headless(2) < inprocess(3) < pixel(4)
+const HEADLESS_COST = 2;
 const INPROCESS_COST = 3;
 const PIXEL_COST = 4;
 
 /**
- * The default registry (M2 + M4 + M5): the headless driver (cost 2), the
- * in-process rendered-client driver (cost 3), and the pixel/OCR driver (cost 4 —
- * the universal **last resort**). Selection is by cost — a `containerGui`-only
- * test still picks the cheaper headless; a `clientScreens` test pulls in the
- * in-process driver; and pixel is chosen **only** when nothing cheaper satisfies
- * the test (or it is explicitly pinned via `driver: pixel`). Every implementation
- * is lazy-imported in `create()` so registering pulls in no heavy dependency.
+ * The `server` driver has **no MCTP endpoint of its own** — its "connection" IS a
+ * co-selected server agent (`server-bukkit`/`server-fabric`/`server-forge`/
+ * `server-neoforge`). `create()` returns this sentinel URL; the Runner detects
+ * `descriptor.id === "server"` and promotes the first co-selected agent to the
+ * primary (driver) connection, so a server-truth-only test (e.g. `mod.loaded`)
+ * runs with NO player join — the only way to assert on a Forge/NeoForge server,
+ * whose FML handshake a headless bot cannot complete.
+ */
+export const SERVER_DRIVER_SENTINEL = "mctp+server-agent://primary";
+
+/**
+ * What the `server` driver advertises for **driver selection** (`registry.select`).
+ * Deliberately ONLY the purely server-owned caps no UI driver has — so a
+ * server-truth test (top-level `requires: { pluginState: true }` etc.) picks this
+ * cost-1 driver, while UI tests (`command`/`containerGui`/`clientScreens`) never
+ * match it and fall through to headless/inprocess. `loader`/`mcVersionRange` are
+ * broad (the real per-step caps come from the promoted agent's live grant + the
+ * `unionAdvertised()`); they only matter if a test explicitly requires them.
+ */
+export const SERVER_DRIVER_CAPABILITIES: Capabilities = {
+  worldTruth: true,
+  pluginState: true,
+  fixtures: true,
+  fakePlayers: true,
+  loader: ["spigot", "paper", "folia", "fabric", "forge", "neoforge", "quilt", "vanilla"],
+  mcVersionRange: ">=1.8",
+};
+
+/**
+ * The default registry (M2 + M4 + M5 + F5): the `server` truth-only driver (cost
+ * 1), the headless driver (cost 2), the in-process rendered-client driver (cost
+ * 3), and the pixel/OCR driver (cost 4 — the universal **last resort**).
+ * Selection is by cost — a `pluginState`/`worldTruth`-only test (no UI) picks the
+ * cheapest `server` driver; a `containerGui` test picks headless; a
+ * `clientScreens` test pulls in the in-process driver; and pixel is chosen
+ * **only** when nothing cheaper satisfies the test (or it is explicitly pinned via
+ * `driver: pixel`). Every implementation is lazy-imported in `create()` so
+ * registering pulls in no heavy dependency.
  */
 export function defaultRegistry(): DriverRegistry {
   const registry = new DriverRegistry();
+  // The `server` driver starts NO process — its primary connection is a
+  // co-selected server agent, wired up by the Runner (see SERVER_DRIVER_SENTINEL).
+  registry.register({
+    id: "server",
+    kind: "serverAgent",
+    cost: SERVER_COST,
+    advertised: SERVER_DRIVER_CAPABILITIES,
+    create: async () => ({ url: SERVER_DRIVER_SENTINEL, stop: async () => {} }),
+  });
   registry.register({
     id: "headless",
     kind: "headlessBot",

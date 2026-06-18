@@ -138,7 +138,7 @@ targets:
   # F4 / M5 FAN-OUT. The Forge twin (client-forge, MCP-SRG mappings) — the third loader on the
   # inprocess axis, completing fabric + neoforge + forge. Identical to the rows above except
   # loader/loaderVersion/mc/client-agent, which is exactly the "add a loader = one Names.java +
-  # one yml row" promise: the Forge shim pins MC 1.20.1 / Forge 47.2.0 (ForgeGradle build).
+  # one yml row" promise: the Forge shim pins MC 1.20.1 / Forge 47.3.39 (ForgeGradle build).
   # Same modular-launch posture as neoforge: HONEST-SKIPS unless opted in via
   # MC_TEST_RENDERED_LOADERS=forge on a GL-capable host (with the ForgeGradle-built agent + the
   # Forge build of the SUT mod, examples/regions/mod-forge). The server is Paper 1.20.1 so the truth
@@ -146,7 +146,7 @@ targets:
   - id: forge-1.20.1-client
     loader: forge
     mc: "1.20.1"
-    loaderVersion: "47.2.0" # the ForgeGradle shim's pinned Forge version
+    loaderVersion: "47.3.39" # the ForgeGradle shim's pinned Forge version (47.2.0 does not exist)
     driver: inprocess
     server: { paper: { project: paper, version: "1.20.1", build: latest } }
     plugins:
@@ -156,4 +156,54 @@ targets:
       - { path: ./examples/regions/mod-forge/build/libs/openregions-forge.jar, as: regions.jar }
     display: xvfb
     agents: [ client-forge, server-bukkit ]
+    world: { ref: regions-world }
+
+  # ───────────────────────────── F5: MODDED SERVERS ─────────────────────────────
+  # Test SERVER-SIDE mods on a real Fabric/Forge/NeoForge DEDICATED SERVER (no display — GL is
+  # only for rendered clients, so these boot in plain CI). Each row boots the modded server,
+  # installs a REAL third-party mod downloaded from Modrinth (FerriteCore, id "ferritecore") +
+  # the server-* truth agent into mods/, and the canonical `regions.modloaded.mctest.yml` test
+  # asserts over MCTP that the loader actually loaded the mod (`driver: server` → a
+  # server-truth-only session, NO player join — the only way to assert on Forge/NeoForge, whose
+  # FML handshake a Mineflayer bot cannot complete). `expectMods` adds the secondary boot-log
+  # signal. These need network + a JDK (+ the acceptance-only server-* agent jars), so they run
+  # in the e2e lane (tests/e2e/modded-server.matrix.yml); without a built agent jar the
+  # server-truth steps HONEST-SKIP (NO_SERVER_AGENT), never a false green.
+
+  - id: fabric-server-1.21
+    loader: fabric
+    mc: "1.21.1"
+    loaderVersion: "0.19.3" # Fabric loader (stable for 1.21.1); the launcher is fetched from the meta API
+    driver: server # server-truth-only (mod.loaded); a bot COULD also join a Fabric server, but we assert via the agent
+    mods:
+      # The SUT: a real mod downloaded from Modrinth — FerriteCore 7.0.3 for Fabric 1.21.1 (verified version id).
+      - { modrinth: { project: ferrite-core, version: sOzRw3CG }, as: ferritecore.jar }
+      # Fabric API — the server-fabric agent depends on it (newest for 1.21.1; the resolved id is logged to pin).
+      - { modrinth: { project: fabric-api, loader: fabric, gameVersion: "1.21.1" }, as: fabric-api.jar }
+    agents: [ server-fabric ] # the Fabric server-mod truth agent (acceptance-only Loom build) → mods/
+    expectMods: [ ferritecore ] # boot-log gate: fail MOD_NOT_LOADED if the loader didn't load it
+    world: { ref: regions-world }
+
+  - id: neoforge-server-1.21
+    loader: neoforge
+    mc: "1.21.1"
+    loaderVersion: "21.1.66" # NeoForge installer version (verified to exist on the NeoForged maven)
+    driver: server
+    mods:
+      # FerriteCore 7.0.3 for NeoForge 1.21.1 (verified Modrinth version id).
+      - { modrinth: { project: ferrite-core, version: x7kQWVju }, as: ferritecore.jar }
+    agents: [ server-neoforge ] # NeoForge server-mod truth agent (acceptance-only NeoGradle build) → mods/
+    expectMods: [ ferritecore ]
+    world: { ref: regions-world }
+
+  - id: forge-server-1.20.1
+    loader: forge
+    mc: "1.20.1"
+    loaderVersion: "47.3.39" # Forge installer version (47.2.0 does NOT exist; 47.3.39 verified on the Forge maven)
+    driver: server
+    mods:
+      # FerriteCore 6.0.1 for Forge 1.20.1 (verified Modrinth version id).
+      - { modrinth: { project: ferrite-core, version: DG5Fn9Sz }, as: ferritecore.jar }
+    agents: [ server-forge ] # Forge server-mod truth agent (acceptance-only ForgeGradle build) → mods/
+    expectMods: [ ferritecore ]
     world: { ref: regions-world }

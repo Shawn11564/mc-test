@@ -5,6 +5,7 @@
  * `matchCapabilities` — there is no hard-coded "use headless" branch.
  */
 import { type Capabilities } from "@mc-test/protocol";
+import type { ModLoad } from "../model/result.js";
 import { MctpRpcError } from "../drivers/MctpClient.js";
 import {
   DriverRegistry,
@@ -31,6 +32,8 @@ export interface ProvisionHandle {
    * to `runTest` so truth/fixture/player steps fan to the agent.
    */
   agents?: AgentConn[];
+  /** Boot-log mod-load detection for a modded-server target (F5), surfaced on the result. */
+  modLoad?: ModLoad;
   stop: () => Promise<void>;
   /**
    * Optional post-run cleanup of the instance working dir (F1 hardening). Called
@@ -154,33 +157,64 @@ export class Runner {
       ...(meta.mc ? { mcVersionRange: meta.mc } : {}),
       ...(meta.loader ? { loader: meta.loader } : {}),
     };
-    const driverConn: ConnDef = {
-      url: endpointUrl,
-      required,
-      optional: advertisedKeys(descriptor.advertised).filter((k) => !required.includes(k)),
-      advertised: descriptor.advertised,
-      role: "driver",
-      ...(Object.keys(constraints).length ? { constraints } : {}),
-    };
-    // A co-selected agent is a COMPANION: it must never refuse the session over
-    // capabilities. We require nothing and OFFER the assumed caps as optional, then
-    // let the union reflect what the agent ACTUALLY grants (capability discovery, not
-    // a runner-side assumption). So an agent that honestly advertises a subset — e.g.
-    // the bukkit agent dropping `fakePlayers` when no Carpet backend is present — still
-    // connects, its real caps (pluginState/fixtures/…) join the union, and only the
-    // genuinely-absent caps' steps honestly skip. A transport failure still drops the
-    // agent out entirely (its steps then skip), never a test fail.
-    const agentConns: ConnDef[] = agents.map((agent) => ({
+    const withConstraints = Object.keys(constraints).length ? { constraints } : {};
+
+    // A co-selected agent is a COMPANION (role "agent"): it must never refuse the
+    // session over capabilities. We require nothing and OFFER the assumed caps as
+    // optional, then let the union reflect what the agent ACTUALLY grants (capability
+    // discovery, not a runner-side assumption). So an agent that honestly advertises a
+    // subset — e.g. the bukkit agent dropping `fakePlayers` when no Carpet backend is
+    // present — still connects, its real caps (pluginState/fixtures/…) join the union,
+    // and only the genuinely-absent caps' steps honestly skip. A transport failure
+    // still drops the agent out entirely (its steps then skip), never a test fail.
+    // When PROMOTED to the primary (the `server` driver, role "driver") it instead
+    // carries the test's `required` so negotiation validates the agent grants them.
+    const agentConn = (agent: AgentConn, role: "driver" | "agent"): ConnDef => ({
       url: agent.url,
-      required: [],
-      optional: advertisedKeys(agent.advertised),
+      required: role === "driver" ? required : [],
+      optional: advertisedKeys(agent.advertised).filter((k) => !(role === "driver" && required.includes(k))),
       advertised: agent.advertised,
-      role: "agent",
-    }));
+      role,
+      ...(role === "driver" ? withConstraints : {}),
+    });
+
+    // The cost-1 `server` driver has no endpoint of its own: the FIRST co-selected
+    // server agent becomes the PRIMARY (driver) connection so a server-truth-only test
+    // (e.g. `mod.loaded`, no player join — the only way to assert on a Forge/NeoForge
+    // server) runs; the rest stay companions. With no agent there is nothing to drive
+    // → honest skip (never a crash, never a false green).
+    const serverTruthOnly = descriptor.id === "server";
+    let connDefs: ConnDef[] = [];
+    if (serverTruthOnly) {
+      if (agents.length === 0) {
+        testSkip = {
+          category: "environment",
+          reason: "NO_SERVER_AGENT",
+          unmet: required.length ? required : ["pluginState"],
+          message:
+            "driver 'server' requires a co-selected server agent " +
+            "(agents: [server-bukkit|server-fabric|server-forge|server-neoforge]); none was provisioned",
+        };
+        outcome = "skipped";
+      } else {
+        const [head, ...rest] = agents;
+        connDefs = [agentConn(head!, "driver"), ...rest.map((a) => agentConn(a, "agent"))];
+      }
+    } else {
+      const driverConn: ConnDef = {
+        url: endpointUrl,
+        required,
+        optional: advertisedKeys(descriptor.advertised).filter((k) => !required.includes(k)),
+        advertised: descriptor.advertised,
+        role: "driver",
+        ...withConstraints,
+      };
+      connDefs = [driverConn, ...agents.map((a) => agentConn(a, "agent"))];
+    }
 
     try {
       try {
-        await group.connect([driverConn, ...agentConns]);
+        if (connDefs.length) await group.connect(connDefs);
       } catch (err) {
         if (err instanceof MctpRpcError && err.code === -32002) {
           testSkip = {
@@ -218,7 +252,7 @@ export class Runner {
             continue;
           }
           const stepArtifacts: ScreenshotArtifact[] = [];
-          const stepExec: ExecContext = { ...exec, onArtifact: (a) => stepArtifacts.push(a) };
+          const stepExec: ExecContext = { ...exec, serverTruthOnly, onArtifact: (a) => stepArtifacts.push(a) };
           try {
             const detail = await executeStep((cap) => group.route(cap), step, stepExec);
             steps.push({
@@ -344,6 +378,19 @@ export class Runner {
       };
       const result = await this.runTest(test, descriptor, driver.url, exec, meta, provisioned.agents ?? []);
       failed = result.outcome === "failed";
+      // Surface the boot-log mod-load detection (F5) on the result + as a human note.
+      // Informational here (any hard `MOD_NOT_LOADED` gate fires in the provisioner);
+      // the MCTP `mod.loaded` assertion in the test remains authoritative.
+      if (provisioned.modLoad) {
+        const ml = provisioned.modLoad;
+        result.modLoad = ml;
+        const note = ml.missing.length
+          ? `⚠ boot-log: mod(s) NOT detected loaded: ${ml.missing.join(", ")} (loader ${ml.loader}; MCTP mod.loaded is authoritative)`
+          : ml.expected.length
+            ? `boot-log: mod(s) detected loaded: ${ml.seen.join(", ")} (loader ${ml.loader})`
+            : `boot-log: ${ml.all.length} mod(s) parsed from ${ml.loader} startup`;
+        result.notes = [...(result.notes ?? []), note];
+      }
       // Add the server log to the failure bundle WITHOUT clobbering any screenshot
       // artifacts the run already recorded (explicit steps + on-failure capture).
       if (provisioned.logPath && result.outcome === "failed") {

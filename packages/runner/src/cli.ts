@@ -22,7 +22,9 @@ import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from ".
 import { runMatrix, resolveConcurrency } from "./engine/runMatrix.js";
 import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPreflight.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
-import { provisionPaper, findFreePort, type AgentSpec } from "./provision/PaperProvisioner.js";
+import { findFreePort, type AgentSpec, type ModLoad } from "./provision/serverCommon.js";
+import { provisionServer } from "./provision/provisionServer.js";
+import { loaderFamily, type ModSpec } from "./provision/ModdedProvisioner.js";
 import { resolveArtifact } from "./provision/sources.js";
 import { resolveJavaForMc, resolveJdk, requiredJavaMajor, javaMajorOf } from "./provision/jdk.js";
 import { resolveSpigotJar } from "./provision/buildtools.js";
@@ -62,7 +64,32 @@ const SERVER_FABRIC_CAPABILITIES: Capabilities = {
   fakePlayers: true,
   chat: true,
   testIdTags: true,
-  loader: ["fabric", "neoforge", "quilt"],
+  loader: ["fabric", "quilt"],
+};
+
+/**
+ * The Forge / NeoForge server-mod truth agents (F5). Same server-truth surface as the
+ * Fabric agent, but for a FORGE / NEOFORGE server. `fakePlayers` is NOT advertised —
+ * those loaders have no Carpet-style fake-player backend by default, so those steps
+ * honestly skip (the agent's live grant is authoritative regardless). Scaffolded /
+ * acceptance-only like the client forge/neoforge shims (ForgeGradle / NeoGradle build).
+ */
+const SERVER_FORGE_CAPABILITIES: Capabilities = {
+  worldTruth: true,
+  pluginState: true,
+  fixtures: true,
+  chat: true,
+  testIdTags: true,
+  loader: ["forge"],
+};
+
+const SERVER_NEOFORGE_CAPABILITIES: Capabilities = {
+  worldTruth: true,
+  pluginState: true,
+  fixtures: true,
+  chat: true,
+  testIdTags: true,
+  loader: ["neoforge"],
 };
 
 /**
@@ -79,11 +106,23 @@ const KNOWN_AGENTS: Record<string, { jarPath: string; advertised: Capabilities }
     jarPath: "agents/server-bukkit/build/libs/mc-test-agent-bukkit.jar",
     advertised: SERVER_BUKKIT_CAPABILITIES,
   },
-  // M5: the Fabric/NeoForge server-mod truth agent (Loom build — acceptance-only
-  // in this repo's CI; build-artifact `agent-server-fabric-<mc>.jar`).
+  // M5: the Fabric server-mod truth agent (Loom build — acceptance-only in this
+  // repo's CI; build-artifact `agent-server-fabric.jar`).
   "server-fabric": {
     jarPath: "agents/server-fabric/build/libs/agent-server-fabric.jar",
     advertised: SERVER_FABRIC_CAPABILITIES,
+  },
+  // F5: the Forge/NeoForge server-mod truth agents (ForgeGradle/NeoGradle build —
+  // acceptance-only; build-artifacts `agent-server-{forge,neoforge}.jar`). A modded
+  // forge/neoforge SERVER row co-selects one of these; absent its built jar the
+  // server-truth steps honestly skip (the cost-1 `server` driver needs an agent).
+  "server-forge": {
+    jarPath: "agents/server-forge/build/libs/agent-server-forge.jar",
+    advertised: SERVER_FORGE_CAPABILITIES,
+  },
+  "server-neoforge": {
+    jarPath: "agents/server-neoforge/build/libs/agent-server-neoforge.jar",
+    advertised: SERVER_NEOFORGE_CAPABILITIES,
   },
 };
 
@@ -258,70 +297,112 @@ function buildProvision(
     const agentSpecs: AgentSpec[] = [];
     let portCursor = gamePort + 1;
     for (const agent of agentJars) {
+      // A co-selected agent whose built jar is absent (e.g. the acceptance-only
+      // server-forge/neoforge shims not built in this lane) is DROPPED, not a hard
+      // error — its capability-gated steps then honestly skip, and a `driver: server`
+      // target with no agent left skips NO_SERVER_AGENT (never a false green).
+      if (!existsSync(agent.jarPath)) {
+        console.warn(`  ⚠ agent '${agent.name}' jar not built (${agent.jarPath}) — dropped; its steps will skip`);
+        continue;
+      }
       const agentPort = await findFreePort(bindHost, portCursor, to);
       agentSpecs.push({ name: agent.name, jarPath: agent.jarPath, port: agentPort });
       portCursor = agentPort + 1;
     }
     const instanceDir = resolve(join(workDir, `${target.id}-${gamePort}-${process.pid}`));
-    // Resolve + integrity-check each plugin source (path, or url+sha256) to a local jar.
+    // Server family: a target with `server: { paper }` is Bukkit even if its `loader`
+    // names a mod loader (the rendered-client rows host a Paper server + the regions
+    // PLUGIN, and put the client mod elsewhere). Otherwise the loader decides — a
+    // fabric/forge/neoforge target with no Paper server is a MODDED SERVER (F5).
+    const serverIsBukkit = !!target.server?.paper || loaderFamily(target.loader) === "bukkit";
+    // Bukkit → SUT plugins into plugins/; modded → SUT mods (incl. modrinth deps) into mods/.
     const resolvedPlugins: { path: string; as?: string }[] = [];
-    for (const p of target.plugins ?? []) {
-      resolvedPlugins.push({ path: await resolveArtifact(p, cacheDir), ...(p.as ? { as: p.as } : {}) });
+    const resolvedMods: ModSpec[] = [];
+    if (serverIsBukkit) {
+      for (const p of target.plugins ?? []) {
+        resolvedPlugins.push({ path: await resolveArtifact(p, cacheDir), ...(p.as ? { as: p.as } : {}) });
+      }
+    } else {
+      for (const m of target.mods ?? []) {
+        resolvedMods.push({ path: await resolveArtifact(m, cacheDir), ...(m.as ? { as: m.as } : {}) });
+      }
     }
-    // Multi-JDK: legacy MC needs an older Java than the host (e.g. 1.8.x needs Java 8, not 21).
-    // Map mc → an acceptable Java major and resolve a matching JDK — the host if it fits (modern
-    // targets boot unchanged with no download), else a configured/installed one, else a Temurin
-    // build fetched from Adoptium into the cache. Resolved FIRST so a Spigot build can reuse it.
+    // Multi-JDK: legacy MC needs an older Java than the host (e.g. 1.8.x needs Java 8, not 21);
+    // Forge 1.20.1 needs Java 17. Map mc → an acceptable Java major and resolve a matching JDK —
+    // the host if it fits, else a configured/installed one, else a fetched Temurin. Resolved FIRST
+    // so a Spigot build / loader installer reuses it.
     const javaPath = await resolveJavaForMc(target.mc, {
       cacheDir,
       ...(prov.jdks ? { configured: prov.jdks } : {}),
       ...(prov.downloadJdks !== undefined ? { download: prov.downloadJdks } : {}),
       onLog: (line) => console.log(`  ${line}`),
     });
-    // Server jar source. The PaperMC fill API can't serve 1.8.x, so a plugin-capable old server
-    // comes from either an explicit `server: { path | url, sha256 }` jar OR `server: { spigot: {
-    // version } }` — built from source with Spigot BuildTools under `javaPath` (the same JDK the
-    // server boots with, e.g. Java 8). Absent these, the default Paper-API path (`server.paper.build`)
-    // is used. Booted directly via `serverJar`, bypassing the fill API.
+    // Server jar / loader installer source.
+    //  - Bukkit: explicit `server: { path|url, sha256 }` jar, or `server: { spigot }` (BuildTools),
+    //    else the Paper-API path. Booted directly via `serverJar`.
+    //  - Modded fabric: an explicit `server: { url|path, sha256 }` fabric-server-launch.jar
+    //    (else the provisioner resolves it from the Fabric meta API by loaderVersion).
+    //  - Modded forge/neoforge: a `loaderInstaller: { url|path }` installer override (else the
+    //    provisioner resolves the installer from maven by loaderVersion).
     const serverSrc = target.server;
     let serverJar: string | undefined;
+    let installerJar: string | undefined;
     if (serverSrc && (serverSrc.path || serverSrc.url)) {
       serverJar = await resolveArtifact(serverSrc, cacheDir);
-    } else if (serverSrc?.spigot) {
+    } else if (serverIsBukkit && serverSrc?.spigot) {
       serverJar = await resolveSpigotJar(serverSrc.spigot.version ?? target.mc, {
         cacheDir,
         javaPath,
         onLog: (line) => console.log(`  ${line}`),
       });
     }
-    const server = await provisionPaper({
+    if (!serverIsBukkit && target.loaderInstaller && (target.loaderInstaller.path || target.loaderInstaller.url)) {
+      installerJar = await resolveArtifact(target.loaderInstaller, cacheDir);
+    }
+    const server = await provisionServer({
+      loader: target.loader,
       mc: target.mc,
+      ...(target.loaderVersion ? { loaderVersion: target.loaderVersion } : {}),
       build: target.server?.paper?.build ?? "latest",
       ...(serverJar ? { serverJar } : {}),
+      ...(installerJar ? { installerJar } : {}),
       javaPath,
       bindHost,
       gamePort,
       instanceDir,
       cacheDir,
       plugins: resolvedPlugins,
+      mods: resolvedMods,
       ...(agentSpecs.length ? { agents: agentSpecs } : {}),
       ...(worldSnapshotPath ? { worldSnapshotPath } : {}),
       ...(world?.levelName ? { levelName: world.levelName } : {}),
       ...(target.serverProps ? { serverProps: target.serverProps } : {}),
       ...(target.ops ? { ops: target.ops } : {}),
       eulaAccepted: prov.eulaAccepted ?? false,
+      ...(target.expectMods ? { expectModIds: target.expectMods } : {}),
       onLog: () => {},
     });
+    // Boot-log gate (F5): a target that DECLARED `expectMods` fails if the loader did not
+    // load one (a hard `MOD_NOT_LOADED`). Without `expectMods` the modLoad signal is purely
+    // informational (surfaced on the result). The MCTP `mod.loaded` assertion stays primary.
+    if (target.expectMods?.length && server.modLoad && server.modLoad.missing.length) {
+      await server.stop().catch(() => {});
+      throw new Error(
+        `MOD_NOT_LOADED: ${server.modLoad.missing.join(", ")} not found in the ${target.loader} boot log`,
+      );
+    }
     // Pair each resolved endpoint with the agent's advertised caps → AgentConn.
+    const agentKind = serverIsBukkit ? "serverPlugin" : "serverMod";
     const agentConns: AgentConn[] = server.agentEndpoints.map((ep) => {
       const known = agentJars.find((a) => a.name === ep.name);
-      return { url: ep.url, advertised: known?.advertised ?? SERVER_BUKKIT_CAPABILITIES, kind: "serverPlugin" };
+      return { url: ep.url, advertised: known?.advertised ?? SERVER_BUKKIT_CAPABILITIES, kind: agentKind };
     });
     return {
       host: server.host,
       port: server.port,
       logPath: server.logPath,
       ...(agentConns.length ? { agents: agentConns } : {}),
+      ...(server.modLoad ? { modLoad: server.modLoad } : {}),
       stop: server.stop,
       cleanup: async (failed: boolean) => {
         if (failed && keepOnFailure) return; // retain failed instance dir for triage

@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=../../packages/protocol/schema/mctest-stepfile.schema.json
+name: modded-server-loads-mod
+# F5 — prove a MODDED SERVER actually loaded a real, downloaded mod.
+#
+# This is a SERVER-TRUTH-ONLY test: its only requirement is `pluginState`, which only the
+# cost-1 `server` driver advertises — so it runs with NO player join. That matters because a
+# headless (Mineflayer) bot can connect to a Fabric server but CANNOT complete Forge/NeoForge's
+# FML handshake; asserting over the co-selected server agent (no player) is the only way to
+# verify a Forge/NeoForge server. The SAME unchanged file runs across the fabric/forge/neoforge
+# SERVER rows in mc-test.yml.
+requires:
+  pluginState: true
+target: ${matrix} # filled by the mc-test.yml row selected with --target
+steps:
+  # The downloaded third-party mod (FerriteCore, mod id "ferritecore") is reported loaded by the
+  # LOADER ITSELF — the loader-provided, SUT-agnostic `mod.loaded` built-in (FabricLoader.isModLoaded
+  # / ModList.isLoaded), so no cooperation from the mod is needed. A real runtime-state proof that the
+  # modded environment loaded it (the boot-log scan in mc-test.yml `expectMods` is the secondary signal).
+  - assertPluginState:
+      requires: { pluginState: true }
+      query: "mod.loaded"
+      args: { id: "ferritecore" }
+      expect: true

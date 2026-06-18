@@ -12,6 +12,24 @@ export interface SkipInfo {
   message: string;
 }
 
+/**
+ * Boot-log mod-load detection for a modded server (F5). A SECONDARY, informational
+ * signal surfaced in the report; the authoritative proof a mod loaded is the MCTP
+ * `mod.loaded` assertion in the test. Defined here (the model layer) so both the
+ * provisioner and the reporters reference one type.
+ */
+export interface ModLoad {
+  loader: string;
+  /** Mod ids the target declared it expects (`target.expectMods`). */
+  expected: string[];
+  /** Of `expected`, the ids detected in the boot log. */
+  seen: string[];
+  /** Of `expected`, the ids NOT detected. */
+  missing: string[];
+  /** All mod ids parsed from the log (best-effort; richest on Fabric). */
+  all: string[];
+}
+
 /** An informational, NON-GATING baseline screenshot diff (ROADMAP §5.4 / M4). */
 export interface BaselineDiffInfo {
   baselinePath: string;
@@ -67,6 +85,8 @@ export interface TestResult {
   brittle?: boolean;
   /** Loud, human-facing report notes (e.g. the brittle-driver warning). */
   notes?: string[];
+  /** Boot-log mod-load detection for a modded-server target (F5). */
+  modLoad?: ModLoad;
 }
 
 /** All test results for one (suite × target). */

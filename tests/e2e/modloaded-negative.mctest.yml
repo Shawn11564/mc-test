@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=../../packages/protocol/schema/mctest-stepfile.schema.json
+name: modded-server-negative-control
+# NEGATIVE control for F5: assert a mod that is NOT installed is loaded → must go RED. Proves the
+# `mod.loaded` assertion reads real loader state (FerriteCore IS installed on the server, but this
+# asks about a different, absent id), so a green result is never a rubber stamp.
+requires:
+  pluginState: true
+target: ${matrix}
+steps:
+  - assertPluginState:
+      requires: { pluginState: true }
+      query: "mod.loaded"
+      args: { id: "definitely-not-installed-mod" }
+      expect: true

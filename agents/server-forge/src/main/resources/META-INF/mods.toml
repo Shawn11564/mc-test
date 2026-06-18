@@ -1,0 +1,39 @@
+# mc-test server agent (Forge) manifest. Forge uses mods.toml (NOT fabric.mod.json).
+# Placeholder tokens below are stamped at build time by processResources.
+modLoader = "javafml"
+loaderVersion = "[${loaderRange},)"
+license = "Apache-2.0"
+issueTrackerURL = "https://github.com/mc-test/mc-test/issues"
+
+[[mods]]
+modId = "mctestserverforge"
+version = "${version}"
+displayName = "mc-test server agent (Forge)"
+# SERVER-side only: hosts an MCTP WebSocket server and answers the world-truth / fixtures / plugin-state
+# half of the protocol as MCTP primitives. agent.kind=serverMod. fakePlayers is intentionally dropped on
+# Forge (no Carpet backend). All wire logic lives in io.mctest:mc-test-agent-core; this mod only supplies
+# the entrypoint (io.mctest.agent.serverforge.McTestServerMod) and the Mojmap-mapped server facade
+# (mappings/Names.java).
+displayTest = "IGNORE_ALL_VERSION"
+authors = "mc-test"
+description = '''
+Thin Forge dedicated-server shim for the mc-test server-truth driver: hosts an MCTP WebSocket server and
+answers the world-truth / fixtures / plugin-state half of the protocol as MCTP primitives. All wire logic
+lives in io.mctest:mc-test-agent-core; this mod only supplies the entrypoint and the Mojmap-mapped server
+facade (mappings/Names.java).
+'''
+
+# Loader/MC bounds. minecraft is required; forge is the loader runtime. side = SERVER (no client UI).
+[[dependencies.mctestserverforge]]
+    modId = "forge"
+    mandatory = true
+    versionRange = "[${forgeRange},)"
+    ordering = "NONE"
+    side = "SERVER"
+
+[[dependencies.mctestserverforge]]
+    modId = "minecraft"
+    mandatory = true
+    versionRange = "[${minecraftVersion}]"
+    ordering = "NONE"
+    side = "SERVER"

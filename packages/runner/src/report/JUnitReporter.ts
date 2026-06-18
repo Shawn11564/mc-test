@@ -65,6 +65,9 @@ export function renderJUnit(results: TestResult[]): string {
           // Surface the advisory brittle-driver marker so CI dashboards can flag
           // last-resort (pixel/OCR) results (ROADMAP §6.3).
           ["brittle", r.brittle ? "true" : undefined],
+          // Boot-log mod-load detection for a modded-server target (F5).
+          ["modsLoaded", r.modLoad ? (r.modLoad.seen.length ? r.modLoad.seen.join(",") : r.modLoad.all.join(",")) || undefined : undefined],
+          ["modsMissing", r.modLoad?.missing.length ? r.modLoad.missing.join(",") : undefined],
           // Each artifact (screenshot PNG, server log) as a property so CI can link it.
           ...(r.artifacts ?? []).map((p, i) => [`artifact.${i}`, p] as [string, string]),
           ...baselineProps,

@@ -3,6 +3,7 @@ package io.mctest.agent.bukkit.truth;
 import com.google.gson.JsonObject;
 import io.mctest.agent.bukkit.MainThread;
 import io.mctest.agent.bukkit.Params;
+import io.mctest.agent.core.BuiltInStateQueries;
 import io.mctest.agent.core.McTestException;
 import io.mctest.agent.core.McTestSession;
 import io.mctest.agent.core.McTestStateProvider;
@@ -77,6 +78,14 @@ public final class PluginStateProbe {
 
     /** Resolves the query's value (server thread). Throws {@code ASSERT_FAILED} when unresolvable. */
     private Object resolve(String query, Map<String, Object> args) throws McTestException {
+        // F5: loader-provided built-in (mod.loaded/plugin.loaded), resolved BEFORE the SUT provider so a
+        // DOWNLOADED plugin/mod (no McTestStateProvider) can still be asserted present. Bukkit presence
+        // is the PluginManager registry.
+        Object builtin = BuiltInStateQueries.resolve(
+                query, args, id -> Bukkit.getPluginManager().getPlugin(id) != null);
+        if (builtin != BuiltInStateQueries.NOT_HANDLED) {
+            return builtin;
+        }
         McTestStateProvider provider = lookupProvider();
         if (provider != null) {
             try {

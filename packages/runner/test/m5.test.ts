@@ -359,7 +359,7 @@ describe("M5 mappings quarantine: mapped names ONLY in mappings/Names.java for t
   const MAPPED =
     /\b(?:net\.minecraft\.|net\.fabricmc\.yarn|org\.lwjgl\.glfw|com\.mojang\.(?:blaze3d|authlib|serialization|datafixers))/;
 
-  for (const shim of ["client-forge", "client-neoforge", "server-fabric"]) {
+  for (const shim of ["client-forge", "client-neoforge", "server-fabric", "server-forge", "server-neoforge"]) {
     it(`${shim}: no mapped (net.minecraft.*) import outside mappings/Names.java`, () => {
       // Scope the quarantine to PRODUCTION code (src/main): the per-(loader×version) recompile tax is
       // the shipped shim. Tests (src/test) legitimately reference mapped names — e.g. the mapping-contract

@@ -96,10 +96,11 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `useMatrix` | list<string> | — | `[]` | Names of `matrix` axes this target expands over. Empty ⇒ the target is taken verbatim (one instance). E.g. `[mc]` expands the target once per `matrix.mc` value. |
 | `server` | `Source` \| `{ref}` | cond | — | The server artifact (jar/installer) for server-side loaders (`paper`, `spigot`, `folia`, server-side `fabric`/`forge`/`neoforge`/`quilt`, `vanilla`). REQUIRED when `side` includes `server`. May be `{ ref: <sources key> }`. |
 | `client` | `Source` \| `{ref}` | cond | — | The client artifact / launch profile for rendered-client targets. REQUIRED when `side` includes `client` and `driver: inprocess|pixel`. See §5.2. |
-| `loaderInstaller` | `Source` \| `{ref}` | cond | — | For mod loaders, the loader installer (e.g. Fabric installer jar, NeoForge installer). REQUIRED for `fabric`/`forge`/`neoforge`/`quilt` unless `server`/`client` already points at a pre-installed server jar. |
+| `loaderInstaller` | `Source` \| `{ref}` | cond | — | For mod loaders, the loader installer (e.g. Fabric installer jar, NeoForge/Forge installer). REQUIRED for `fabric`/`forge`/`neoforge`/`quilt` unless `server`/`client` already points at a pre-installed server jar. Doubles as the **Forge/NeoForge installer override** for modded **servers** (F5, §2.3): the runner runs it with `--installServer` and boots via the generated `@args` file. |
 | `loaderVersion` | string | cond | — | Pinned mod-loader version, **threaded from the target to the in-process driver** for a rendered (`inprocess`) client (`DRIVERS.md` §2.4). **Fabric/Quilt:** optional — the Fabric loader version, else the provisioner resolves + pins the newest stable for `mc`. **Forge/NeoForge:** **REQUIRED** to run the modular installer launch (e.g. forge `"47.2.0"`, neoforge `"21.1.66"`). Mirrors `Target.client.loaderVersion` (§5.2). |
 | `plugins` | list<`Source`\|`{ref}`> | — | `[]` | Bukkit/Spigot/Paper **plugins** to install (the SUT and its deps). Dropped into `plugins/`. The regions plugin is one of these. |
-| `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. For an `inprocess` (rendered-client) target these mods are installed into the **rendered client's** `mods/` (§5.2) alongside the client agent (§2.4.2). The regions client-GUI mod is one of these. |
+| `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. For an `inprocess` (rendered-client) target these mods are installed into the **rendered client's** `mods/` (§5.2) alongside the client agent (§2.4.2). The regions client-GUI mod is one of these. For a modded **server** target the SUT mods + the `server-fabric`/`server-forge`/`server-neoforge` truth agent go into the server's `mods/` (§2.3). |
+| `expectMods` | list<string> | — | `[]` | **(F5)** Mod ids the loader **must** report loaded for this target. The runner scans the boot log for each id; a missing one fails the instance with **`MOD_NOT_LOADED`**. Useful to gate a modded-server test on a **downloaded** third-party mod actually loading. The same boot-log scan is also surfaced informationally as `modLoad` reporting (§6) even when `expectMods` is empty. |
 | `display` | `Display` enum | — | from `provision.display` | Per-target display backend for a rendered (`inprocess`/`pixel`) client: `xvfb` (Linux headless / CI) or `desktop` (a real display). Overrides the global `provision.display.backend` (§5.1) for this target only. Ignored for headless/server-side targets (no rendered client). |
 | `agents` | list<`AgentId`> | — | inferred from `driver`/`side` | The set of mc-test agents co-installed and **co-selected** for this target. Each entry is a known agent id — `server-bukkit`, `server-fabric`, `client-fabric`, `client-forge`, `client-neoforge` (resolved via `agentResolver`, §2.4; per-agent build/scaffold status is the rightmost column of that §2.4 table — `server-fabric`/`client-forge`/`client-neoforge` are **scaffolded (M5, acceptance-only)**); a per-agent artifact override may be supplied out-of-band via `agentSources` (keyed by agent id). When `agents` is omitted the runner infers them from `driver`/`side`. Listing `server-bukkit` on a Paper target installs the server agent and gives the test the server-owned capabilities (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`) over a **second MCTP connection** (§2.4.1, §4). Example: `agents: [ server-bukkit ]`. A client target typically lists both a client and a server agent, e.g. `agents: [ client-fabric, server-fabric ]`. |
 | `world` | `World`\|`{ref}` | — | `flat-void` builtin | The world snapshot copied **fresh per test** (§3). May be a named ref. |
@@ -144,7 +145,7 @@ Exactly one of `url` / `path` / `maven` / `paper` / `mojang` / `spigot` / `modri
 | `paper` | `PaperRef` | one-of | `{ project: paper|folia|velocity, version: <mc>, build: latest\|<int> }` — resolved via the **PaperMC v2 fill API** (§2.1). |
 | `mojang` | `MojangRef` | one-of | `{ version: <mc>\|latest-release\|latest-snapshot, artifact: server\|client }` — resolved via the **Mojang version manifest** (§2.2). |
 | `spigot` | `SpigotRef` | one-of | `{ version?: <rev> }` (defaults to the target's `mc`) — **built from source with Spigot BuildTools**. The automatable way to obtain a plugin-capable **legacy** server (e.g. 1.8.x) the Paper API can't serve; runs BuildTools under the version's JDK (multi-JDK) and needs `git`. `version` is the Spigot **rev**, which can differ from the MC version (e.g. 1.8.9 → `1.8.8`; see hub.spigotmc.org/versions/). A bad rev fails fast with `SPIGOT_VERSION_NOT_FOUND`. Cached as `spigot-<rev>.jar`. |
-| `modrinth` | `ModrinthRef` | one-of | `{ project: <slug>, version?: <id>, loader?, gameVersion? }` — resolved via the Modrinth API to a primary file. Good for third-party plugin/mod deps. |
+| `modrinth` | `ModrinthRef` | one-of | `{ project: <slug>, version?: <id>, loader?, gameVersion? }` — resolved via the Modrinth API to a primary file. **Runner-consumed (F5).** Good for third-party plugin/mod deps (e.g. a downloaded mod a modded-server test asserts loaded). Integrity uses Modrinth's **published `sha512`** (falling back to `sha1`); a user-supplied `sha256` is an **optional extra pin** layered on top. |
 | `github` | `GithubRef` | one-of | `{ repo: owner/name, release: latest\|<tag>, asset: <glob> }` — resolved to a release asset. |
 | `sha256` | string (hex) | — | Expected digest, verified after resolve; mismatch ⇒ `ARTIFACT_CHECKSUM_MISMATCH`. **Required for `url` plugin/mod sources** — an unverified network download is refused with `INTEGRITY_REQUIRED`. Optional (recommended) for `path`. |
 | `as` | string (filename) | — | Rename the installed file (e.g. `regions.jar`). Default keeps the source filename. |
@@ -154,8 +155,11 @@ Exactly one of `url` / `path` / `maven` / `paper` / `mojang` / `spigot` / `modri
 > integrity, §2) for plugins/mods **and for the server jar** — an explicit
 > `server: { url | path, sha256 }` boots directly, which is how a plugin-capable old server the
 > PaperMC fill API cannot serve (e.g. a Spigot `1.8.x` jar) is provisioned. **`paper`**/**`mojang`**
-> remain the default server resolvers. `maven`, `modrinth`, and `github` are part of the documented
-> schema but **not yet runner-consumed** — use `url` + `sha256` for third-party deps until they land.
+> remain the default server resolvers. **`modrinth` is now runner-consumed (F5)** for plugin/mod
+> deps — `{ modrinth: { project, version?, loader?, gameVersion? } }`, verified against Modrinth's
+> **published `sha512`** (fallback `sha1`), with an optional user `sha256` as an extra pin. `maven` and
+> `github` are part of the documented schema but **not yet runner-consumed** — use `url` + `sha256`
+> (or `modrinth`) for third-party deps until they land.
 > Version pinning (Mineflayer + minecraft-data, and a future ViaProxy build) is per-runner-release;
 > a bump is gated by the golden E2E so old-version behavior stays reproducible.
 
@@ -358,12 +362,25 @@ the **Mojang piston version manifest**:
 | `paper`, `folia` | The downloaded jar **is** the server. No installer; first boot patches itself. |
 | `spigot` | If `server` is a BuildTools spec, run BuildTools to produce the jar (cached by `(mc,rev)`); otherwise use the provided/`maven` jar. |
 | `vanilla` | Use the Mojang `server.jar` directly. |
-| `fabric` | Run the **Fabric installer** (`loaderInstaller`) in `server` mode against `mc` to produce `fabric-server-launch.jar` (+ `server.jar` via Mojang). |
-| `forge` / `neoforge` | Run the **(Neo)Forge installer** `--installServer`; capture the generated run script / `@libraries` args jar. |
-| `quilt` | Run the **Quilt installer** `install server <mc> --download-server`. |
+| `fabric` / `quilt` | **(F5, real for servers.)** Boot a **`fabric-server-launch.jar`** resolved from the **Fabric meta API** by `loaderVersion` (or a pinned `server: { url\|path, sha256 }`); the vanilla `server.jar` is fetched via Mojang (§2.2). Alternatively run the **Fabric/Quilt installer** (`loaderInstaller`) in `server` mode to produce it. |
+| `forge` / `neoforge` | **(F5, real for servers.)** Run the **(Neo)Forge installer** (`loaderInstaller`, the F5 installer override §1.2) with **`--installServer`**, then boot via the generated **`@libraries/.../<os>_args.txt`** args file (captured into `launch.json`). |
 
 The exact launch command (plain jar vs. `@args` file vs. generated `run.sh`) is recorded in
 the instance's `launch.json` so boot (§2.8) and teardown are loader-agnostic.
+
+> **Modded SERVER targets (F5).** For a modded **server** (`side: server` on `fabric`/`quilt`/`forge`/
+> `neoforge`) the SUT mods **and** the matching server truth agent — `server-fabric` / `server-forge` /
+> `server-neoforge` (§2.4) — are dropped into the server's **`mods/`**, and the agent's MCTP port is
+> passed via the **`MCTEST_AGENT_PORT`** environment variable (instead of a plugin `config.yml`).
+> **No display is needed** — a server renders nothing — so these run on the fast, GUI-less CI path. The
+> runner waits for the agent's `MCTP listening on :PORT` handshake (§2.8) exactly as for any agent, and
+> the test asserts over the cost-1 **`server`** driver with **no player join** (`CAPABILITIES.md` §4 /
+> §7; `DRIVERS.md` §3.7). The `forge`/`neoforge` server agents are **acceptance-only** (ForgeGradle/
+> NeoGradle): when their jar isn't built the target **honest-skips** with `NO_SERVER_AGENT` (§8). On
+> boot the runner also scans the log for loaded mod ids and emits the **`modLoad`** report note (§6) —
+> gating the instance with `MOD_NOT_LOADED` when the target's `expectMods` (§1.2) names a mod the loader
+> didn't load. The canonical example is `examples/regions/regions.modloaded.mctest.yml` run across the
+> `fabric-server-1.21` / `neoforge-server-1.21` / `forge-server-1.20.1` matrix rows.
 
 ### 2.4 Install — SUT and matching agent
 
@@ -380,7 +397,9 @@ the instance's `launch.json` so boot (§2.8) and teardown are loader-agnostic.
      | loader | side | variant artifact | dir | status |
      |--------|------|------------------|-----|--------|
      | paper/spigot/folia | server | `server-bukkit` | `/agents/server-bukkit` | shipped (M3) |
-     | fabric (server) | server | `server-fabric` | `/agents/server-fabric` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-server-fabric.jar`) |
+     | fabric/quilt (server) | server | `server-fabric` | `/agents/server-fabric` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-server-fabric.jar`) |
+     | forge (server) | server | `server-forge` | `/agents/server-forge` | scaffolded (F5; acceptance-only ForgeGradle build; artifact `agent-server-forge.jar`) |
+     | neoforge (server) | server | `server-neoforge` | `/agents/server-neoforge` | scaffolded (F5; acceptance-only NeoGradle build; artifact `agent-server-neoforge.jar`) |
      | fabric (client) | client | `client-fabric` | `/agents/client-fabric` | shipped (M4) |
      | forge (client) | client | `client-forge` | `/agents/client-forge` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-client-forge.jar`) |
      | neoforge (client) | client | `client-neoforge` | `/agents/client-neoforge` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-client-neoforge.jar`) |
@@ -800,6 +819,16 @@ the matrix without scraping the XML.
 > `<testcase>` (under its `<properties>`, like `loader`/`mc`/`driver`) — flagging that the result came
 > from a fragile (pixel/OCR) backend.
 
+> **`modLoad` report note (F5).** On every modded-loader instance the runner scans the boot log for
+> loaded mod ids and attaches a **`modLoad` result** —
+> `{ loader, expected, seen, missing, all }` (`expected` = the target's `expectMods` §1.2; `seen` =
+> the subset of `expected` found; `missing` = `expected − seen`; `all` = every mod id the loader
+> reported) — surfaced as a console report note and as JUnit `<property>`s **`modsLoaded`** and
+> **`modsMissing`** on the `<testcase>`. It is **informational** unless `expectMods` gates: a non-empty
+> `missing` then fails the instance with **`MOD_NOT_LOADED`** (§8). This is the secondary, boot-log
+> signal that complements the loader-provided `mod.loaded` runtime probe (`PROTOCOL.md` §7.5,
+> `DRIVERS.md` §3.7).
+
 ---
 
 ## 7. End-to-end: the regions example across the matrix
@@ -847,6 +876,8 @@ Stable, machine-readable codes surfaced in reports and CLI:
 | `PORT_EXHAUSTED` | No free port in `portRange`. **Fail** (raise the range/parallelism). |
 | `BOOT_TIMEOUT` | No MCTP-ready handshake within `timeoutSec`. **Fail**; logs preserved. |
 | `CAP_UNSATISFIED` | No driver meets a suite's `requires`. Test **skipped** (§4). |
+| `NO_SERVER_AGENT` | **(F5)** The cost-1 `server` driver was selected for a server-truth-only session but **no server agent was co-selected** for the target (also the honest-skip the acceptance-only `server-forge`/`server-neoforge` agents emit when unbuilt). Test **skipped** (category `environment`; §4, `CAPABILITIES.md` §8). |
+| `MOD_NOT_LOADED` | **(F5)** A modded-server target's `expectMods` (§1.2) named a mod the loader did **not** load per the boot log (`modLoad.missing` non-empty, §6). Instance **fails**. |
 | `ONLINE_MODE_REJECTED` | A target tried to set `online-mode: true`. **Fail** at load. |
 
 ---

@@ -184,9 +184,13 @@ describe("provisionClient (injected fetch)", () => {
     // …identity placeholders left for the launcher (substituted in buildClientLaunch).
     expect(client.launchProfile!.gameArgs).toContain("${auth_player_name}");
     expect(client.launchProfile!.gameArgs).toContain("forgeclient");
-    // Classpath = forge lib + vanilla libs + client jar.
+    // Classpath = forge lib + vanilla libs + the vanilla MC jar. On a Forge/NeoForge
+    // classpath that jar MUST be named `<mc>.jar` (`1.21.1.jar`), NOT `client.jar`:
+    // FML claims it as the `minecraft` module, so a jar literally named `client.jar`
+    // would auto-module as `client` and split-package `blaze3d` against forge's
+    // `minecraft` → a launch-time ResolutionException (see resolveModularLaunch).
     expect(client.classpath.some((p) => p.includes("forge-1.21.1-52.0.0.jar"))).toBe(true);
-    expect(client.classpath.some((p) => p.endsWith("client.jar"))).toBe(true);
+    expect(client.classpath.some((p) => p.endsWith("1.21.1.jar"))).toBe(true);
   });
 
   it("fails clearly if a mod jar to stage is missing", async () => {

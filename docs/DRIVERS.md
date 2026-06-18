@@ -11,7 +11,7 @@ The four drivers:
 |---|--------|-----------------|------|-------------|
 | 1 | **Headless protocol bot** | `/packages/driver-headless` | server-truth, inventory GUIs, chat | Fast plugin tests in CI |
 | 2 | **In-process client mod** | `/packages/driver-inprocess` + `/agents/client-fabric`, `/agents/client-forge`, `/agents/client-neoforge` | real client Screens/widgets, rendering, screenshots | Mod client GUIs (the only way) |
-| 3 | **Server-side agent** | `/agents/server-bukkit`, `/agents/server-fabric` | native world-truth, plugin/mod state, fixtures, fake players | World/plugin assertions, setup |
+| 3 | **Server-side agent** | `/agents/server-bukkit`, `/agents/server-fabric`, `/agents/server-forge`, `/agents/server-neoforge` | native world-truth, plugin/mod state, fixtures, fake players | World/plugin assertions, setup; modded-server truth (F5, §3.7) |
 | 4 | **Pixel / OCR driver** | `/packages/driver-pixel` | raw framebuffer pixels | Universal last resort |
 
 Drivers 2 and 3 are **in-game agents**: tiny, dumb, version-specific Java/Kotlin processes that expose **primitives only**. Drivers 1 and 4 run **outside the game** entirely (driver-headless is a protocol client; driver-pixel reads a framebuffer). Per the prime directives, **all intelligence** — selectors, assertions, retries, orchestration, reporting — lives **outside** the game in version-independent runner code. Each driver below resolves the same **semantic selectors** in its own way.
@@ -180,6 +180,7 @@ This is the **default CI driver**. It logs into the server as a real protocol-le
 - **minecraft-data** provides per-version protocol/material/window metadata; Mineflayer selects the right packet layer from the negotiated `version`.
 - **ViaVersion / ViaProxy** lets one bot build span many server versions: point the bot at ViaProxy, which translates between the bot's native protocol and the target server's. This is how MC 1.8 → 1.21+ is covered without a bot rebuild.
 - The driver pins a **support matrix** (target descriptor `mcVersionRange: "1.8 .. 1.21.x"`) and, on `session.create`, fails fast if minecraft-data lacks the requested version — surfaced to the runner as the skip reason `NO_COMPATIBLE_DRIVER` (with the unmet MC version in `unmet[]`).
+- **Advertised loaders include `fabric` and `quilt` (F5).** A bare vanilla protocol bot can join a **Fabric/Quilt** server (their server protocol is vanilla-compatible), so the headless driver advertises the `fabric`/`quilt` loaders in addition to `paper`/`spigot`/`folia`/`vanilla`. It does **NOT** advertise `forge`/`neoforge`: those require completing the **FML login handshake**, which a vanilla bot cannot do — assert on a Forge/NeoForge server via the no-player `server` driver instead (§3.7, `CAPABILITIES.md` §4).
 - **testId** reading is version-aware: pre-1.20.5 reads the NBT key `mctp:testId`; 1.20.5+ reads the `mc-test:test_id` data component. The driver isolates this in one `readTestId(item, version)` helper.
 
 ### 1.4 Build / runtime requirements
@@ -311,13 +312,15 @@ For a **client-rendered** regions mod (the case headless cannot do):
 
 ## 3. Driver: Server-side agent (`server-bukkit` / `server-fabric`)
 
-**Agents:** `/agents/server-bukkit` (Bukkit/Paper plugin) and `/agents/server-fabric` (server-mod variant) over `/agents/core`.
+**Agents:** `/agents/server-bukkit` (Bukkit/Paper plugin) and the server-mod variants `/agents/server-fabric`, `/agents/server-forge`, `/agents/server-neoforge` (F5, §3.7) over `/agents/core`.
 **`driverKind`:** `server` · **MCTP `agent.kind`:** `serverPlugin` (server mod variant: `serverMod`) — the value returned in the `session.create` handshake (`PROTOCOL.md` §4.3).
 **Owns authoritative world-truth, plugin/mod-state assertions, fixtures, and fake players.**
 
 This agent runs **inside the server JVM**. It is the source of ground truth: it reads the real world, queries SUT plugin state through registered probes, mutates state for setup, and spawns fake players. It does **no** client-side UI work — it has no screen. It is almost always **paired** with driver 1 or driver 2 (which drive the UI) to complete an assertion. As of **M3** the Bukkit plugin agent (`/agents/server-bukkit`) is the first server agent built; it is implemented against the **stable Bukkit/Paper API only** (no NMS / Mojang-mapped symbols), so it needs no per-version remap.
 
 > **M5 status note (server-mod variant).** `/agents/server-fabric` (Fabric/NeoForge SERVER-mod truth agent, MCTP `agent.kind: serverMod`) is now **scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build)** — a thin shim over `/agents/core` with every obfuscation-mapped `net.minecraft.*` symbol quarantined to `mappings/Names.java` (§3.3), advertising `worldTruth`/`pluginState`/`fixtures`/`fakePlayers`/`chat`/`testIdTags`, and registered in the runner (`KNOWN_AGENTS`). Its build-artifact is **`agent-server-fabric.jar`**. The real Fabric/Quilt server-mod build remains **acceptance-only** in this repo's CI.
+
+> **F5 status note (server-truth-only selection + modded servers).** As of **F5** the runner-side **`server` driver** (driver id `server`, cost 1 — `CAPABILITIES.md` §7) is a **registered, selectable primary** that runs a **server-truth-only** session: the co-selected server agent **is** the connection — there is **no rendered client and no bot**, and **no player joins** (`world.join`/`world.leave` are no-ops). The runner picks it standalone when a test's top-level `requires` names **only** server-owned caps (`pluginState`/`worldTruth`/`fixtures`/`fakePlayers`); the canonical `examples/regions/regions.modloaded.mctest.yml` (requires only `pluginState`) is run this way across the `fabric-server-1.21` / `neoforge-server-1.21` / `forge-server-1.20.1` matrix rows. **Why no player:** a Mineflayer bot can connect to a *Fabric* server but **cannot** complete Forge/NeoForge's FML login handshake, so the no-player server-truth path is the **only** way to assert on a Forge/NeoForge server. When the `server` driver is selected but **no** server agent is co-selected, the runner **skips** with reason **`NO_SERVER_AGENT`** (category `environment`; never a false pass). F5 also adds the **modded SERVER truth agents** `/agents/server-forge` and `/agents/server-neoforge` (siblings of `server-fabric`): **acceptance-only** (ForgeGradle/NeoGradle), honest-skipping `NO_SERVER_AGENT` when their jar isn't built. Modded-server **provisioning** and the loader-provided `mod.loaded` probe are §3.7.
 
 ### 3.1 Capability set (advertised)
 
@@ -358,7 +361,7 @@ This agent runs **inside the server JVM**. It is the source of ground truth: it 
 | `world.join`/`world.leave` | Marks the agent's logical session against the running world; no client connection of its own (the agent already lives in the server JVM). |
 | `truth.getWorldBlock` | **Bukkit:** `world.getBlockAt(x,y,z)` → `{ type: block.getType().getKey() (lowercase `namespace:path`), properties: blockData, nbtJson?, biome? }`. **Fabric server:** `serverWorld.getBlockState(pos)`. Runs on the main server thread via the scheduler. Out-of-range/unloaded → `WORLD_NOT_READY`. Field shape per `PROTOCOL.md` §7.3 `truth.getWorldBlock`. |
 | `truth.getEntities` | **Bukkit:** `world.getNearbyEntities(loc, r, r, r)` (sphere) or `world.getEntities()` filtered by type → `{ ok, count, entities:[{ id, uuid, type, name?, position:{x,y,z}, tags?[], customNameRaw? }] }`. **Fabric:** `serverWorld.getEntitiesByType(...)`. `radius` > granted `worldTruth.radiusLimit` → `-32602 invalidParams`. Field shape per `PROTOCOL.md` §7.3. |
-| `truth.assertPluginState` | Resolves a **registered probe** by `query` name (params `{ plugin?, query, args?, expect? }`). Preferred path: the SUT registers an `McTestStateProvider` via the Bukkit `ServicesManager` (see §3.2.1); a reflective/expression fallback (`regions.exists(name)`, `config.get(path)`, `perms.has`) covers SUTs without the SPI. Evaluates the optional `expect` predicate (`equals｜notEquals｜contains｜gt｜gte｜lt｜lte｜exists`) over the value and returns `{ ok, query, value, matched, valueJson }` (`matched:null` if no `expect`). Unknown query / evaluation failure → `ASSERT_FAILED`. The agent returns facts; the **runner** owns the verdict. Field shape per `PROTOCOL.md` §7.5. |
+| `truth.assertPluginState` | Resolves a `query` name (params `{ plugin?, query, args?, expect? }`). **Loader-provided built-in first:** the reserved SUT-agnostic queries `mod.loaded` / `plugin.loaded` (synonyms; `args:{ id }` or shorthand `mod.loaded(<id>)`) are answered from the **loader itself** — Bukkit `PluginManager` / `FabricLoader.isModLoaded` / (Neo)Forge `ModList.isLoaded` — **before** any SUT provider, so a **downloaded** third-party mod/plugin can be asserted loaded with no SUT cooperation (`PROTOCOL.md` §7.5). Otherwise: the SUT registers an `McTestStateProvider` via the Bukkit `ServicesManager` (see §3.2.1); a reflective/expression fallback (`regions.exists(name)`, `config.get(path)`, `perms.has`) covers SUTs without the SPI. Evaluates the optional `expect` predicate (`equals｜notEquals｜contains｜gt｜gte｜lt｜lte｜exists`) over the value and returns `{ ok, query, value, matched, valueJson }` (`matched:null` if no `expect`). Unknown query / evaluation failure → `ASSERT_FAILED`. The agent returns facts; the **runner** owns the verdict. Field shape per `PROTOCOL.md` §7.5. |
 | `fixture.set` | Applies a **named fixture** (params `{ fixture, args? }`): built-ins `gamerule`, `time`, `weather`, `inventory` (give/clear), `permissions` (grant/revoke). Any fixture a registered `McTestFixtureProvider#supports` (e.g. `regions.createRegion` from the SUT) is delegated to that provider. Records an undo per applied fixture. Returns `{ ok, fixture, applied:true, handle, result? }`. Unknown/failed → `FIXTURE_FAILED`; bad args → `-32602`. Field shape per `PROTOCOL.md` §7.5. |
 | `fixture.reset` | Reverts applied fixtures (params `{ snapshot?, world?, fixtureId? }`; no arg ⇒ revert all session fixtures), restoring the pristine world/plugin baseline. Returns `{ ok, restored?, tookMs? }`. |
 | `player.spawnFake` | **Bukkit:** Carpet-style console command `/player <name> spawn at <x> <y> <z>` (`Bukkit.dispatchCommand(consoleSender, …)`); params `{ name, at?, gameMode? }` → `{ ok, name, uuid, handle }`. `capabilityDetails.fakePlayers.backend = "carpet"`. The handle is usable as an actor for server-side actions. |
@@ -416,6 +419,36 @@ The server agent provides **setup + the world-truth half** of the canonical asse
 2. (UI driver runs `/or` → click "Regions" → click "TestRegion".)
 3. `truth.assertPluginState({ query: "regions.exists", args: { name: "TestRegion" }, expect: { equals: true } })` → `{ ok: true, query: "regions.exists", value: true, matched: true, valueJson: "true" }`. The runner asserts `matched === true`.
 4. Optionally `truth.getWorldBlock` / `truth.getEntities` to verify region-side effects (e.g. a marker block placed at the region center).
+
+### 3.7 Modded-server support & the `mod.loaded` loader probe (F5)
+
+A **modded SERVER** (Fabric/Quilt/Forge/NeoForge) is provisioned and asserted against **without any
+client or bot** — the `server` driver runs a **server-truth-only** session against a co-selected
+server truth agent. This is how a Forge/NeoForge server is tested at all (a bot can't pass the FML
+handshake). The pieces:
+
+- **Provisioning the modded server** (owned by `ENVIRONMENTS.md` §2.3; recapped here): `loader:
+  fabric|quilt` boots a `fabric-server-launch.jar` (resolved from the Fabric meta API by
+  `loaderVersion`, or a pinned `server: { url|path, sha256 }`); `loader: forge|neoforge` runs the
+  installer (`--installServer`) and boots via the generated `@libraries/.../<os>_args.txt`. The SUT
+  mods **and** the matching `server-fabric` / `server-forge` / `server-neoforge` truth agent are
+  dropped into `mods/`; the agent's MCTP port is passed via the **`MCTEST_AGENT_PORT`** env var (a
+  server renders nothing, so **no display** is needed). The runner still waits for the agent's
+  `MCTP listening on :PORT` handshake exactly as elsewhere.
+- **The `mod.loaded` / `plugin.loaded` loader-provided probe.** To prove a **downloaded, third-party**
+  mod actually loaded — with no cooperation from that mod — the server agent answers the reserved,
+  SUT-agnostic `truth.assertPluginState` queries `mod.loaded` / `plugin.loaded` (synonyms; `args:{ id }`
+  or shorthand `mod.loaded(<id>)`) from the **loader itself** (Bukkit `PluginManager` /
+  `FabricLoader.isModLoaded` / (Neo)Forge `ModList.isLoaded`), **before** any SUT `McTestStateProvider`
+  (§3.2.1). It is a `query`-string value to the existing `truth.assertPluginState` method (cap
+  `pluginState`) — **not** a new MCTP method. Canonical use: `examples/regions/regions.modloaded.mctest.yml`
+  asserts `mod.loaded` with `args:{ id:"ferritecore" }` `expect: true` across the `fabric-server-1.21`
+  / `neoforge-server-1.21` / `forge-server-1.20.1` matrix rows.
+- **Status.** The Forge/NeoForge server truth agents (`/agents/server-forge`, `/agents/server-neoforge`)
+  are **acceptance-only** (ForgeGradle/NeoGradle); when their jar isn't built the target **honest-skips**
+  with `NO_SERVER_AGENT` (category `environment`) rather than producing a false green. A modded-server
+  target may also declare `expectMods` (a boot-log mod-load gate) → a `MOD_NOT_LOADED` skip/error when
+  the loader didn't load a named mod (`ENVIRONMENTS.md` §1.2 / §2.3).
 
 ---
 
@@ -577,8 +610,10 @@ Driver-local advertisements (NOT part of the canonical vocabulary): `pixelOnly` 
 `-32006 ASSERT_FAILED` (`truth.assertPluginState` failed or named probe unregistered),
 `-32099 PROTOCOL_VERSION_UNSUPPORTED` (`session.create` protocol version mismatch).
 Plus standard JSON-RPC `-32700`, `-32600`, `-32601`, `-32602`.
-**Runner-level skip reason:** `NO_COMPATIBLE_DRIVER` (carries `unmet[]`) — used when no driver/pair satisfies the required caps, when a required `loader`/`mcVersionRange` target is unmet, or when `session.create` is rejected for a capability the driver lacks.
+**Runner-level skip reasons:** `NO_COMPATIBLE_DRIVER` (carries `unmet[]`) — used when no driver/pair satisfies the required caps, when a required `loader`/`mcVersionRange` target is unmet, or when `session.create` is rejected for a capability the driver lacks; `NO_SERVER_AGENT` (category `environment`) — the cost-1 `server` driver was selected for a server-truth-only session but no server agent was co-selected (also the honest-skip the acceptance-only forge/neoforge server agents emit when unbuilt); `MOD_NOT_LOADED` — a modded-server `expectMods` boot-log gate found a named mod the loader didn't load.
+
+**Reserved loader-provided `truth.assertPluginState` queries (cap `pluginState`):** `mod.loaded` / `plugin.loaded` (synonyms; `args:{ id }` or shorthand `mod.loaded(<id>)`) — answered from the loader (Bukkit `PluginManager` / `FabricLoader.isModLoaded` / `(Neo)Forge ModList.isLoaded`) before any SUT probe. Not a new method.
 
 **Canonical probe / fixture names (regions example):** plugin-state query `regions.exists` (args `{ name: "TestRegion" }`, per `PROTOCOL.md` §7.5); fixture `regions.createRegion` (args `{ name: "TestRegion" }`); testId `regions:entry:TestRegion`, `regions:list`. (Earlier drafts used `regions.seed.TestRegion` / array args / dotted testIds — superseded by the `PROTOCOL.md` spellings.)
 
-**Paths referenced:** `/packages/driver-headless`, `/packages/driver-inprocess`, `/packages/driver-pixel`, `/packages/runner`, `/packages/protocol`, `/agents/core`, `/agents/client-fabric`, `/agents/client-forge`, `/agents/client-neoforge`, `/agents/server-bukkit`, `/agents/server-fabric`, `mc-test.yml`.
+**Paths referenced:** `/packages/driver-headless`, `/packages/driver-inprocess`, `/packages/driver-pixel`, `/packages/runner`, `/packages/protocol`, `/agents/core`, `/agents/client-fabric`, `/agents/client-forge`, `/agents/client-neoforge`, `/agents/server-bukkit`, `/agents/server-fabric`, `/agents/server-forge`, `/agents/server-neoforge`, `examples/regions/regions.modloaded.mctest.yml`, `mc-test.yml`.

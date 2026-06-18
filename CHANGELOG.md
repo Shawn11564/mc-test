@@ -11,6 +11,43 @@ All notable changes to this project are recorded here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **F5 — modded SERVER support (v2): test server-side mods on real Fabric/Forge/NeoForge dedicated
+  servers.** Until now only Bukkit-family servers (Paper/Spigot/Folia) could boot; `loader` was
+  metadata-only in provisioning. A new loader-aware **`provisionServer` router** + **`ModdedProvisioner`**
+  boot a real **Fabric/Quilt** server (a `fabric-server-launch.jar` resolved from the Fabric meta API by
+  `loaderVersion`, or a pinned `server: { url|path, sha256 }`) and **Forge/NeoForge** servers (run the
+  installer `--installServer`, then boot via the generated `@libraries/.../<os>_args.txt`). SUT mods +
+  the server-truth agent drop into `mods/`; the agent port travels via `MCTEST_AGENT_PORT`. No display is
+  needed (a server renders nothing), so these boot in plain CI. Because a Mineflayer bot can join a Fabric
+  server but **cannot** complete Forge/NeoForge's FML handshake, the assertion runs over a new **cost-1
+  `server` driver** — a server-truth-only session where the co-selected server agent is the primary
+  connection and `join`/`leave` are no-ops (honest `NO_SERVER_AGENT` skip when no agent is co-selected).
+  The headless driver now also advertises `fabric`/`quilt` (a vanilla bot connects to a Fabric server).
+  (`provision/{provisionServer,ModdedProvisioner,serverCommon}.ts`, `drivers/DriverRegistry.ts`,
+  `engine/{Runner,StepExecutor}.ts`, `driver-headless/capabilities.ts`.)
+- **Loader-provided `mod.loaded` probe + a real `modrinth` source resolver — prove a DOWNLOADED mod
+  loaded.** `truth.assertPluginState` gains reserved, SUT-agnostic queries `mod.loaded`/`plugin.loaded`
+  (`{ id }`) resolved from the loader itself (`FabricLoader.isModLoaded` / `ModList.isLoaded` / Bukkit
+  `PluginManager`) BEFORE the SUT `McTestStateProvider` (`agents/core` `BuiltInStateQueries` +
+  `LoaderPresence`) — so a third-party mod with no mc-test coupling can be asserted present. The
+  documented-but-unbuilt **`modrinth` resolver** is now runner-consumed (`{ modrinth: { project,
+  version?, loader?, gameVersion? } }`, integrity via Modrinth's published sha512/sha1). A secondary
+  **boot-log mod-load** signal (`expectMods` → `MOD_NOT_LOADED` gate; otherwise informational) surfaces in
+  `report.html` + JUnit (`modsLoaded`/`modsMissing`). New agents `agents/server-forge` (ForgeGradle) +
+  `agents/server-neoforge` (NeoGradle) mirror the (already-complete) `agents/server-fabric` — the only
+  per-loader file is `mappings/Names.java` (CI import-scan extended to both). (`provision/modrinth.ts`,
+  `provision/sources.ts`, `agents/core/{BuiltInStateQueries,LoaderPresence}.java`, `agents/server-*`.)
+- **F5 tests: real-boot validated on Fabric, honest-skip on Forge/NeoForge.** `examples/regions/regions.modloaded.mctest.yml`
+  (one server-truth-only file run across all three loaders) asserts `mod.loaded { id: ferritecore }`;
+  `mc-test.yml` gains `fabric-server-1.21` / `neoforge-server-1.21` / `forge-server-1.20.1` rows downloading
+  **FerriteCore** from Modrinth (and the nonexistent Forge `47.2.0` pin was corrected to `47.3.39`). The
+  new e2e harness `tests/e2e/run-modded-server-boot.mjs` (+ matrix + `e2e.yml` `modded-server` job) boots
+  each modded server and asserts mod-load over MCTP + boot-log, with a negative control (absent mod → RED)
+  and per-loader honest-skip when an acceptance-only agent isn't built. **Verified end-to-end on this
+  Windows box:** a real **Fabric 1.21.1** server boots, downloads FerriteCore via Modrinth, and
+  `mod.loaded = true` GREEN over MCTP (forge/neoforge honest-skip — their agents are acceptance-only). New
+  offline unit suites gate the pure parts in fast CI: `f5-server-driver`, `modrinth`, `modded-provision`,
+  and `BuiltInStateQueriesTest` (`agents/core`). Full unit suite: **107 runner tests** green.
 - **Canonical OpenRegions SUT built for every target + richer behavior.** `examples/regions` now exists in
   **four forms** — the Bukkit/Paper [plugin](examples/regions/plugin) plus a **Fabric**, **Forge**, and
   **NeoForge** client mod (`examples/regions/mod-{fabric,forge,neoforge}`; the old `mod` is renamed to

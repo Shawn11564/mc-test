@@ -912,6 +912,19 @@ Result:
 
 > Even though `truth.assertPluginState` evaluates a predicate, the **assertion verdict, retry, and failure artifact** belong to the runner (prime directive: intelligence lives outside the game). The agent returns facts; the runner asserts.
 
+> **Reserved loader-provided queries (`mod.loaded` / `plugin.loaded`).** Most `query` names are
+> **SUT-provided** — a probe the plugin/mod registers (e.g. `regions.exists`). MCTP additionally
+> **reserves** two query names that are **loader-provided** and **SUT-agnostic**:
+> `mod.loaded` and `plugin.loaded` (synonyms). They take `args: { id }` (the namespaced/id string of
+> a mod or plugin), with a head-argument shorthand `mod.loaded(<id>)` permitted. The agent resolves
+> them from the **loader itself** — Bukkit `PluginManager#getPlugin`/`isPluginEnabled`,
+> Fabric `FabricLoader.isModLoaded`, or (Neo)Forge `ModList.isLoaded` — **before** consulting any SUT
+> `McTestStateProvider`. This lets a **downloaded third-party** mod/plugin be asserted *loaded* with
+> no cooperation from that mod (the canonical use: prove a modded server actually loaded a mod). They
+> are **not** new methods — they are reserved string values of the existing `truth.assertPluginState`
+> `query`, gated by the same `pluginState` capability. Result shape is unchanged
+> (`{ ok, query, value, matched, valueJson }`, here `value` a boolean).
+
 ---
 
 ### 7.6 Events / streams group
@@ -1052,6 +1065,9 @@ MCTP-specific errors occupy exactly the following codes in the implementation-de
 
 - **Protocol-version mismatch** at `session.create` → `-32099 PROTOCOL_VERSION_UNSUPPORTED`.
 - **Missing required capabilities / unsatisfiable constraints** at `session.create`: the agent refuses with a JSON-RPC error whose `data` lists what is missing in `data.unmet[]` (and what it offers in `data.offered`); **no session is created**. The runner maps this refusal to a **skip** with the runner-level reason `NO_COMPATIBLE_DRIVER` (carrying `unmet[]`). `NO_COMPATIBLE_DRIVER` is a runner/JUnit outcome token, not a wire error code (§5.3).
+- **Two further runner-level outcome tokens** (like `NO_COMPATIBLE_DRIVER`, these are **not** wire error codes — they are reported to JUnit, see `CAPABILITIES.md` §8 and `ENVIRONMENTS.md` §8):
+  - `NO_SERVER_AGENT` (skip, category `environment`) — the cost-1 **`server`** driver was selected for a server-truth-only session (the test's top-level `requires` names only server-owned caps), but **no server agent was co-selected** for the target, so the server-owned requirements cannot be met. Reported `skipped`, never a false pass. (The acceptance-only `server-fabric`/`server-forge`/`server-neoforge` truth agents honest-skip with this reason when their jar is not built.)
+  - `MOD_NOT_LOADED` — a modded-server target declared `expectMods` (a boot-log mod-load gate, `ENVIRONMENTS.md` §1.2 / §2.3) and the loader did **not** load one of the named mods per the boot log. This is a provisioning/boot outcome, distinct from `-32006 ASSERT_FAILED` (which is a per-call probe failure).
 - **Command-level conditions** map onto the canonical codes above: no element → `-32000 ELEMENT_NOT_FOUND`; ambiguous match → `-32001 AMBIGUOUS_SELECTOR`; ungranted/unsupported method → `-32002 METHOD_NOT_SUPPORTED`; primitive overran `timeoutMs` → `-32003 TIMEOUT`; world/GUI not ready → `-32004 WORLD_NOT_READY`; fixture problem → `-32005 FIXTURE_FAILED`; plugin-state probe problem → `-32006 ASSERT_FAILED`.
 
 Agents MUST choose the **most specific** canonical code. Clients MUST treat any unknown `-32000…-32099` code as a non-fatal agent error and consult `data.retryable`.
@@ -1272,4 +1288,8 @@ These notes keep both reference implementations honest against the same contract
 
 **Selector keys (shape only; grammar in `SELECTORS.md`):** `label`, `text`, `textContains`, `loreContains`, `itemType`, `role`, `index`, `nth`, `within`, `testId`. Role enum: `button` | `slot` | `label` | `input` | `tab` | `list` | `listItem`.
 
-**Error codes (MCTP-specific):** `-32000 ELEMENT_NOT_FOUND`, `-32001 AMBIGUOUS_SELECTOR`, `-32002 METHOD_NOT_SUPPORTED`, `-32003 TIMEOUT`, `-32004 WORLD_NOT_READY`, `-32005 FIXTURE_FAILED`, `-32006 ASSERT_FAILED`, `-32099 PROTOCOL_VERSION_UNSUPPORTED`. **Standard JSON-RPC:** `-32700 parseError`, `-32600 invalidRequest`, `-32601 methodNotFound`, `-32602 invalidParams`, `-32603 internalError`. **Runner-level skip reason:** `NO_COMPATIBLE_DRIVER` (carries `unmet[]`).
+**Error codes (MCTP-specific):** `-32000 ELEMENT_NOT_FOUND`, `-32001 AMBIGUOUS_SELECTOR`, `-32002 METHOD_NOT_SUPPORTED`, `-32003 TIMEOUT`, `-32004 WORLD_NOT_READY`, `-32005 FIXTURE_FAILED`, `-32006 ASSERT_FAILED`, `-32099 PROTOCOL_VERSION_UNSUPPORTED`. **Standard JSON-RPC:** `-32700 parseError`, `-32600 invalidRequest`, `-32601 methodNotFound`, `-32602 invalidParams`, `-32603 internalError`. **Runner-level outcome tokens** (not wire codes): `NO_COMPATIBLE_DRIVER` (carries `unmet[]`), `NO_SERVER_AGENT` (skip, category `environment` — `server` driver selected with no co-selected server agent), `MOD_NOT_LOADED` (modded-server `expectMods` boot-gate miss).
+
+**Reserved loader-provided `truth.assertPluginState` queries** (SUT-agnostic, resolved from the loader before any SUT probe; cap `pluginState`): `mod.loaded` / `plugin.loaded` (synonyms), `args: { id }` or shorthand `mod.loaded(<id>)`.
+
+**Registered driver ids** (cost order, defined canonically in `CAPABILITIES.md` §7): `server` < `headless` < `inprocess` < `pixel`. The cost-1 `server` driver runs a **server-truth-only** session (its co-selected server agent *is* the connection; no player join — `world.join`/`world.leave` are no-ops), advertising `worldTruth, pluginState, fixtures, fakePlayers`.

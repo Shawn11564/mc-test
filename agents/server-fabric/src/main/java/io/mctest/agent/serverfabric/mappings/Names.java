@@ -111,6 +111,15 @@ public final class Names {
                 .orElse(null);
     }
 
+    /**
+     * @return true if a mod with the given id is loaded (F5 loader-provided {@code mod.loaded} built-in).
+     * Backs the {@link io.mctest.agent.core.LoaderPresence} the {@code PluginStateProbe} passes, so a
+     * downloaded third-party mod (no SUT SPI) can be asserted present via {@code truth.assertPluginState}.
+     */
+    public boolean isModLoaded(String id) {
+        return id != null && FabricLoader.getInstance().isModLoaded(id);
+    }
+
     // --- server-thread bounce (mirror of the Bukkit agent's MainThread.call) ---
 
     /**

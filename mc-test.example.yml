@@ -192,6 +192,41 @@ targets:
     world: { ref: regions-void }
     tags: ["regions", "gui", "client", "neoforge"]
 
+  # --- F5: MODDED SERVERS (test SERVER-SIDE mods) -----------------------------
+  # A real Fabric/Forge/NeoForge DEDICATED SERVER (no display — a server renders
+  # nothing). The SUT mod + the server-* truth agent go into mods/; `driver: server`
+  # runs a server-truth-only session (NO player join) so it works on Forge/NeoForge,
+  # whose FML handshake a bot can't complete. The `mod.loaded` query asserts over
+  # MCTP that the loader actually loaded a real downloaded mod (here pulled from
+  # Modrinth); `expectMods` adds the boot-log gate. Server agents are acceptance-only
+  # → honest-skip (NO_SERVER_AGENT) when their jar isn't built.
+  - id: regions-fabric-server
+    loader: fabric
+    mc: "1.21.1"
+    loaderVersion: "0.19.3"        # Fabric launcher resolved from the meta API
+    side: server
+    driver: server                 # server-truth-only (cost 1); no player join
+    mods:
+      - { modrinth: { project: ferrite-core, version: sOzRw3CG }, as: ferritecore.jar }
+      - { modrinth: { project: fabric-api, loader: fabric, gameVersion: "1.21.1" }, as: fabric-api.jar }
+    agents: ["server-fabric"]      # server-mod truth agent → mods/
+    expectMods: ["ferritecore"]    # boot-log MOD_NOT_LOADED gate (MCTP mod.loaded is authoritative)
+    world: { ref: regions-void }
+    tags: ["regions", "server", "fabric", "modded"]
+
+  - id: regions-forge-server
+    loader: forge
+    mc: "1.20.1"
+    loaderVersion: "47.3.39"       # Forge installer (--installServer → @args boot); 47.2.0 does NOT exist
+    side: server
+    driver: server
+    mods:
+      - { modrinth: { project: ferrite-core, version: DG5Fn9Sz }, as: ferritecore.jar }
+    agents: ["server-forge"]
+    expectMods: ["ferritecore"]
+    world: { ref: regions-void }
+    tags: ["regions", "server", "forge", "modded"]
+
 # -----------------------------------------------------------------------------
 # suites — which tests run where, and the CAPABILITIES each suite requires.
 # The runner negotiates: a target whose driver can't satisfy `requires` is

@@ -19,6 +19,12 @@ export interface MockServerAgentOptions {
   /** Regions to pre-seed into the store (so `regions.exists` is true from the start). */
   seedRegions?: string[];
   /**
+   * Mod/plugin ids the (mock) loader reports as present, so the loader-provided
+   * `mod.loaded`/`plugin.loaded` built-in query (F5) resolves `true` for them and
+   * `false` otherwise — the runtime proof a downloaded mod loaded.
+   */
+  seedMods?: string[];
+  /**
    * Force the truth/UI divergence control: `regions.exists` always returns
    * `false` regardless of the store (chat may say "Region loaded" but real state
    * disagrees). The runner must then go RED on `assertPluginState`.
@@ -45,6 +51,8 @@ export class MockServerAgent {
 
   // SUT-ish state (single session for tests).
   private readonly regions = new Set<string>();
+  /** Loader-present mod/plugin ids (the `mod.loaded` built-in resolves against this). */
+  private readonly mods = new Set<string>();
   private readonly appliedFixtures: { handle: string; fixture: string; region?: string }[] = [];
   private readonly fakePlayers = new Map<string, FakePlayerRecord>();
   private uuidSeq = 1;
@@ -57,6 +65,7 @@ export class MockServerAgent {
     this.forceMissing = opts.forceRegionMissing ?? false;
     this.block = opts.block ?? { type: "minecraft:oak_sign", properties: { rotation: "8" }, biome: "minecraft:plains" };
     for (const r of opts.seedRegions ?? []) this.regions.add(r);
+    for (const m of opts.seedMods ?? []) this.mods.add(m);
   }
 
   start(): Promise<{ url: string }> {
@@ -128,6 +137,11 @@ export class MockServerAgent {
   /** Resolve a `regions.exists`-style query to a value (honoring divergence). */
   private queryValue(query: string, args: Record<string, unknown>): unknown {
     switch (query) {
+      // Loader-provided built-in (F5): SUT-agnostic mod/plugin presence. The id
+      // can come from `args.id` or the `mod.loaded(<id>)` head-arg shorthand.
+      case "mod.loaded":
+      case "plugin.loaded":
+        return this.mods.has(String(args["id"] ?? args["0"] ?? ""));
       case "regions.exists":
         return this.hasRegion(String(args["name"] ?? ""));
       case "regions.count":

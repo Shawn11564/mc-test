@@ -29,6 +29,18 @@ export interface SpigotRef {
   version?: string;
 }
 
+/** A `modrinth:` source ref → resolved via the Modrinth API (F5). */
+export interface ModrinthRef {
+  /** Project slug or id, e.g. `"ferrite-core"`. */
+  project: string;
+  /** Pinned version id (RECOMMENDED — deterministic); else newest matching the filters. */
+  version?: string;
+  /** Loader filter when resolving by project (`fabric`/`forge`/`neoforge`/`quilt`). */
+  loader?: string;
+  /** Minecraft version filter when resolving by project, e.g. `"1.21.1"`. */
+  gameVersion?: string;
+}
+
 /** How to obtain one artifact (exactly one resolver). */
 export interface Source {
   ref?: string;
@@ -37,6 +49,7 @@ export interface Source {
   paper?: PaperRef;
   mojang?: MojangRef;
   spigot?: SpigotRef;
+  modrinth?: ModrinthRef;
   sha256?: string;
   as?: string;
 }
@@ -80,6 +93,13 @@ export interface MatrixTarget {
    * `"47.2.0"`, neoforge `"21.1.66"`); threaded to the in-process driver.
    */
   loaderVersion?: string;
+  /**
+   * Loader installer source for a modded SERVER (F5). For Fabric a pre-built
+   * `fabric-server-launch.jar` (`server: { url|path, sha256 }` is preferred); for
+   * Forge/NeoForge an installer jar override (else resolved from maven by
+   * `loaderVersion`). Usually omitted — the provisioner resolves it.
+   */
+  loaderInstaller?: Source;
   /** `auto` lets capability negotiation pick (ENVIRONMENTS.md §1.2). */
   driver?: DriverId | "auto";
   /**
@@ -118,6 +138,13 @@ export interface MatrixTarget {
   agents?: string[];
   /** Optional per-agent source overrides (built-jar path), keyed by agent name. */
   agentSources?: Record<string, Source>;
+  /**
+   * Mod ids whose boot-log load to verify on a modded server (F5). The boot-log
+   * scan is informational by default; listing ids here makes a MISSING one fail the
+   * target (`MOD_NOT_LOADED`). The authoritative proof remains the MCTP `mod.loaded`
+   * assertion in the test — this is a complementary, SUT-agnostic signal.
+   */
+  expectMods?: string[];
   world?: WorldDef | { ref: string };
   serverProps?: Record<string, string | number | boolean>;
   /**

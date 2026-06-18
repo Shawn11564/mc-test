@@ -25,7 +25,12 @@ export const HEADLESS_CAPABILITIES: Capabilities = {
   containerGui: true,
   typeText: true,
   pressKey: true,
-  loader: ["paper", "spigot", "folia"],
+  // A vanilla-protocol Mineflayer bot connects to Bukkit-family servers AND to a
+  // Fabric/Quilt server (those accept vanilla clients by default — server-side mods
+  // don't change the login handshake). NOT forge/neoforge: their FML login handshake
+  // a vanilla bot cannot complete, so those modded servers are driven by the cost-1
+  // `server` truth driver (no player join), never the headless bot (F5).
+  loader: ["paper", "spigot", "folia", "fabric", "quilt"],
   // Mineflayer + minecraft-data span a wide range; pinned generously for M2.
   mcVersionRange: ">=1.8 <=1.21.4",
 };
