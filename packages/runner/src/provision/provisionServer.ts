@@ -39,6 +39,8 @@ export interface ServerProvisionOptions {
   onLog?: (line: string) => void;
   /** Mod ids whose boot-log load to verify (F5). */
   expectModIds?: string[];
+  /** Share heavy regenerables across runs of the same build (item D; Paper + Fabric/Quilt/vanilla). */
+  shareRuntime?: boolean;
 }
 
 /** Provision a server, routing by loader family (bukkit → Paper; else modded). */
@@ -62,6 +64,7 @@ export function provisionServer(opts: ServerProvisionOptions): Promise<Provision
       ...(opts.javaPath ? { javaPath: opts.javaPath } : {}),
       ...(opts.bootTimeoutMs !== undefined ? { bootTimeoutMs: opts.bootTimeoutMs } : {}),
       ...(opts.onLog ? { onLog: opts.onLog } : {}),
+      ...(opts.shareRuntime !== undefined ? { shareRuntime: opts.shareRuntime } : {}),
     });
   }
   return provisionModded({
@@ -85,5 +88,6 @@ export function provisionServer(opts: ServerProvisionOptions): Promise<Provision
     ...(opts.bootTimeoutMs !== undefined ? { bootTimeoutMs: opts.bootTimeoutMs } : {}),
     ...(opts.onLog ? { onLog: opts.onLog } : {}),
     ...(opts.expectModIds ? { expectModIds: opts.expectModIds } : {}),
+    ...(opts.shareRuntime !== undefined ? { shareRuntime: opts.shareRuntime } : {}),
   });
 }

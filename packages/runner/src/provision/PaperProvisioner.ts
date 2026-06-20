@@ -12,6 +12,7 @@ import { join, resolve, basename } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { hashFile } from "./sources.js";
+import { sharedRuntimeDir, linkSharedRuntime, publishSharedRuntime } from "./workspace.js";
 import {
   findFreePort,
   offlineUuid,
@@ -61,6 +62,12 @@ export interface PaperProvisionOptions {
   javaPath?: string;
   bootTimeoutMs?: number;
   onLog?: (line: string) => void;
+  /**
+   * Share the heavy regenerables (`libraries`/`cache`/`versions`, ~130 MB) across runs
+   * of the same server build via a per-version cache (item D). Default on; the runner
+   * sets it from `provision.shareRuntime` / `--no-share`.
+   */
+  shareRuntime?: boolean;
 }
 
 interface PaperBuild {
@@ -219,6 +226,17 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
     writeFileSync(join(agentConfigDir, "config.yml"), `port: ${agent.port}\n`);
   }
 
+  // Item D: share libraries/cache/versions across runs of this server build. When the
+  // per-version cache is warm, junction them in so Paper boots without re-downloading
+  // ~130 MB; when cold, the env populates them privately and publishes on success.
+  // Keyed by the resolved server jar's basename (encodes mc + build).
+  const share = linkSharedRuntime(
+    opts.instanceDir,
+    sharedRuntimeDir(opts.cacheDir, basename(jar)),
+    opts.shareRuntime ?? true,
+  );
+  if (share.mode === "warm") console.log("  ↻ reusing shared runtime cache (skipped libraries/cache/versions download)");
+
   const logPath = join(opts.instanceDir, "logs", "server.log");
   const logStream = createWriteStream(logPath);
   const proc = spawnFromLaunch({
@@ -241,6 +259,12 @@ export async function provisionPaper(opts: PaperProvisionOptions): Promise<Provi
   } catch (err) {
     await stopServer(proc).catch(() => {});
     throw err;
+  }
+
+  // Cold-cache first boot: publish the freshly-downloaded heavy dirs so the next run
+  // of this build goes warm. Best-effort + single-publisher (see publishSharedRuntime).
+  if (publishSharedRuntime(opts.instanceDir, share)) {
+    console.log("  ↻ published runtime cache for reuse by future runs");
   }
 
   // Each agent listens on its assigned port at the canonical MCTP path. waitForReady above only

@@ -127,29 +127,6 @@ public abstract class McTestRunTask extends DefaultTask {
 
     /** Explicit {@code runnerCli}, else walk up from the project dir for the runner CLI. */
     private File resolveRunnerCli(File projectDir) {
-        if (getRunnerCli().isPresent()) {
-            File f = getRunnerCli().get().getAsFile();
-            if (!f.isFile()) {
-                throw new GradleException("mcTest.runnerCli does not exist: " + f);
-            }
-            return f;
-        }
-        String[] candidates = {
-            "node_modules/@mc-test/runner/dist/cli.js", // installed package (release gate)
-            "node_modules/.bin/mc-test",                // bin shim
-            "packages/runner/dist/cli.js",              // monorepo dev build
-        };
-        for (File d = projectDir; d != null; d = d.getParentFile()) {
-            for (String c : candidates) {
-                File f = new File(d, c);
-                if (f.isFile()) {
-                    return f;
-                }
-            }
-        }
-        throw new GradleException(
-                "mc-test runner CLI not found. Set mcTest { runnerCli = file(\"…/dist/cli.js\") }, "
-                        + "install @mc-test/runner, or build it in this monorepo "
-                        + "(npm run build -w @mc-test/runner).");
+        return CliSupport.resolveRunnerCli(projectDir, getRunnerCli().isPresent() ? getRunnerCli().get().getAsFile() : null);
     }
 }

@@ -292,8 +292,10 @@ Capabilities are the **negotiated vocabulary** between suites and drivers. Canon
 | `bindHost` | string | `127.0.0.1` | Interface servers bind to. |
 | `eulaAccepted` | bool | `false` | Must be `true` to boot any Mojang server (writes `eula=true`). The runner refuses to boot otherwise — **you accept Mojang's EULA by setting this.** |
 | `agentResolver` | `AgentResolver` | builtin | How to find the prebuilt agent per `(loader,mc,side)` when a target omits `agent:` (§2.4). |
-| `keepOnFailure` | bool | `true` | Preserve the instance dir + logs when a test fails (for debugging). Passing instances are cleaned unless `keepWorkDir`. |
-| `keepWorkDir` | bool | `false` | Never delete instance dirs (debug). |
+| `keepOnFailure` | bool | `true` | Preserve the instance dir + logs when a test **fails** (for debugging). Passing instances are cleaned unless `keepWorkDir`. **Bounded:** a retained failed env survives only for same-run triage — the next run's startup sweep (§2.9) reclaims it once this runner's PID is dead, so failed envs do not accumulate. |
+| `keepWorkDir` | bool | `false` | Never delete instance dirs (debug) — retain **every** env, even passing ones. CLI: `--keep`. |
+| `reuse` | bool | `false` | Rapid-dev: reuse ONE stable env dir per target (`workDir/<target.id>`), **reset** between runs (worlds/logs/SUT wiped, heavy `libraries`/`cache`/`versions` kept) instead of a fresh PID-suffixed dir each run. Faster iteration, bounded to one dir per target; not sweep-eligible. Intended for focused single-target iteration (the stable name is shared, so the same target is not safe to run concurrently under `reuse`). CLI: `--reuse`. |
+| `shareRuntime` | bool | `true` | Share the heavy regenerables (`libraries`/`cache`/`versions`/`.fabric`, ~130 MB) across runs of the same server build via a per-build cache under `cacheDir/runtime/<jar>` (§2.10). A fresh env **junctions** them in instead of re-downloading at boot; the first (cold) run publishes them. Paper/Spigot + Fabric/Quilt/vanilla servers (not Forge/NeoForge). CLI: `--no-share` disables. |
 | `offline` | bool | `false` | Forbid network; require everything already cached. CI air-gap mode. |
 | `downloadRetries` | int | `3` | Retry count for transient download/resolve failures (exponential backoff). |
 | `jdks` | `Record<string,string>` | — | Explicit JDK homes by Java **major** (e.g. `{ "8": "C:/jdk8", "17": "/opt/jdk17" }`) for booting servers whose MC version needs a different Java than the host (multi-JDK). A target's `mc` maps to a required major; the host JDK is preferred when it fits the version's range, else a configured/installed JDK, else a fetched one. |
@@ -577,11 +579,61 @@ The runner writes, in the instance dir:
 3. For rendered-client targets, the client is launched and brought up under a display
    (§5) and performs the same handshake from the in-process client agent.
 
-### 2.9 Teardown
+### 2.9 Teardown & workspace GC
 
 Graceful `stop`/`/stop` (or MCTP `session.close`), wait, then SIGKILL on timeout. Return
-leased ports. Delete the instance dir unless `keepOnFailure` (and the test failed) or
-`keepWorkDir`. Always flush artifacts (§6) **before** deletion.
+leased ports. Delete the instance dir unless `keepOnFailure` (and the test failed),
+`keepWorkDir`, or `reuse` (which **resets** the stable dir for next time rather than
+deleting it). Always flush artifacts (§6) **before** deletion.
+
+Deletion is **reliable across the JVM's slow handle release** (on Windows, Paper frees
+world-region files + `session.lock` only *after* exit): the remove backs off and retries,
+and if it still cannot delete it **logs the leak** rather than silently swallowing it — so
+a persistent leak is visible, not invisible.
+
+A per-run env dir is named `<target.id>-<gamePort>-<pid>`, encoding the owning runner PID.
+At the **start of every run** (`mc-test run`), a **startup sweep** GCs any env dir in
+`workDir` whose owning PID is dead — reclaiming both a prior run's Windows handle-leak and
+its `keepOnFailure` retention. A dir whose PID is still alive (a concurrent run) or is the
+current run's own is never touched. This keeps `.mc-test/run/` **bounded** without losing
+same-run triage. `reuse` dirs (no PID suffix) are not sweep-eligible by construction.
+
+### 2.10 Shared runtime cache (`shareRuntime`)
+
+A server boots ~130 MB of regenerables into its cwd — `libraries/` (Mojang/Paper/loader deps),
+`cache/` (Paper's paperclip patch cache), `versions/` (the patched server jar), and on Fabric
+`.fabric/` (the remapped-jar cache — Fabric's single biggest dir, ~68 MB) — identical for every
+run of the same build. With `shareRuntime` (default on), these are shared per-build under
+`cacheDir/runtime/<server-jar>/`. It applies to **Paper/Spigot** and **Fabric/Quilt/vanilla**
+servers (download-at-boot); **Forge/NeoForge are excluded** — their installer writes `libraries/`
+(and the `@args` launch file) before boot, so a warm junction would re-run the installer over a
+populated dir. Rendered (in-process) **client** content is already shared via `cacheDir/clients/`
+(only each launch's small `mods/` is per-run), and a rendered target's Paper server is covered here.
+The per-build cache holds whatever subset of those dirs the server produces (a missing one is skipped):
+
+- **Cold** (cache not yet populated): the env downloads them privately, then **publishes** a
+  copy to the shared dir on successful boot (single-publisher, lock-guarded; the `.mctp-ready`
+  marker is written last so a crash mid-copy leaves the cache "unready" and re-published next time).
+- **Warm**: the env **junctions** (Windows) / symlinks (POSIX) the three dirs to the shared
+  copy, so the server finds them present and **skips the ~130 MB download**. Read-only sharing is
+  safe for concurrent warm readers — the dirs are immutable once published.
+
+Env teardown unlinks those junctions **first** (never following them), so removing an env never
+touches the shared cache. Disable per run with `--no-share` (or `shareRuntime: false`).
+
+### 2.11 `mc-test clean`
+
+`mc-test clean [--matrix <f>] [--all] [--runtime] [--dry-run]` reclaims the workspace on demand
+(the startup sweep already does this automatically each run):
+
+- default — remove finished/orphaned env dirs under `workDir` (those whose owning PID is dead),
+  leaving a live run's envs in place;
+- `--all` — remove **every** env dir, including `reuse` dirs and those owned by a live run;
+- `--runtime` — also clear the shared runtime cache (§2.10) under `cacheDir/runtime`;
+- `--dry-run` — report reclaimable space without deleting.
+
+The Gradle front door exposes this as the **`mcTestClean`** task (`gradle mcTestClean [--all]
+[--runtime] [--dry-run]`).
 
 ---
 

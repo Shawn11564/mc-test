@@ -14,7 +14,7 @@
 import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
@@ -23,6 +23,16 @@ import { runMatrix, resolveConcurrency } from "./engine/runMatrix.js";
 import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPreflight.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { findFreePort, type AgentSpec, type ModLoad } from "./provision/serverCommon.js";
+import {
+  ephemeralEnvName,
+  reuseEnvName,
+  resetReuseEnv,
+  removeEnvDir,
+  reliableRemove,
+  sweepStaleEnvs,
+  purgeWorkspace,
+  dirSizeBytes,
+} from "./provision/workspace.js";
 import { provisionServer } from "./provision/provisionServer.js";
 import { loaderFamily, type ModSpec } from "./provision/ModdedProvisioner.js";
 import { resolveArtifact } from "./provision/sources.js";
@@ -275,9 +285,20 @@ async function resolveClientJava(
   });
 }
 
+/** Resolved per-run env policy (CLI flags override matrix `provision`). */
+interface RunOpts {
+  /** Retain EVERY env dir, even successful ones (`--keep` / provision.keepWorkDir). */
+  keep: boolean;
+  /** Reuse one stable, reset-between-runs env dir per target (`--reuse` / provision.reuse). */
+  reuse: boolean;
+  /** Share libraries/cache/versions across runs of a build (item D; `--no-share` disables). */
+  shareRuntime: boolean;
+}
+
 function buildProvision(
   matrix: MatrixFile,
   target: MatrixTarget,
+  runOpts: RunOpts,
 ): () => Promise<ProvisionHandle> {
   const prov = matrix.provision ?? {};
   const bindHost = prov.bindHost ?? "127.0.0.1";
@@ -285,7 +306,9 @@ function buildProvision(
   const cacheDir = expandHome(prov.cacheDir ?? "~/.mc-test/cache");
   const workDir = prov.workDir ?? ".mc-test/run";
   // Retain the per-instance work dir on failure (default true) for log/artifact
-  // triage; on success it is deleted so .mc-test/run/ does not grow unbounded.
+  // triage. A retained failed env is BOUNDED: the NEXT run's startup sweep GCs it
+  // once this runner's pid is dead (see sweepStaleEnvs), so it survives for same-run
+  // triage without accumulating. On success the env is removed immediately.
   const keepOnFailure = prov.keepOnFailure ?? true;
   const world = resolveWorld(matrix, target);
   const worldSnapshotPath = world?.snapshot?.path ? resolve(world.snapshot.path) : undefined;
@@ -309,7 +332,13 @@ function buildProvision(
       agentSpecs.push({ name: agent.name, jarPath: agent.jarPath, port: agentPort });
       portCursor = agentPort + 1;
     }
-    const instanceDir = resolve(join(workDir, `${target.id}-${gamePort}-${process.pid}`));
+    // Ephemeral (default): a pid-suffixed dir the sweep can GC by dead-owner pid.
+    // Reuse (rapid-dev): one stable dir per target, "reset" to a clean boot surface
+    // (worlds/logs/SUT wiped, heavy libraries/cache/versions kept) before re-provisioning.
+    const instanceDir = resolve(
+      join(workDir, runOpts.reuse ? reuseEnvName(target.id) : ephemeralEnvName(target.id, gamePort)),
+    );
+    if (runOpts.reuse) resetReuseEnv(instanceDir, world?.levelName ?? "world");
     // Server family: a target with `server: { paper }` is Bukkit even if its `loader`
     // names a mod loader (the rendered-client rows host a Paper server + the regions
     // PLUGIN, and put the client mod elsewhere). Otherwise the loader decides — a
@@ -380,6 +409,7 @@ function buildProvision(
       ...(target.ops ? { ops: target.ops } : {}),
       eulaAccepted: prov.eulaAccepted ?? false,
       ...(target.expectMods ? { expectModIds: target.expectMods } : {}),
+      shareRuntime: runOpts.shareRuntime,
       onLog: () => {},
     });
     // Boot-log gate (F5): a target that DECLARED `expectMods` fails if the loader did not
@@ -405,15 +435,16 @@ function buildProvision(
       ...(server.modLoad ? { modLoad: server.modLoad } : {}),
       stop: server.stop,
       cleanup: async (failed: boolean) => {
-        if (failed && keepOnFailure) return; // retain failed instance dir for triage
-        // Best-effort: on Linux/CI (where disk growth actually matters) the dir is
-        // removed promptly. On Windows, Paper's world region files + session.lock are
-        // released slowly after JVM exit, so the dir may persist until a later run —
-        // a dev-only annoyance, not a CI concern. retryDelay rides out the transient.
-        try {
-          rmSync(server.instanceDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
-        } catch {
-          /* a still-held handle simply leaves the dir behind */
+        // Reuse keeps its stable dir for next run (it is reset, not removed). --keep
+        // retains every env for inspection. keepOnFailure retains a FAILED env for
+        // same-run triage — the next run's sweep reclaims it once this pid is dead.
+        if (runOpts.reuse || runOpts.keep || (failed && keepOnFailure)) return;
+        // removeEnvDir unlinks any shared-runtime junctions first (so the shared cache
+        // is never followed), then backs off long enough to outlast Paper's slow
+        // post-exit handle release on Windows. If it still can't delete, SURFACE the
+        // leak — the next run's startup sweep reclaims it once this pid exits.
+        if (!removeEnvDir(server.instanceDir)) {
+          console.warn(`  ⚠ env dir still held, left for next-run sweep: ${server.instanceDir}`);
         }
       },
     };
@@ -539,6 +570,7 @@ async function runOneTarget(
   target: MatrixTarget,
   test: ReturnType<typeof loadSteps>,
   outDir: string,
+  runOpts: RunOpts,
 ): Promise<TestResult> {
   const pre = preflightSkip(test, target);
   if (pre) {
@@ -552,7 +584,7 @@ async function runOneTarget(
   const clientJavaPath =
     target.driver === "inprocess" ? await resolveClientJava(target.mc, matrix.provision ?? {}) : undefined;
   // `outDir` lets the screenshot verb persist PNGs + seed/diff baselines under it.
-  const result = await runner.runTarget(test, targetMetaFor(target, clientJavaPath), buildProvision(matrix, target), "Tester", outDir);
+  const result = await runner.runTarget(test, targetMetaFor(target, clientJavaPath), buildProvision(matrix, target, runOpts), "Tester", outDir);
   printResult(result);
   return result;
 }
@@ -561,7 +593,7 @@ async function cmdRun(args: Args): Promise<number> {
   const stepFiles = args._.slice(1);
   if (stepFiles.length === 0) {
     console.error(
-      "usage: mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all] [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir] [--concurrency N|auto]",
+      "usage: mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all] [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir] [--concurrency N|auto] [--keep] [--reuse] [--no-share]",
     );
     return 2;
   }
@@ -614,6 +646,29 @@ async function cmdRun(args: Args): Promise<number> {
   const outDir = resolve(args.flags["out"] ?? "mc-test-report");
   const runner = new Runner(defaultRegistry());
 
+  // Env policy: CLI flags win over matrix `provision`. `--keep` retains every env for
+  // inspection; `--reuse` iterates against one stable, reset-between-runs dir per
+  // target (rapid dev); `--no-share` disables the per-version runtime cache (item D).
+  // Defaults: clean each env after its run, sharing the heavy regenerables across runs.
+  const prov = matrix.provision ?? {};
+  const runOpts: RunOpts = {
+    keep: args.flags["keep"] === "true" || prov.keepWorkDir === true,
+    reuse: args.flags["reuse"] === "true" || prov.reuse === true,
+    shareRuntime: args.flags["no-share"] !== "true" && prov.shareRuntime !== false,
+  };
+  // Startup GC: reclaim env dirs orphaned by DEAD prior runs (Windows handle-leak
+  // on the success path, or keepOnFailure retention) BEFORE booting anything, so
+  // `.mc-test/run/` stays bounded instead of growing every run. Skipped under
+  // --reuse (its stable dir is intentionally persistent and not sweep-eligible).
+  if (!runOpts.reuse) {
+    const workDir = resolve(prov.workDir ?? ".mc-test/run");
+    const swept = sweepStaleEnvs(workDir);
+    if (swept.removed.length) console.log(`Swept ${swept.removed.length} stale env dir(s) from ${workDir}.`);
+    if (swept.leaked.length) {
+      console.warn(`  ⚠ ${swept.leaked.length} stale env dir(s) still held (will retry next run): ${swept.leaked.join(", ")}`);
+    }
+  }
+
   // Per-target isolation (distinct leased ports + per-instance world copies, see
   // PaperProvisioner) makes every (target × test) job independent, so the matrix
   // runs through a bounded-concurrency pool (F4 / ROADMAP §6.3). `--concurrency N`
@@ -645,7 +700,7 @@ async function cmdRun(args: Args): Promise<number> {
   }
   const results: TestResult[] = await runMatrix(jobs.length, concurrency, (i) => {
     const { target, test } = jobs[i]!;
-    return runOneTarget(runner, matrix, target, test, outDir);
+    return runOneTarget(runner, matrix, target, test, outDir, runOpts);
   });
 
   // One aggregated JUnit (one <testsuite> per target) + a human HTML report + artifacts.
@@ -744,6 +799,51 @@ function cmdInit(args: Args): number {
   return 0;
 }
 
+/**
+ * `mc-test clean` — reclaim provisioning workspace (item E). Removes finished/orphaned
+ * env dirs under `workDir` (default: only those whose owning PID is dead, like the
+ * startup sweep; `--all` wipes every entry incl. reuse + live ones). `--runtime` also
+ * clears the shared per-version runtime cache (item D). `--dry-run` reports only.
+ */
+function cmdClean(args: Args): number {
+  const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
+  let prov: NonNullable<MatrixFile["provision"]> = {};
+  if (existsSync(matrixPath)) {
+    try {
+      prov = loadMatrix(matrixPath).provision ?? {};
+    } catch {
+      /* tolerate a bad/missing matrix — fall back to defaults */
+    }
+  }
+  const workDir = resolve(prov.workDir ?? ".mc-test/run");
+  const all = args.flags["all"] === "true";
+  const dryRun = args.flags["dry-run"] === "true";
+  const verb = dryRun ? "Would remove" : "Removed";
+  const mb = (n: number): string => (n / 1024 / 1024).toFixed(1);
+
+  const report = purgeWorkspace(workDir, { all, dryRun });
+  console.log(`mc-test clean: ${workDir}`);
+  console.log(`  ${verb} ${report.removed.length} env dir(s), ${mb(report.freedBytes)} MB${all ? " (--all)" : ""}.`);
+  if (report.keptLive.length) {
+    console.log(`  Kept ${report.keptLive.length} env(s) owned by a live run (pass --all to force).`);
+  }
+  if (report.leaked.length) {
+    console.warn(`  ⚠ ${report.leaked.length} dir(s) still held: ${report.leaked.join(", ")}`);
+  }
+
+  // --runtime also clears the shared per-version runtime cache (item D). Off by default:
+  // it is the cache that AVOIDS re-downloading ~130 MB per build, so keep it unless asked.
+  if (args.flags["runtime"] === "true") {
+    const runtimeDir = join(expandHome(prov.cacheDir ?? "~/.mc-test/cache"), "runtime");
+    if (existsSync(runtimeDir)) {
+      const bytes = dirSizeBytes(runtimeDir);
+      if (!dryRun) reliableRemove(runtimeDir);
+      console.log(`  ${verb} shared runtime cache (${mb(bytes)} MB) at ${runtimeDir}.`);
+    }
+  }
+  return 0;
+}
+
 /** `mc-test doctor` — environment + config readiness checks. */
 async function cmdDoctor(args: Args): Promise<number> {
   console.log("mc-test doctor:");
@@ -817,8 +917,12 @@ commands:
         [--plugin built-sut.jar] [--out dir] [--fail-on-skip]
         [--concurrency N|auto] (-j)     run the (target × test) matrix in parallel
         [--pair]                        zip stepfiles↔targets 1:1 (not cross-product)
+        [--keep]                        retain every env dir under .mc-test/run (inspect)
+        [--reuse]                       rapid dev: reuse+reset one env dir per target
+        [--no-share]                    don't share libraries/cache/versions across runs
   list                                  list targets in the matrix [--matrix mc-test.yml]
   doctor                                check Java, ports, downloads, matrix [--matrix mc-test.yml]
+  clean                                 reclaim .mc-test/run env dirs [--all] [--runtime] [--dry-run]
   init                                  scaffold mc-test.yml + a sample test [--dir <dir>]
 
 docs: docs/GETTING_STARTED.md · docs/AUTHORING.md`;
@@ -855,6 +959,9 @@ async function main(): Promise<void> {
         break;
       case "doctor":
         code = await cmdDoctor(args);
+        break;
+      case "clean":
+        code = cmdClean(args);
         break;
       default:
         console.error(`mc-test: unknown command '${command}'\n`);

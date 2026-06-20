@@ -45,6 +45,18 @@ public class McTestPlugin implements Plugin<Project> {
             configureCommon(project, ext, task);
         });
 
+        // Item E: reclaim the provisioning workspace (.mc-test/run). `mcTestClean` removes
+        // finished/orphaned env dirs; `--all` wipes everything, `--runtime` also clears the
+        // shared runtime cache, `--dry-run` reports only.
+        project.getTasks().register("mcTestClean", McTestCleanTask.class, task -> {
+            task.setGroup(LifecycleBasePlugin.VERIFICATION_GROUP);
+            task.setDescription("Reclaim mc-test provisioning workspace (.mc-test/run). [--all] [--runtime] [--dry-run]");
+            task.getMatrix().set(ext.getMatrix());
+            task.getNodeExecutable().set(ext.getNodeExecutable());
+            task.getRunnerCli().set(ext.getRunnerCli());
+            task.getProjectDir().set(project.getLayout().getProjectDirectory());
+        });
+
         project.afterEvaluate(p -> {
             // Per-target convenience tasks: mcTest<Target>.
             for (String target : ext.getTargets().getOrElse(List.of())) {

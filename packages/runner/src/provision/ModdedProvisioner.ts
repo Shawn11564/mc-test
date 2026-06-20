@@ -30,6 +30,7 @@ import {
   type ProvisionedServer,
   type LaunchSpec,
 } from "./serverCommon.js";
+import { sharedRuntimeDir, linkSharedRuntime, publishSharedRuntime, type RuntimeShare } from "./workspace.js";
 
 export interface ModSpec {
   path: string;
@@ -67,6 +68,14 @@ export interface ModdedProvisionOptions {
   onLog?: (line: string) => void;
   /** Mod ids whose boot-log load to verify (F5; informational unless they gate the report). */
   expectModIds?: string[];
+  /**
+   * Share the heavy regenerables (`libraries`/`cache`/`versions`) across runs of the same
+   * server build (item D). Applied to Fabric/Quilt/vanilla servers, which download those
+   * dirs at first boot like Paper. NOT applied to Forge/NeoForge: their installer WRITES
+   * into `libraries/` before boot (and the `@args` file lives there), so a warm junction
+   * would re-run the installer over a populated dir — left unshared. Default `true`.
+   */
+  shareRuntime?: boolean;
 }
 
 const FABRIC_META = "https://meta.fabricmc.net/v2";
@@ -265,11 +274,15 @@ export async function provisionModded(opts: ModdedProvisionOptions): Promise<Pro
     cpSync(src, join(opts.instanceDir, "mods", basename(src)));
   }
 
-  // Resolve the server + build a loader-agnostic launch spec.
+  // Resolve the server + build a loader-agnostic launch spec. `runtimeKey` (set for the
+  // download-at-boot families) keys the shared runtime cache (item D); left undefined for
+  // Forge/NeoForge, whose installer-written libraries are not shared (see shareRuntime doc).
   const java = opts.javaPath ?? "java";
   let launch: LaunchSpec;
+  let runtimeKey: string | undefined;
   if (fam === "fabric" || fam === "quilt") {
     const jar = await resolveFabricServerJar(opts);
+    runtimeKey = basename(jar);
     launch = { kind: "jar", java, jvmArgs: ["-Xms1G", "-Xmx2G"], jar, programArgs: ["nogui"], cwd: opts.instanceDir };
   } else if (fam === "forge" || fam === "neoforge") {
     const installer = await resolveLoaderInstaller(opts, fam);
@@ -279,11 +292,21 @@ export async function provisionModded(opts: ModdedProvisionOptions): Promise<Pro
   } else {
     // vanilla (no mods loader): boot the Mojang server jar directly.
     const jar = await resolveMojangServerJar(opts.mc, opts.cacheDir);
+    runtimeKey = basename(jar);
     launch = { kind: "jar", java, jvmArgs: ["-Xms1G", "-Xmx2G"], jar, programArgs: ["nogui"], cwd: opts.instanceDir };
   }
   // The (single) modded agent's MCTP port travels via the env var it reads on init.
   const agentPort = agents[0]?.port;
   if (agentPort !== undefined) launch = { ...launch, env: { MCTEST_AGENT_PORT: String(agentPort) } };
+
+  // Item D: warm boots junction libraries/cache/versions from a per-build cache (skip the
+  // re-download); cold boots populate privately + publish on success. Off for Forge/NeoForge
+  // (no runtimeKey) and when shareRuntime is disabled.
+  let share: RuntimeShare = { mode: "off", shared: "" };
+  if ((opts.shareRuntime ?? true) && runtimeKey !== undefined) {
+    share = linkSharedRuntime(opts.instanceDir, sharedRuntimeDir(opts.cacheDir, runtimeKey), true);
+    if (share.mode === "warm") console.log("  ↻ reusing shared runtime cache (skipped libraries/versions download)");
+  }
 
   const logPath = join(opts.instanceDir, "logs", "server.log");
   const logStream = createWriteStream(logPath);
@@ -305,6 +328,11 @@ export async function provisionModded(opts: ModdedProvisionOptions): Promise<Pro
   } catch (err) {
     await stopServer(proc).catch(() => {});
     throw err;
+  }
+
+  // Cold-cache first boot: publish the freshly-downloaded heavy dirs for future warm boots.
+  if (publishSharedRuntime(opts.instanceDir, share)) {
+    console.log("  ↻ published runtime cache for reuse by future runs");
   }
 
   const agentEndpoints: AgentEndpoint[] = agents.map((agent) => ({

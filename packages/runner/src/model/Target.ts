@@ -69,6 +69,30 @@ export interface ProvisionPolicy {
   workDir?: string;
   keepOnFailure?: boolean;
   /**
+   * Retain EVERY per-run env dir under `workDir` (even on success), for inspection.
+   * Off by default so `.mc-test/run/` does not grow; the CLI `--keep` flag overrides.
+   * Independent of `keepOnFailure` (which retains only failed envs for triage).
+   */
+  keepWorkDir?: boolean;
+  /**
+   * Rapid-dev mode: reuse ONE stable env dir per target (`workDir/<target.id>`),
+   * "reset" between runs (worlds/logs/plugins wiped, heavy `libraries`/`cache`/
+   * `versions` kept) instead of creating a fresh pid-suffixed dir each run. Faster
+   * iteration, bounded to one dir per target. The CLI `--reuse` flag overrides.
+   * Intended for focused single-target iteration (a stable name is shared, so it is
+   * not safe to run the same target concurrently under reuse).
+   */
+  reuse?: boolean;
+  /**
+   * Share the heavy regenerables (`libraries`/`cache`/`versions`/`.fabric`, ~130 MB) across
+   * runs of the same server build via a per-build cache under `cacheDir/runtime/` (item D),
+   * so a fresh env junctions them in instead of re-downloading at boot. Default `true`; the
+   * CLI `--no-share` flag (or `false`) disables it. Applies to Paper/Spigot and Fabric/Quilt/
+   * vanilla servers (download-at-boot); NOT Forge/NeoForge (their installer writes `libraries/`
+   * before boot). Rendered-client content is already shared via `cacheDir/clients`.
+   */
+  shareRuntime?: boolean;
+  /**
    * Explicit JDK homes keyed by Java major (e.g. `{ "8": "C:/jdk8", "17": "/opt/jdk17" }`), used to
    * boot servers whose MC version needs a different Java than the host (multi-JDK provisioning). A
    * target's `mc` maps to a required major; the host JDK is preferred when it fits the range.

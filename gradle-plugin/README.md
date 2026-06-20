@@ -31,6 +31,22 @@ plugins {
 
 In IntelliJ: open the Gradle tool window → `verification` → `mcTest` (gutter ▶ / run config).
 
+## Clean up the workspace
+
+mc-test provisions each run into an **ephemeral** env dir under `.mc-test/run/`; successful
+envs are auto-removed and a startup sweep reclaims any orphans, so it stays bounded. To
+reclaim it on demand:
+
+```bash
+./gradlew mcTestClean                  # remove finished/orphaned env dirs (leaves live runs alone)
+./gradlew mcTestClean --dry-run        # report reclaimable space without deleting
+./gradlew mcTestClean --all            # remove EVERY env dir (incl. reuse + live)
+./gradlew mcTestClean --runtime        # also clear the shared runtime cache (~130 MB/build)
+```
+
+`mcTestClean` is a thin front door over `mc-test clean` (it honors the matrix's `workDir`/
+`cacheDir`). See `docs/ENVIRONMENTS.md` §2.9–2.11 for the workspace + shared-runtime-cache model.
+
 ## Configure
 
 Everything has a convention; a project that follows the defaults needs no `mcTest { }` block.
