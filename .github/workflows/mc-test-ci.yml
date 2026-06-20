@@ -148,7 +148,17 @@ jobs:
           gradle -p agents :core:publishToMavenLocal
           for agent in $AGENTS; do
             echo "::group::build agent $agent"
-            gradle -p agents ":${agent}:build" || echo "::warning::agent '$agent' failed to build — its server-truth steps will honest-skip"
+            if [ -f "agents/${agent}/settings.gradle.kts" ] || [ -f "agents/${agent}/settings.gradle" ]; then
+              # Loader agents (server-fabric/-forge/-neoforge, client-*) are STANDALONE Gradle builds
+              # with their own settings + wrapper — NOT subprojects of the mc-test-agents composite, so
+              # `gradle -p agents :<agent>:build` can't see them. Their Loom/NeoGradle/ForgeGradle plugins
+              # also pin a specific Gradle (e.g. 8.10.2), so build with the agent's OWN wrapper. `sh` runs
+              # it regardless of the wrapper's exec bit (git may track it 100644 on Windows-authored repos).
+              ( cd "agents/${agent}" && sh ./gradlew build ) || echo "::warning::agent '$agent' failed to build — its server-truth steps will honest-skip"
+            else
+              # Composite subprojects of mc-test-agents (core, server-bukkit) build with the workspace gradle.
+              gradle -p agents ":${agent}:build" || echo "::warning::agent '$agent' failed to build — its server-truth steps will honest-skip"
+            fi
             echo "::endgroup::"
           done
 
