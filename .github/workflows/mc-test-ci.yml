@@ -1,0 +1,213 @@
+# mc-test — reusable CI for DOWNSTREAM plugin/mod projects.
+#
+# This is NOT mc-test's own CI (see ci.yml / e2e.yml). It is the engine a consuming
+# project's workflow calls so it needs almost no config of its own:
+#
+#   # .github/workflows/mc-test.yml in YOUR plugin/mod repo (scaffold with `mc-test init-ci`)
+#   jobs:
+#     mc-test:
+#       permissions: { contents: read, pages: write, id-token: write }
+#       uses: Shawn11564/mc-test/.github/workflows/mc-test-ci.yml@main
+#       with:
+#         build-command: ./gradlew build
+#         tests: 'mctests/**/*.mctest.yml'
+#         agents: server-bukkit
+#
+# It builds the mc-test engine from this repo (no npm publish / token needed — this
+# repo is public), builds the caller's SUT jar(s), runs the caller's .mctest.yml tests
+# across its mc-test.yml matrix, and publishes the human report (mc-test-report/report.html):
+#   - ALWAYS as a downloadable workflow artifact (free, works with zero repo setup), and
+#   - to GitHub Pages when `pages: true` (one-time: repo Settings → Pages → Source:
+#     "GitHub Actions"). Pages publish is best-effort, so the artifact is always there.
+#
+# JUnit XML (mc-test-report/junit/results.xml) is the machine contract; it is in the
+# artifact too. Honest skips (a target with no built agent jar, an out-of-range version)
+# stay green and show as skipped — never a false pass.
+name: mc-test (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'JDK for the SUT build + server boot (Temurin).'
+        type: string
+        default: '21'
+      node-version:
+        description: 'Node used to build/run the mc-test engine.'
+        type: string
+        default: '20'
+      gradle-version:
+        description: 'Gradle used for the engine-side agent builds (the caller SUT uses its own wrapper).'
+        type: string
+        default: '9.4.0'
+      build-command:
+        description: 'Command that builds the caller SUT jar(s) the matrix references (e.g. ./gradlew build, mvn -B package).'
+        type: string
+        default: './gradlew build'
+      tests:
+        description: 'Glob of step files to run (bash globstar). e.g. mctests/**/*.mctest.yml'
+        type: string
+        default: 'mctests/**/*.mctest.yml'
+      targets:
+        description: 'Matrix target(s): an id, a comma-separated subset, or "all".'
+        type: string
+        default: 'all'
+      matrix:
+        description: 'Path to the matrix file in the caller repo.'
+        type: string
+        default: 'mc-test.yml'
+      out:
+        description: 'Report output dir (holds report.html + junit/ + artifacts/).'
+        type: string
+        default: 'mc-test-report'
+      agents:
+        description: >-
+          Space-separated engine agent modules to build so server-truth steps
+          (assertPluginState / mod.loaded) run instead of honest-skipping.
+          e.g. "server-bukkit" (Paper/Spigot) or "server-fabric server-neoforge" (modded servers).
+          Each is best-effort: a build that fails just makes its steps honest-skip.
+        type: string
+        default: 'server-bukkit'
+      engine-repo:
+        description: 'owner/repo of the mc-test engine.'
+        type: string
+        default: 'Shawn11564/mc-test'
+      engine-ref:
+        description: 'Ref of the engine to build (pin a tag for reproducibility once tagged).'
+        type: string
+        default: 'main'
+      pages:
+        description: 'Also publish the report to GitHub Pages (best-effort; the artifact is always uploaded).'
+        type: boolean
+        default: true
+      fail-on-skip:
+        description: 'Fail the run if any (test × target) cell is skipped (e.g. a missing agent jar).'
+        type: boolean
+        default: false
+
+jobs:
+  run:
+    name: Build SUT + run mc-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60   # boots real (ephemeral) servers; caps a hung boot well under the default
+    steps:
+      # The caller repo (SUT sources + mc-test.yml + step files). In a reusable
+      # workflow actions/checkout defaults to the CALLER repo at the triggering SHA.
+      - name: Checkout project (SUT)
+        uses: actions/checkout@v4
+
+      # The mc-test engine, into a sibling dir. Public repo → no token. cli.js finds
+      # built-in agent jars relative to its own location, so they resolve from here
+      # regardless of the working directory the runner is invoked from.
+      - name: Checkout mc-test engine
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.engine-repo }}
+          ref: ${{ inputs.engine-ref }}
+          path: .mc-test-engine
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: .mc-test-engine/package-lock.json
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ inputs.gradle-version }}
+
+      # Build the runner in dependency order (npm workspaces are not topo-sorted; the
+      # drivers/runner import @mc-test/protocol's built dist). Same order as ci.yml.
+      - name: Build mc-test engine
+        working-directory: .mc-test-engine
+        run: |
+          npm ci
+          npm run build -w @mc-test/protocol
+          npm run build -w @mc-test/driver-headless
+          npm run build -w @mc-test/driver-inprocess
+          npm run build -w @mc-test/driver-pixel
+          npm run build -w @mc-test/runner
+
+      # Agent jars supply server truth (assertPluginState / fixtures / mod.loaded). The SUT
+      # (for Paper plugins) compiles against the agent-core SPI from mavenLocal, so publish it
+      # first. Each requested agent is built best-effort: a failed build (e.g. a flaky modded
+      # toolchain download) just drops that agent so its steps honest-skip — never a false green.
+      - name: Build agent jars (best-effort)
+        working-directory: .mc-test-engine
+        env:
+          AGENTS: ${{ inputs.agents }}
+        run: |
+          gradle -p agents :core:publishToMavenLocal
+          for agent in $AGENTS; do
+            echo "::group::build agent $agent"
+            gradle -p agents ":${agent}:build" || echo "::warning::agent '$agent' failed to build — its server-truth steps will honest-skip"
+            echo "::endgroup::"
+          done
+
+      - name: Build SUT
+        run: ${{ inputs.build-command }}
+
+      # Expand the test glob (globstar for **), then run the whole matrix into one report.
+      # Run from the project root so relative jar paths in mc-test.yml resolve.
+      - name: Run mc-test
+        env:
+          TESTS_GLOB: ${{ inputs.tests }}
+          TARGETS: ${{ inputs.targets }}
+          MATRIX: ${{ inputs.matrix }}
+          OUT: ${{ inputs.out }}
+          FAIL_ON_SKIP: ${{ inputs.fail-on-skip }}
+        run: |
+          shopt -s globstar nullglob
+          FILES=( $TESTS_GLOB )
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::no step files matched '$TESTS_GLOB'"
+            exit 1
+          fi
+          echo "Running ${#FILES[@]} step file(s): ${FILES[*]}"
+          EXTRA=()
+          if [ "$FAIL_ON_SKIP" = "true" ]; then EXTRA+=(--fail-on-skip); fi
+          node .mc-test-engine/packages/runner/dist/cli.js run "${FILES[@]}" \
+            --target "$TARGETS" --matrix "$MATRIX" --out "$OUT" "${EXTRA[@]}"
+
+      # The guaranteed deliverable: the full report dir (report.html + junit + artifacts),
+      # downloadable from the run even when Pages is off or the matrix went red.
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mc-test-report
+          path: ${{ inputs.out }}/
+          if-no-files-found: warn
+
+      # Stage the same dir for Pages (consumed by the publish job below). hashFiles guards
+      # the case where a build failed before any report was written (nothing to publish).
+      - name: Upload Pages artifact
+        if: ${{ always() && inputs.pages && hashFiles(format('{0}/**', inputs.out)) != '' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ inputs.out }}/
+
+  # Best-effort Pages deploy: serves report.html at the repo's Pages URL. continue-on-error
+  # so a repo that has not enabled Pages (Settings → Pages → Source: "GitHub Actions") still
+  # gets the report from the artifact above rather than a red run.
+  publish:
+    name: Publish report to GitHub Pages
+    needs: run
+    if: ${{ inputs.pages && always() && needs.run.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

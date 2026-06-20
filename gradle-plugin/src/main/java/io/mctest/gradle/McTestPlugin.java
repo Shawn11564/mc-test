@@ -57,6 +57,17 @@ public class McTestPlugin implements Plugin<Project> {
             task.getProjectDir().set(project.getLayout().getProjectDirectory());
         });
 
+        // Scaffold a GitHub Actions workflow that builds the SUT, runs the tests across the
+        // matrix, and publishes report.html (artifact + GitHub Pages). Thin front door over
+        // `mc-test init-ci`; never overwrites an existing workflow. [--standalone] [--agents]
+        project.getTasks().register("mcTestInitCi", McTestInitCiTask.class, task -> {
+            task.setGroup(LifecycleBasePlugin.VERIFICATION_GROUP);
+            task.setDescription("Scaffold a GitHub Actions workflow that runs mc-test + publishes report.html. [--standalone]");
+            task.getNodeExecutable().set(ext.getNodeExecutable());
+            task.getRunnerCli().set(ext.getRunnerCli());
+            task.getProjectDir().set(project.getLayout().getProjectDirectory());
+        });
+
         project.afterEvaluate(p -> {
             // Per-target convenience tasks: mcTest<Target>.
             for (String target : ext.getTargets().getOrElse(List.of())) {

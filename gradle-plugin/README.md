@@ -47,6 +47,22 @@ reclaim it on demand:
 `mcTestClean` is a thin front door over `mc-test clean` (it honors the matrix's `workDir`/
 `cacheDir`). See `docs/ENVIRONMENTS.md` §2.9–2.11 for the workspace + shared-runtime-cache model.
 
+## Continuous integration (build tests + host report on GitHub)
+
+Scaffold a GitHub Actions workflow that builds your jar, runs your `.mctest.yml` tests across
+the matrix on every push/PR, and publishes the HTML report (`mc-test-report/report.html`) as a
+downloadable workflow artifact **and** to GitHub Pages:
+
+```bash
+./gradlew mcTestInitCi                    # writes .github/workflows/mc-test.yml (never overwrites)
+./gradlew mcTestInitCi --standalone       # self-contained workflow (no reusable-workflow dependency)
+./gradlew mcTestInitCi --agents "server-fabric server-neoforge"   # modded-server projects
+```
+
+To host on Pages (one-time): repo **Settings → Pages → Source: "GitHub Actions"**. The report is
+always uploaded as an artifact regardless, so Pages is optional. `mcTestInitCi` is a thin front
+door over `mc-test init-ci`. See **`docs/CI.md`** for the workflow inputs and the Pages setup.
+
 ## Configure
 
 Everything has a convention; a project that follows the defaults needs no `mcTest { }` block.

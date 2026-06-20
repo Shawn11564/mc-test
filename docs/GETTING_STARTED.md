@@ -85,7 +85,19 @@ Then:
 builds your jar, boots an ephemeral server, and runs your tests, with no manual jar paths.
 See [`../gradle-plugin/README.md`](../gradle-plugin/README.md).
 
-## 6. Troubleshooting
+## 6. Run it in CI (and host the report)
+
+Scaffold a GitHub Actions workflow that builds your jar, runs your tests across the matrix on
+every push/PR, and publishes `report.html` as a workflow artifact + to GitHub Pages:
+
+```bash
+npx mc-test init-ci        # or: ./gradlew mcTestInitCi   (writes .github/workflows/mc-test.yml)
+```
+
+One-time, to host on Pages: repo **Settings → Pages → Source: "GitHub Actions"** (the report is
+uploaded as a downloadable artifact regardless). Full reference: [`CI.md`](./CI.md).
+
+## 7. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -98,4 +110,5 @@ See [`../gradle-plugin/README.md`](../gradle-plugin/README.md).
 | Boot is slow the first time | The Paper jar downloads once into `~/.mc-test/cache`; later runs reuse it. |
 
 Next: [`AUTHORING.md`](./AUTHORING.md) (write tests) · [`ENVIRONMENTS.md`](./ENVIRONMENTS.md)
-(the matrix) · [`ARCHITECTURE.md`](./ARCHITECTURE.md) (how it works).
+(the matrix) · [`CI.md`](./CI.md) (CI + host the report) · [`UPGRADING.md`](./UPGRADING.md)
+(version migration) · [`ARCHITECTURE.md`](./ARCHITECTURE.md) (how it works).

@@ -77,6 +77,8 @@ mc-test.yml                   the environment matrix (per-target loader/mc/drive
 | `docs/SELECTORS.md` | resolving elements; normalization; testId | Selector grammar, normalization pipeline, fuzzy matching, testId carriers, resolver contract. |
 | `docs/DRIVERS.md` | building/choosing a driver | The 4 drivers, their capabilities, element/screen field shapes, bridge interfaces, build-artifact naming. |
 | `docs/ENVIRONMENTS.md` | editing `mc-test.yml`; provisioning | `mc-test.yml` schema, source resolvers (Paper/Mojang/Maven/…), worlds, matrix, provisioning policy, forced server.properties. |
+| `docs/CI.md` | wiring a consuming project's CI; hosting the report | `mc-test init-ci` scaffolder + the reusable workflow (`.github/workflows/mc-test-ci.yml`) and its inputs; report publishing (artifact + GitHub Pages). |
+| `docs/UPGRADING.md` | a consumer is moving between mc-test versions | Per-mode update procedure, the forward-compat promise, and per-release behavior changes (e.g. the file-cleanup workspace GC). |
 
 > ✅ **Naming resolved (ratified 2026-06-15).** The MCTP wire vocabulary is **namespaced `noun.verb`
 > methods with `lowerCamelCase` fields** (e.g. `session.create`, `screen.clickElement`,
