@@ -384,6 +384,11 @@ jobs:
     needs: [paper-regions, gradle-front-door, fabric-rendered-client, multi-loader-matrix, modded-server]
     if: always()
     runs-on: ubuntu-latest
+    # The workflow pins `contents: read`; download-artifact@v4 also needs `actions: read` to list/fetch
+    # this run's artifacts (a restricted token would 403 otherwise).
+    permissions:
+      contents: read
+      actions: read
     steps:
       # Pull every lane's uploaded report artifact (no `name` ⇒ all of them) into _artifacts/<name>/.
       - name: Download all E2E report artifacts
