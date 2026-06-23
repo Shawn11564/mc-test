@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=../../packages/protocol/schema/mctest-stepfile.schema.json
+name: modded-server-worldtruth
+# F5 — runtime-exercise the modded server agent's WORLD-TRUTH + FIXTURE surface (beyond mod.loaded).
+#
+# A SERVER-TRUTH-ONLY test (NO player join — a Mineflayer bot can't complete Forge/NeoForge's FML
+# handshake, so the cost-1 `server` driver asserts directly over the co-selected server-* agent). The
+# SAME unchanged file runs across the fabric/forge/neoforge SERVER rows. It drives the agent's actual
+# Mojmap/Yarn code paths at runtime (not just the loader-presence probe), so a mis-mapped name or a
+# server-thread/registry bug surfaces as a real RED — the live counterpart to the compile-time
+# verification of mappings/Names.java.
+requires:
+  worldTruth: true
+  fixtures: true
+target: ${matrix} # filled by the mc-test.yml / e2e-matrix row selected with --target
+steps:
+  # WORLD-TRUTH — authoritative block reads over MCTP, asserting KNOWN blocks of the forced flat world
+  # (level-type=minecraft:flat). These exercise the full server-side block-read path: world resolve,
+  # build-height range check, chunk-loaded check, getBlockState, the block→id registry lookup, and the
+  # biome read. The two coordinates are universal across MC versions + flat presets:
+  - getBlock: { x: 0, y: -64, z: 0, expect: "minecraft:bedrock" } # the flat world's bottom layer (min build height)
+  - getBlock: { x: 0, y: 120, z: 0, expect: "minecraft:air" } #     well above any flat surface
+  # ENTITY ITERATION — exercises the entity-query path (spherical AABB query, per-entity position +
+  # type-registry read). With spawns disabled the freshly generated world has no mobs, so this is a
+  # read SMOKE (it proves the path runs + returns a count; an agent error here would go RED).
+  - getEntities: { center: { x: 0, y: 64, z: 0 }, radius: 16 }
+  # FIXTURES — apply each built-in recipe that needs NO online player (inventory/permissions do, and are
+  # out of scope for a server-truth-only session). Each exercises a distinct fixture Mojmap path and is
+  # recorded in the fixture ledger:
+  - fixture: { fixture: "gamerule", args: { rule: "doDaylightCycle", value: false } } # gamerule key lookup + console-command apply
+  - fixture: { fixture: "time", args: { time: 6000 } } #                                day-time get/set
+  - fixture: { fixture: "weather", args: { state: "clear" } } #                         weather get/set
+  # Revert every fixture applied above — exercises the capture-and-undo path (prior-value read + restore).
+  - fixture: { reset: true }

@@ -176,12 +176,25 @@ export function parseLoadedMods(logText: string, loader: string): string[] {
  * Compute the boot-log mod-load result (PURE, unit-tested). An expected id counts
  * as `seen` when it appears in `parseLoadedMods` OR as a word-boundary token in the
  * log (covers Forge/NeoForge, whose FML logs the id but not in a uniform list).
+ *
+ * `missing` (the hard boot-log signal that gates `expectMods`) is POPULATED ONLY for
+ * loaders whose console output is a RELIABLE, complete mod list — Fabric/Quilt print a
+ * `Loading N mods:` block, so an unseen expected id there is genuinely not loaded. FML
+ * loaders (Forge/NeoForge) are version-variable and frequently log mod discovery only to
+ * `debug.log`, NOT the captured console (verified: Forge 1.20.1 prints nothing about
+ * individual mods to stdout, while NeoForge 1.21.1 does) — so for them an absent token is
+ * INCONCLUSIVE, never proof of "not loaded". Boot-log detection is therefore POSITIVE-ONLY
+ * for FML loaders (it can confirm a mod, never deny one); the authoritative
+ * `truth.assertPluginState { mod.loaded }` MCTP assertion (real `ModList.isLoaded`) is the
+ * gate. This keeps the boot-log an honest secondary signal and never a false MOD_NOT_LOADED.
  */
 export function modLoadResult(logText: string, loader: string, expected: string[]): ModLoad {
+  const fam = loader.toLowerCase();
   const all = parseLoadedMods(logText, loader);
   const allSet = new Set(all);
   const seen = expected.filter((id) => allSet.has(id) || new RegExp(`\\b${esc(id)}\\b`, "i").test(logText));
-  const missing = expected.filter((id) => !seen.includes(id));
+  const reliableList = fam === "fabric" || fam === "quilt";
+  const missing = reliableList ? expected.filter((id) => !seen.includes(id)) : [];
   return { loader, expected, seen, missing, all };
 }
 

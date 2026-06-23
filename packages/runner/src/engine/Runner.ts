@@ -386,9 +386,13 @@ export class Runner {
         result.modLoad = ml;
         const note = ml.missing.length
           ? `⚠ boot-log: mod(s) NOT detected loaded: ${ml.missing.join(", ")} (loader ${ml.loader}; MCTP mod.loaded is authoritative)`
-          : ml.expected.length
+          : ml.seen.length
             ? `boot-log: mod(s) detected loaded: ${ml.seen.join(", ")} (loader ${ml.loader})`
-            : `boot-log: ${ml.all.length} mod(s) parsed from ${ml.loader} startup`;
+            : ml.expected.length
+              ? // FML (forge/neoforge) often logs mod discovery only to debug.log, not the captured
+                // console — an honest "console didn't list it" rather than a misleading empty "detected".
+                `boot-log: ${ml.loader} console did not list ${ml.expected.join(", ")} (FML logs to debug.log; MCTP mod.loaded is authoritative)`
+              : `boot-log: ${ml.all.length} mod(s) parsed from ${ml.loader} startup`;
         result.notes = [...(result.notes ?? []), note];
       }
       // Add the server log to the failure bundle WITHOUT clobbering any screenshot

@@ -64,7 +64,7 @@ test("regions-open-testregion")
 | `type` | `{ text, selector?, clear?, submit? }` | `typeText` | |
 | `press` | `{ key }` | `pressKey` | semantic key name (`ENTER`, `ESCAPE`). |
 | `screenshot` | `{}` | `screenshot` | rendered-client drivers only. |
-| `getBlock` | `{ world, x, y, z }` | `worldTruth` | server agent. |
+| `getBlock` | `{ world?, x, y, z, expect? }` | `worldTruth` | server agent. With `expect` (a block id, e.g. `minecraft:bedrock`) the step ASSERTS the read and fails on mismatch (case-insensitive); without it, it's a bare read that still exercises the path. |
 | `getEntities` | `{ world?, near?, type?, radius? }` | `worldTruth` | server agent. |
 | `assertPluginState` | `{ plugin, query, args?, expect }` | `pluginState` | `expect` is REQUIRED; a bare value is `equals` (e.g. `expect: true`), or use `{ gt, gte, lt, lte, contains, equals, notEquals, exists }`. |
 | `fixture` | `{ name, args }` or `{ reset: true }` | `fixtures` | deterministic setup; `reset` reverts session fixtures. |

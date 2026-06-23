@@ -12,6 +12,14 @@ import type { AgentSpec, ProvisionedServer } from "./serverCommon.js";
 export interface ServerProvisionOptions {
   loader: string;
   mc: string;
+  /**
+   * Force the Bukkit/Paper server path even when `loader` names a mod loader. The rendered-client
+   * rows (`driver: inprocess`) set `loader` to the CLIENT loader (fabric/forge/neoforge) but boot a
+   * PAPER server (`server: { paper }`) for the rendered client to connect to — so the SERVER family is
+   * decided by `server.paper`, NOT the client loader. The CLI passes its `serverIsBukkit` here; when
+   * omitted the router falls back to `loaderFamily(loader)`.
+   */
+  serverIsBukkit?: boolean;
   /** Loader version (Fabric loader; REQUIRED for Forge/NeoForge). */
   loaderVersion?: string;
   /** Paper build pin (bukkit family). */
@@ -43,9 +51,21 @@ export interface ServerProvisionOptions {
   shareRuntime?: boolean;
 }
 
-/** Provision a server, routing by loader family (bukkit → Paper; else modded). */
+/**
+ * Decide whether the SERVER is Paper/Bukkit (PURE, unit-tested). An explicit `serverIsBukkit` (the CLI's
+ * resolution, which is `true` whenever `server.paper` is set — e.g. the rendered-client rows that name a
+ * mod loader for the CLIENT but boot a Paper server) wins; otherwise it falls back to the loader family.
+ */
+export function serverUsesBukkit(serverIsBukkit: boolean | undefined, loader: string): boolean {
+  return serverIsBukkit ?? loaderFamily(loader) === "bukkit";
+}
+
+/**
+ * Provision a server, routing to Paper when a Paper server is explicitly requested (the rendered-client
+ * rows, via `serverIsBukkit`) or the loader is bukkit-family; otherwise the modded path.
+ */
 export function provisionServer(opts: ServerProvisionOptions): Promise<ProvisionedServer> {
-  if (loaderFamily(opts.loader) === "bukkit") {
+  if (serverUsesBukkit(opts.serverIsBukkit, opts.loader)) {
     return provisionPaper({
       mc: opts.mc,
       ...(opts.build !== undefined ? { build: opts.build } : {}),

@@ -444,8 +444,12 @@ handshake). The pieces:
   `pluginState`) — **not** a new MCTP method. Canonical use: `examples/regions/regions.modloaded.mctest.yml`
   asserts `mod.loaded` with `args:{ id:"ferritecore" }` `expect: true` across the `fabric-server-1.21`
   / `neoforge-server-1.21` / `forge-server-1.20.1` matrix rows.
-- **Status.** The Forge/NeoForge server truth agents (`/agents/server-forge`, `/agents/server-neoforge`)
-  are **acceptance-only** (ForgeGradle/NeoGradle); when their jar isn't built the target **honest-skips**
+- **Status.** All three modded-server truth agents are **built and boot-verified**: `/agents/server-fabric`
+  (Loom), `/agents/server-forge` (ForgeGradle, MC 1.20.1 / Forge 47.3.39, built on Java 17), and
+  `/agents/server-neoforge` (NeoGradle, MC 1.21.1 / NeoForge 21.1.234, built on Java 21). Each boots a real
+  dedicated server and answers `mod.loaded` over MCTP via the cost-1 `server` driver (no player join). The
+  Forge/NeoForge agents are **standalone Gradle builds** kept out of `agents/settings.gradle.kts` and need
+  network + a JDK to build. When a target's server agent jar isn't present the target **honest-skips**
   with `NO_SERVER_AGENT` (category `environment`) rather than producing a false green. A modded-server
   target may also declare `expectMods` (a boot-log mod-load gate) → a `MOD_NOT_LOADED` skip/error when
   the loader didn't load a named mod (`ENVIRONMENTS.md` §1.2 / §2.3).

@@ -20,31 +20,25 @@ twin, DRIVERS.md §3).
 > `player.spawnFake` / `player.despawnFake`. A test that requires `fakePlayers` honestly **skips** on a
 > NeoForge target rather than false-greening.
 
-## ⚠️ Acceptance-only build (not built in this repo's CI)
+## Build (standalone Gradle build — needs NeoGradle + network)
 
 NeoGradle downloads Minecraft + NeoForge and needs the **network** and a real **dedicated server
 runtime** to build and run. So this is a **standalone Gradle build** (its own `settings.gradle.kts`,
-**not** part of `agents/settings.gradle.kts`), and it is **not** compiled in this repo's CI — exactly
-like `agents/client-forge`, `agents/client-neoforge`, and `agents/server-fabric`. The sources here are
-written to be correct against the contract but are validated by inspection, not by a build in this
-environment.
+**not** part of `agents/settings.gradle.kts`), like `agents/client-forge`, `agents/client-neoforge`,
+and `agents/server-fabric`. The CI `e2e.yml` modded-server lane builds this agent (NeoForge 21.1.234
+on Java 21) and runs the harness: a real dedicated server boots, downloads FerriteCore from Modrinth
+into `mods/`, and asserts `mod.loaded = true` over MCTP via the cost-1 `server` driver (no player join).
 
-The **CI-provable** half of the server agent — the loader-neutral wire logic and the pure-Java handler
-skeleton — lives in `/agents/core` (the cross-driver `ConformanceTest`) and in `/agents/server-bukkit`,
-from which this module is mirrored. The pure-Java pieces shared between the server agents (`Params`,
-`StateQuery`, `FixtureLedger`, `AppliedFixture`) are copied byte-for-byte from `server-fabric` (only the
-package declaration differs). What needs a real NeoForge server (live `ServerLevel`, game rules,
-inventories) is acceptance-only and uses Mojmap mappings.
+The loader-neutral wire logic and the pure-Java handler skeleton also live in `/agents/core` (the
+cross-driver `ConformanceTest`) and in `/agents/server-bukkit`, from which this module is mirrored.
+The pure-Java pieces shared between the server agents (`Params`, `StateQuery`, `FixtureLedger`,
+`AppliedFixture`) are copied byte-for-byte from `server-fabric` (only the package declaration differs).
+What needs a real NeoForge server (live `ServerLevel`, game rules, inventories) uses Mojmap mappings.
 
-> **Mojmap spellings to verify on an acceptance build.** NeoForge ships Mojang (official) names at dev
-> AND runtime (so, unlike Forge, there is **no** SRG reobfuscation step). `mappings/Names.java` carries
-> `// TODO(acceptance)` markers on the method spellings that could not be confirmed without a real
-> NeoGradle build (e.g. `ServerLevel#getMinBuildHeight`/`getMaxBuildHeight` — possibly renamed to
-> `getMinY`/`getMaxY` on 1.21.x, `Level#hasChunk`, `Level#getDayTime` / `ServerLevel#setDayTime`,
-> `ServerLevel#setWeatherParameters`, `GameRules#visitGameRuleTypes` / `Key#getId`, `Property#getName(T)`,
-> `Inventory#add` / `Container#clearContent`, `PlayerList#getPlayerByName`/`getPlayer(UUID)`,
-> `MinecraftServer#createCommandSourceStack` / `Commands#performPrefixedCommand`, biome
-> `Holder#unwrapKey`). Verify each in the mapping-contract test on a real build.
+> **Mojmap spellings are build-verified.** NeoForge ships Mojang (official) names at dev AND runtime
+> (so, unlike Forge, there is **no** SRG reobfuscation step). The method spellings in
+> `mappings/Names.java` compiled against the real NeoForge 1.21.1 Mojmap mappings, and the lifecycle +
+> `mod.loaded` path is runtime-proven by a real dedicated-server boot.
 
 ## Capabilities advertised
 
@@ -146,7 +140,7 @@ appears outside `mappings/Names.java`. This keeps the per-version obfuscation ta
 The base name is `agent-server-neoforge` (resolver/install form `agent-server-neoforge-<mc>.jar`, per the
 `agent-<variant>-<mc>.jar` convention).
 
-## Build (acceptance-only — needs NeoGradle + network)
+## Building the jar (needs NeoGradle + network)
 
 The core must be published to mavenLocal first:
 
@@ -154,15 +148,15 @@ The core must be published to mavenLocal first:
 # in /agents
 gradle :core:build :core:publishToMavenLocal
 
-# in /agents/server-neoforge (standalone build; NEEDS NETWORK + NeoGradle — not run in this repo's CI)
+# in /agents/server-neoforge (standalone build; NEEDS NETWORK + NeoGradle)
 gradle build
 ```
 
-The **jarJar** mod jar `build/libs/agent-server-neoforge.jar` nests the core + Java-WebSocket **+ Gson**
-(NeoForge's jar-in-jar; NeoForge has no Loom `include`, but its `jarJar` is the equivalent). Note the
-**Gson** nesting (like `server-fabric`, unlike `server-bukkit`): Paper ships Gson at runtime, but a
-vanilla NeoForge **dedicated server** does not reliably expose Gson to our classes, so this build **nests
-Gson in** to guarantee the envelope/JSON code resolves at runtime. `slf4j` is **excluded** from the nested
+The **jarJar** mod jar `build/libs/agent-server-neoforge.jar` nests the core + Java-WebSocket
+(NeoForge's jar-in-jar; NeoForge has no Loom `include`, but its `jarJar` is the equivalent). **Gson is
+NOT nested in:** the loader/Minecraft already provides `com.google.gson` as a module on the boot module
+path, so bundling it split the module graph at boot. Gson is therefore a **compile-only** dependency
+here. `slf4j` is **excluded** from the nested
 Java-WebSocket (NeoForge already provides an `org.slf4j` module under the JPMS module system; bundling it
 would split the package at boot). Unlike Forge, NeoForge runs Mojmap at runtime, so there is **no
 reobfuscation step** — the jar `mappings/Names.java` was compiled against IS what the server runs.

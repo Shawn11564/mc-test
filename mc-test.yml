@@ -122,7 +122,7 @@ targets:
   - id: neoforge-1.21-client
     loader: neoforge
     mc: "1.21.1"
-    loaderVersion: "21.1.66" # the NeoGradle shim's pinned NeoForge version
+    loaderVersion: "21.1.66" # the NeoGradle shim's pinned NeoForge version (client agent + SUT mod build)
     driver: inprocess
     server: { paper: { project: paper, version: "1.21.1", build: latest } }
     # Server-side regions PLUGIN so assertPluginState resolves against the Bukkit agent.
@@ -187,7 +187,7 @@ targets:
   - id: neoforge-server-1.21
     loader: neoforge
     mc: "1.21.1"
-    loaderVersion: "21.1.66" # NeoForge installer version (verified to exist on the NeoForged maven)
+    loaderVersion: "21.1.234" # NeoForge installer version (verified to exist on the NeoForged maven)
     driver: server
     mods:
       # FerriteCore 7.0.3 for NeoForge 1.21.1 (verified Modrinth version id).

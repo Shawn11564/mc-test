@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../../packages/protocol/schema/mctest-stepfile.schema.json
+name: modded-server-worldtruth-negative
+# NEGATIVE control for the world-truth assertion: assert a block that is NOT there → must go RED. The
+# flat world's bottom layer (y=-64) is bedrock, so claiming it is diamond_block proves `getBlock`'s
+# `expect` reads REAL world state over MCTP (a green here would be a rubber stamp, never allowed).
+requires:
+  worldTruth: true
+target: ${matrix}
+steps:
+  - getBlock: { x: 0, y: -64, z: 0, expect: "minecraft:diamond_block" } # bottom is bedrock → assertion FAILS

@@ -294,11 +294,11 @@ jobs:
   # assert OVER MCTP that the loader actually loaded it — the cost-1 `server` driver + the
   # server-* truth agent answering `mod.loaded` in a server-truth-only session (NO player join,
   # the only way to assert on Forge/NeoForge whose FML handshake a Mineflayer bot cannot complete),
-  # plus the boot-log mod-load signal. The server-* truth agents are acceptance-only
-  # (Loom/ForgeGradle/NeoGradle + network + mappings), so each agent build is continue-on-error and
-  # the harness HONEST-SKIPS any loader whose agent jar didn't build — Fabric (Loom) is the showcase
-  # that goes truly GREEN. Forge's installer/boot need Java 17, which the multi-JDK provisioner
-  # fetches automatically. nightly/dispatch only.
+  # plus the boot-log mod-load signal. All three server-* truth agents (Loom / ForgeGradle /
+  # NeoGradle) are VERIFIED to build + boot + answer `mod.loaded = true` (proven on a real machine);
+  # each build stays `continue-on-error` only so a transient toolchain/network hiccup degrades to an
+  # honest per-loader SKIP rather than failing the whole lane. Forge 1.20.1 builds + boots on Java 17
+  # (set up below); NeoForge 1.21.1 + Fabric on Java 21. nightly/dispatch only.
   modded-server:
     name: Modded servers · mod.loaded (fabric/forge/neoforge)
     runs-on: ubuntu-latest
@@ -309,10 +309,15 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+      # Both JDKs: 21 is the default (NeoForge 1.21.1 + Fabric, and it also boots the Forge 1.20.1
+      # SERVER fine — verified); 17 is only for BUILDING the Forge agent jar, whose ForgeGradle
+      # toolchain targets Java 17. setup-java exports JAVA_HOME_17_X64 for that forge build step below.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: |
+            17
+            21
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.4.0'
@@ -326,24 +331,27 @@ jobs:
           npm run build -w @mc-test/driver-pixel
           npm run build -w @mc-test/runner
 
-      # Publish the agent-core SPI (the server-* agents shade it), then build the server-side
-      # truth agents. server-fabric (Loom) is the showcase; server-forge (ForgeGradle) +
-      # server-neoforge (NeoGradle) are acceptance-only → continue-on-error (the harness
-      # honest-skips a loader whose agent jar didn't build).
+      # Publish the agent-core SPI (the server-* agents shade/jarJar it), then build the three
+      # server-side truth agents. All build + boot for real; `continue-on-error` only degrades a
+      # transient toolchain/network failure to an honest per-loader skip in the harness below.
+      # NeoForge nests no Gson/slf4j (the loader provides those modules — bundling them splits the
+      # JPMS module graph at boot); Forge's shadowJar excludes them for the same reason.
       - name: Publish agent core (mavenLocal)
         run: gradle -p agents :core:publishToMavenLocal
-      - name: Build server-fabric agent (Loom, Yarn MC 1.21.1)
+      - name: Build server-fabric agent (Loom, Yarn MC 1.21.1, Java 21)
         continue-on-error: true
         run: ./gradlew build
         working-directory: agents/server-fabric
-      - name: Build server-neoforge agent (NeoGradle, Mojmap MC 1.21.1)
+      - name: Build server-neoforge agent (NeoGradle, Mojmap MC 1.21.1, Java 21)
         continue-on-error: true
         run: ./gradlew build
         working-directory: agents/server-neoforge
-      - name: Build server-forge agent (ForgeGradle, MC 1.20.1)
+      - name: Build server-forge agent (ForgeGradle, MC 1.20.1, Java 17)
         continue-on-error: true
         run: ./gradlew build
         working-directory: agents/server-forge
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}   # Forge 47.x targets Java 17
 
       # The real boots: each BUILT loader's modded server boots, downloads FerriteCore from
       # Modrinth into mods/, and asserts mod.loaded = true over MCTP (+ the boot-log signal);

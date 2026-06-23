@@ -51,6 +51,8 @@ Thumbs.db
 agents/**/build/
 agents/.gradle/
 **/.gradle/
+# Loom/NeoGradle/ForgeGradle scratch run dirs (e.g. `runGameTest`/`runs/`) — build output, never commit.
+**/runs/
 M3_PLAN.scratch.md
 M4_PLAN.scratch.md
 

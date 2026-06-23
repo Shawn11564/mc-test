@@ -23,6 +23,10 @@ const CLI = "packages/runner/dist/cli.js";
 const MATRIX = "tests/e2e/modded-server.matrix.yml";
 const POSITIVE = "examples/regions/regions.modloaded.mctest.yml";
 const NEGATIVE = "tests/e2e/modloaded-negative.mctest.yml";
+// World-truth + fixtures: drives the agent's actual block-read + gamerule/time/weather Mojmap paths
+// (not just the loader-presence probe), with a negative control that asserts a wrong block id → RED.
+const WORLDTRUTH = "examples/regions/regions.worldtruth.mctest.yml";
+const WORLDTRUTH_NEGATIVE = "tests/e2e/worldtruth-negative.mctest.yml";
 
 const LOADERS = [
   { id: "fabric", target: "fabric-server-1.21", jar: "agents/server-fabric/build/libs/agent-server-fabric.jar" },
@@ -93,6 +97,28 @@ if (built.length) {
       runCase(NEGATIVE, fabric.target, "mc-test-report/_negative"),
       1,
       ["FAILED (", "assertPluginState: FAILED"],
+    ),
+  );
+
+  // WORLD-TRUTH + FIXTURES: the SAME servers, a richer test that drives each agent's real block-read +
+  // gamerule/time/weather Mojmap paths over MCTP (runtime verification of mappings/Names.java beyond the
+  // mod.loaded probe). Aggregated across every built loader → one report card per loader.
+  results.push(
+    check(
+      `modded servers world-truth + fixtures GREEN over MCTP (${built.map((l) => l.id).join(", ")})`,
+      runCase(WORLDTRUTH, built.map((l) => l.target).join(","), "mc-test-report/_worldtruth"),
+      0,
+      ["PASSED (", "minecraft:bedrock", "minecraft:air", "fixture gamerule", "fixture reset"],
+    ),
+  );
+  // NEGATIVE control for world-truth: assert a block id that isn't there → RED (proves getBlock's
+  // `expect` reads REAL world state, not a rubber stamp).
+  results.push(
+    check(
+      "negative: asserting a wrong block id → RED (world-truth isn't a rubber stamp)",
+      runCase(WORLDTRUTH_NEGATIVE, fabric.target, "mc-test-report/_worldtruth_negative"),
+      1,
+      ["FAILED (", "block assertion failed"],
     ),
   );
 }

@@ -15,6 +15,28 @@ import {
   findArgsFile,
 } from "../src/provision/ModdedProvisioner.js";
 import { parseLoadedMods, modLoadResult } from "../src/provision/serverCommon.js";
+import { serverUsesBukkit } from "../src/provision/provisionServer.js";
+
+describe("serverUsesBukkit (server-family routing)", () => {
+  it("an explicit serverIsBukkit wins — a rendered-client row names a mod loader but boots a PAPER server", () => {
+    // The fabric/forge/neoforge `-client` rows set `loader` to the CLIENT loader but boot a Paper server
+    // (server.paper) for the rendered client to connect to. The CLI passes serverIsBukkit=true, so the
+    // router MUST pick Paper, not the modded path (else it resolves a Fabric server with loaderVersion
+    // undefined → HTTP 400). Regression guard for that bug.
+    expect(serverUsesBukkit(true, "fabric")).toBe(true);
+    expect(serverUsesBukkit(true, "forge")).toBe(true);
+    expect(serverUsesBukkit(true, "neoforge")).toBe(true);
+    expect(serverUsesBukkit(false, "paper")).toBe(false); // explicit false forces modded even for a bukkit loader
+  });
+
+  it("falls back to the loader family when serverIsBukkit is unset (the F5 modded-server rows)", () => {
+    expect(serverUsesBukkit(undefined, "paper")).toBe(true);
+    expect(serverUsesBukkit(undefined, "spigot")).toBe(true);
+    expect(serverUsesBukkit(undefined, "fabric")).toBe(false);
+    expect(serverUsesBukkit(undefined, "forge")).toBe(false);
+    expect(serverUsesBukkit(undefined, "neoforge")).toBe(false);
+  });
+});
 
 describe("loaderFamily", () => {
   it("maps paper/spigot/folia → bukkit, mod loaders to themselves, else vanilla", () => {
@@ -115,5 +137,22 @@ describe("modLoadResult (boot-log mod-load detection)", () => {
     const r = modLoadResult(FORGE_LOG, "forge", ["ferritecore"]);
     expect(r.seen).toEqual(["ferritecore"]);
     expect(r.missing).toEqual([]);
+  });
+
+  it("forge/neoforge: boot-log is POSITIVE-ONLY — an absent id is inconclusive, never `missing`", () => {
+    // Forge 1.20.1 logs mod discovery only to debug.log (NOT the captured stdout), so a token
+    // that doesn't appear is NOT proof the mod failed to load. `missing` must stay empty for FML
+    // loaders so the `expectMods` gate never falsely fires MOD_NOT_LOADED and preempts the
+    // authoritative MCTP `mod.loaded` assertion. (Fabric/Quilt keep the hard signal — see above.)
+    const quietForge = '[12:00:08] [Server thread/INFO]: Done (10.5s)! For help, type "help"';
+    const forge = modLoadResult(quietForge, "forge", ["ferritecore"]);
+    expect(forge.seen).toEqual([]);
+    expect(forge.missing).toEqual([]); // inconclusive, NOT ["ferritecore"]
+
+    const neo = modLoadResult(quietForge, "neoforge", ["ferritecore"]);
+    expect(neo.missing).toEqual([]);
+
+    // Fabric still hard-fails an absent expected mod (its console list is complete/reliable).
+    expect(modLoadResult(quietForge, "fabric", ["ferritecore"]).missing).toEqual(["ferritecore"]);
   });
 });

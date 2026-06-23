@@ -37,7 +37,7 @@ targets:
   - id: neoforge-server-1.21
     loader: neoforge
     mc: "1.21.1"
-    loaderVersion: "21.1.66"
+    loaderVersion: "21.1.234"
     driver: server
     mods:
       - { modrinth: { project: ferrite-core, version: x7kQWVju }, as: ferritecore.jar }

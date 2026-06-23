@@ -1,11 +1,13 @@
 // mc-test server-neoforge agent — NeoGradle BUILD CONFIG.
 //
-// !!! ACCEPTANCE-ONLY — NOT BUILT IN THIS REPO'S CI. !!!
-// NeoGradle downloads Minecraft + NeoForge and needs the network + a real (dedicated) server runtime, so
-// this module is a STANDALONE Gradle build kept out of `agents/settings.gradle.kts`. The CI-provable half
-// of the server agent (the loader-neutral wire logic + the pure-Java handler skeleton) lives in
-// /agents/core (the cross-driver ConformanceTest) and is mirrored from /agents/server-bukkit and
-// /agents/server-fabric. This shim only supplies the entrypoint and the Mojmap-mapped
+// STANDALONE Gradle build (kept out of `agents/settings.gradle.kts` so the core/server-bukkit build stays
+// fast + offline): NeoGradle downloads Minecraft + NeoForge, so this module needs network + a JDK 21
+// toolchain. It IS built + booted for real — the e2e `modded-server` lane (.github/workflows/e2e.yml)
+// builds `agent-server-neoforge.jar` and `tests/e2e/run-modded-server-boot.mjs` boots a real NeoForge
+// 1.21.1 dedicated server with it and asserts `mod.loaded = true` over MCTP (verified 2026-06-22, alongside
+// the Fabric + Forge servers). The loader-neutral wire logic + handler skeleton are additionally covered
+// offline at /agents/core (the cross-driver ConformanceTest) and mirror /agents/server-bukkit +
+// /agents/server-fabric; this shim supplies only the entrypoint and the Mojmap-mapped
 // `mappings/Names.java` server facade.
 //
 // The thin shim is the ONLY thing that recompiles per (loader × MC version) — Prime Directive 2.
@@ -24,7 +26,7 @@ version = "0.1.0"
 
 // Pinned to one (loader × MC) build; fanned out by swapping these coordinates + mappings/Names.
 val minecraftVersion = "1.21.1"
-val neoForgeVersion = "21.1.66"
+val neoForgeVersion = "21.1.234"
 
 base {
     // ENVIRONMENTS naming `agent-<variant>-<mc>.jar`; NeoGradle appends nothing extra to the jar task.
@@ -82,10 +84,13 @@ dependencies {
     // (the same conflict the forge agent's shadowJar excludes). Java-WebSocket logs through NeoForge's slf4j.
     jarJar(implementation("org.java-websocket:Java-WebSocket:1.5.7") { exclude(group = "org.slf4j") }!!)
 
-    // Gson: like the server-fabric agent (and UNLIKE the Bukkit agent, where Paper ships Gson at
-    // runtime), a vanilla NeoForge DEDICATED SERVER does not reliably put Gson on the mod classloader for
-    // our classes, so nest it in (jar-in-jar) to guarantee the envelope/JSON code resolves at runtime.
-    jarJar(implementation("com.google.code.gson:gson:2.11.0")!!)
+    // Gson: NeoForge/Minecraft already ships `com.google.gson` as a module on the boot module path, so
+    // nesting our own copy makes `mc.test.agent.core` read TWO `com.google.gson` modules → a boot-time
+    // `ResolutionException: reads more than one module named com.google.gson` (the same JPMS split the
+    // slf4j exclude above avoids; verified against a real NeoForge 1.21.1 dedicated-server boot). The
+    // core's JSON code resolves against the loader-provided Gson at runtime, so Gson is a plain
+    // `implementation` (compile-only here; on the test classpath below) and is NOT nested.
+    implementation("com.google.code.gson:gson:2.11.0")
 
     // --- Tests ---------------------------------------------------------------
     // Fast PURE-JAVA unit tests of the loader-neutral helpers (Params/StateQuery/FixtureLedger): no

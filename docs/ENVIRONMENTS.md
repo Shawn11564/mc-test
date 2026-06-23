@@ -377,8 +377,11 @@ the instance's `launch.json` so boot (§2.8) and teardown are loader-agnostic.
 > **No display is needed** — a server renders nothing — so these run on the fast, GUI-less CI path. The
 > runner waits for the agent's `MCTP listening on :PORT` handshake (§2.8) exactly as for any agent, and
 > the test asserts over the cost-1 **`server`** driver with **no player join** (`CAPABILITIES.md` §4 /
-> §7; `DRIVERS.md` §3.7). The `forge`/`neoforge` server agents are **acceptance-only** (ForgeGradle/
-> NeoGradle): when their jar isn't built the target **honest-skips** with `NO_SERVER_AGENT` (§8). On
+> §7; `DRIVERS.md` §3.7). The `forge`/`neoforge` server agents are **built and real-boot-verified**
+> (ForgeGradle on Java 17 for `agent-server-forge.jar`, MC 1.20.1 / Forge 47.3.39; NeoGradle on Java 21
+> for `agent-server-neoforge.jar`, MC 1.21.1 / NeoForge 21.1.234) — both boot a real dedicated server,
+> download FerriteCore from Modrinth into `mods/`, and report `mod.loaded` over MCTP. When an agent jar
+> isn't built the target still **honest-skips** with `NO_SERVER_AGENT` (§8). On
 > boot the runner also scans the log for loaded mod ids and emits the **`modLoad`** report note (§6) —
 > gating the instance with `MOD_NOT_LOADED` when the target's `expectMods` (§1.2) names a mod the loader
 > didn't load. The canonical example is `examples/regions/regions.modloaded.mctest.yml` run across the
@@ -399,9 +402,9 @@ the instance's `launch.json` so boot (§2.8) and teardown are loader-agnostic.
      | loader | side | variant artifact | dir | status |
      |--------|------|------------------|-----|--------|
      | paper/spigot/folia | server | `server-bukkit` | `/agents/server-bukkit` | shipped (M3) |
-     | fabric/quilt (server) | server | `server-fabric` | `/agents/server-fabric` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-server-fabric.jar`) |
-     | forge (server) | server | `server-forge` | `/agents/server-forge` | scaffolded (F5; acceptance-only ForgeGradle build; artifact `agent-server-forge.jar`) |
-     | neoforge (server) | server | `server-neoforge` | `/agents/server-neoforge` | scaffolded (F5; acceptance-only NeoGradle build; artifact `agent-server-neoforge.jar`) |
+     | fabric/quilt (server) | server | `server-fabric` | `/agents/server-fabric` | built + real-boot-verified (F5; Loom build; `mod.loaded` green over MCTP; artifact `agent-server-fabric.jar`) |
+     | forge (server) | server | `server-forge` | `/agents/server-forge` | built + real-boot-verified (F5; standalone ForgeGradle build on Java 17, MC 1.20.1 / Forge 47.3.39; `mod.loaded` green over MCTP; artifact `agent-server-forge.jar`) |
+     | neoforge (server) | server | `server-neoforge` | `/agents/server-neoforge` | built + real-boot-verified (F5; standalone NeoGradle build on Java 21, MC 1.21.1 / NeoForge 21.1.234; `mod.loaded` green over MCTP; artifact `agent-server-neoforge.jar`) |
      | fabric (client) | client | `client-fabric` | `/agents/client-fabric` | shipped (M4) |
      | forge (client) | client | `client-forge` | `/agents/client-forge` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-client-forge.jar`) |
      | neoforge (client) | client | `client-neoforge` | `/agents/client-neoforge` | scaffolded (M5; acceptance-only Loom/ForgeGradle/NeoGradle build; artifact `agent-client-neoforge.jar`) |
@@ -928,7 +931,7 @@ Stable, machine-readable codes surfaced in reports and CLI:
 | `PORT_EXHAUSTED` | No free port in `portRange`. **Fail** (raise the range/parallelism). |
 | `BOOT_TIMEOUT` | No MCTP-ready handshake within `timeoutSec`. **Fail**; logs preserved. |
 | `CAP_UNSATISFIED` | No driver meets a suite's `requires`. Test **skipped** (§4). |
-| `NO_SERVER_AGENT` | **(F5)** The cost-1 `server` driver was selected for a server-truth-only session but **no server agent was co-selected** for the target (also the honest-skip the acceptance-only `server-forge`/`server-neoforge` agents emit when unbuilt). Test **skipped** (category `environment`; §4, `CAPABILITIES.md` §8). |
+| `NO_SERVER_AGENT` | **(F5)** The cost-1 `server` driver was selected for a server-truth-only session but **no server agent was co-selected** for the target (also the honest-skip emitted when a `server-forge`/`server-neoforge` agent jar isn't present on the resolver path). Test **skipped** (category `environment`; §4, `CAPABILITIES.md` §8). |
 | `MOD_NOT_LOADED` | **(F5)** A modded-server target's `expectMods` (§1.2) named a mod the loader did **not** load per the boot log (`modLoad.missing` non-empty, §6). Instance **fails**. |
 | `ONLINE_MODE_REJECTED` | A target tried to set `online-mode: true`. **Fail** at load. |
 

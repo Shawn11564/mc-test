@@ -59,8 +59,8 @@ protocol.
 /agents/client-neoforge       thin NeoForge client mod (Mojmap-mapped)
 /agents/server-bukkit         Bukkit/Paper plugin agent — world-truth + fixtures + plugin-state (stable Bukkit API; no mappings)
 /agents/server-fabric         server-mod truth agent for a Fabric/Quilt SERVER (Yarn-mapped)
-/agents/server-forge          server-mod truth agent for a Forge SERVER (Mojmap; acceptance-only, F5)
-/agents/server-neoforge       server-mod truth agent for a NeoForge SERVER (Mojmap; acceptance-only, F5)
+/agents/server-forge          server-mod truth agent for a Forge SERVER (Mojmap; F5 — built, boots a real Forge server, mod.loaded green)
+/agents/server-neoforge       server-mod truth agent for a NeoForge SERVER (Mojmap; F5 — built, boots a real NeoForge server, mod.loaded green)
 /examples/regions             canonical sample test + "regions" SUT in all forms (plugin + fabric/forge/neoforge client mods)
 /tests                        suites authored against the framework
 mc-test.yml                   the environment matrix (per-target loader/mc/driver/world/plugins/mods)

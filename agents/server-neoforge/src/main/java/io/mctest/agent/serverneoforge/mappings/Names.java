@@ -64,10 +64,11 @@ import net.neoforged.neoforge.event.server.ServerStoppingEvent;
  * type. The facade returns loader-neutral DTOs (e.g. {@link BlockInfo}, {@link EntityInfo}) so no Gson-
  * or game-typed value crosses back to a handler.
  *
- * <p><b>Acceptance-only.</b> Where a specific Mojmap method spelling is uncertain at authoring time it is
- * marked {@code TODO(acceptance)} — verified against a real NeoGradle build (this module is not compiled
- * in this repo's CI). The 1.21.1 Mojmap surface tracks 1.20.1 closely for the symbols used here, but a few
- * (build-height bounds, biome holder unwrapping) have drifted across versions and should be confirmed.
+ * <p>The Mojmap method spellings used here are build-verified: they compiled against the real
+ * NeoForge 1.21.1 Mojmap mappings (NeoGradle) and the lifecycle + {@code mod.loaded} path is
+ * runtime-proven by a real dedicated-server boot. This module is a STANDALONE Gradle build (its own
+ * {@code settings.gradle.kts}, kept out of {@code agents/settings.gradle.kts}) that needs the network
+ * and a JDK to build and run.
  */
 public final class Names {
 
@@ -152,7 +153,7 @@ public final class Names {
     public <T> T call(Callable<T> body, long timeoutMs) throws McTestException {
         MinecraftServer s = this.server;
         // MinecraftServer extends ReentrantBlockableEventLoop → isSameThread(); MinecraftServer adds
-        // isRunning()/isStopped() (Mojmap). TODO(acceptance): verify isStopped()/isRunning() spellings.
+        // isRunning()/isStopped() (Mojmap).
         if (s == null || s.isSameThread() || s.isStopped() || !s.isRunning()) {
             return callInline(body);
         }
@@ -268,14 +269,12 @@ public final class Names {
             return null;
         }
         // Mojmap: Level#getMinBuildHeight()/getMaxBuildHeight() bound the buildable Y range on 1.21.1.
-        // TODO(acceptance): verify getMinBuildHeight()/getMaxBuildHeight() spellings on 1.21.1 (some MC
-        // versions renamed these to getMinY()/getMaxY()).
         if (y < world.getMinBuildHeight() || y >= world.getMaxBuildHeight()) {
             throw McTestException.worldNotReady("y out of range for world "
                     + worldId(world) + ": " + y);
         }
         // Mojmap: Level#hasChunk(chunkX, chunkZ); loading would mutate state, so treat unloaded as
-        // not-ready (retryable). TODO(acceptance): verify hasChunk(int,int) spelling.
+        // not-ready (retryable).
         if (!world.hasChunk(x >> 4, z >> 4)) {
             throw McTestException.worldNotReady("Chunk not loaded at " + x + "," + z);
         }
@@ -302,7 +301,6 @@ public final class Names {
         AABB box = new AABB(cx - radius, cy - radius, cz - radius, cx + radius, cy + radius, cz + radius);
         List<EntityInfo> out = new ArrayList<>();
         // Mojmap: Level#getEntities(Entity except, AABB, Predicate) → use the all-matching predicate.
-        // TODO(acceptance): verify getEntities(Entity, AABB, Predicate) overload on 1.21.1 ServerLevel.
         for (Entity entity : world.getEntities((Entity) null, box, e -> true)) {
             // Spherical filter (the box query is a cube).
             if (entity.position().distanceToSqr(centerVec) > radius * radius) {
@@ -330,7 +328,6 @@ public final class Names {
             throw McTestException.fixtureFailed("Unknown gamerule: " + ruleName);
         }
         // Mojmap: GameRules#getRule(Key) returns a Value whose toString() serializes the value.
-        // TODO(acceptance): verify GameRules.getRule(key).toString() yields the serialized form on 1.21.1.
         return world.getGameRules().getRule(key).toString();
     }
 
@@ -355,7 +352,7 @@ public final class Names {
         if (world == null) {
             throw McTestException.fixtureFailed("World not loaded for time");
         }
-        // Mojmap: Level#getDayTime() is the time-of-day. TODO(acceptance): verify getDayTime() spelling.
+        // Mojmap: Level#getDayTime() is the time-of-day.
         return world.getDayTime();
     }
 
@@ -364,7 +361,7 @@ public final class Names {
         if (world == null) {
             throw McTestException.fixtureFailed("World not loaded for time");
         }
-        // Mojmap: ServerLevel#setDayTime(long). TODO(acceptance): verify setDayTime(long) spelling.
+        // Mojmap: ServerLevel#setDayTime(long).
         world.setDayTime(time);
     }
 
@@ -374,7 +371,7 @@ public final class Names {
         if (world == null) {
             throw McTestException.fixtureFailed("World not loaded for weather");
         }
-        // Mojmap: Level#isRaining()/isThundering(). TODO(acceptance): verify spellings on 1.21.1.
+        // Mojmap: Level#isRaining()/isThundering().
         return new boolean[] {world.isRaining(), world.isThundering()};
     }
 
@@ -387,7 +384,6 @@ public final class Names {
         }
         int on = 6000;
         // Mojmap: ServerLevel#setWeatherParameters(clearTime, weatherTime, raining, thundering).
-        // TODO(acceptance): verify setWeatherParameters(int,int,boolean,boolean) spelling on 1.21.1.
         world.setWeatherParameters(raining ? 0 : on, raining ? on : 0, raining, thundering);
     }
 
@@ -401,14 +397,13 @@ public final class Names {
         if (player == null) {
             return;
         }
-        // Mojmap: ServerPlayer#getInventory() returns an Inventory (a Container). TODO(acceptance):
-        // verify getInventory()/Container.clearContent()/setItem()/getContainerSize() spellings on 1.21.1.
+        // Mojmap: ServerPlayer#getInventory() returns an Inventory (a Container).
         Container inv = player.getInventory();
         inv.clearContent();
         for (int i = 0; i < snap.stacks.size() && i < inv.getContainerSize(); i++) {
             inv.setItem(i, snap.stacks.get(i).copy());
         }
-        // Push the inventory change to the client. TODO(acceptance): verify containerMenu.broadcastChanges().
+        // Push the inventory change to the client.
         player.containerMenu.broadcastChanges();
     }
 
@@ -437,15 +432,14 @@ public final class Names {
         }
         ResourceLocation id = ResourceLocation.tryParse(itemId);
         // Mojmap: BuiltInRegistries.ITEM is the item registry; get(ResourceLocation) returns AIR for an
-        // unknown id. TODO(acceptance): verify BuiltInRegistries.ITEM.get(ResourceLocation) on 1.21.1.
+        // unknown id.
         Item item = id != null ? BuiltInRegistries.ITEM.get(id) : null;
         if (item == null || item == Items.AIR) {
             throw McTestException.fixtureFailed("Unknown item: " + itemId);
         }
         InventorySnapshot snap = new InventorySnapshot(player.getUUID(),
                 copyInventory(player.getInventory()));
-        // Mojmap: Inventory#add(ItemStack) inserts into the first free slot(s). TODO(acceptance):
-        // verify Inventory.add(ItemStack) spelling on 1.21.1.
+        // Mojmap: Inventory#add(ItemStack) inserts into the first free slot(s).
         player.getInventory().add(new ItemStack(item, Math.max(1, count)));
         player.containerMenu.broadcastChanges();
         return snap;
@@ -477,7 +471,6 @@ public final class Names {
         }
         // Mojmap: MinecraftServer#createCommandSourceStack() is the server console source (permission 4);
         // getCommands().performPrefixedCommand(source, cmd) runs a command that may include a leading '/'.
-        // TODO(acceptance): verify createCommandSourceStack()/performPrefixedCommand(CommandSourceStack,String).
         s.getCommands().performPrefixedCommand(s.createCommandSourceStack(), command);
     }
 
@@ -485,13 +478,13 @@ public final class Names {
 
     private ServerPlayer onlinePlayer(String name) {
         MinecraftServer s = this.server;
-        // Mojmap: MinecraftServer#getPlayerList().getPlayerByName(name). TODO(acceptance): verify spelling.
+        // Mojmap: MinecraftServer#getPlayerList().getPlayerByName(name).
         return s != null ? s.getPlayerList().getPlayerByName(name) : null;
     }
 
     private ServerPlayer playerByUuid(java.util.UUID uuid) {
         MinecraftServer s = this.server;
-        // Mojmap: PlayerList#getPlayer(UUID). TODO(acceptance): verify getPlayer(UUID) spelling.
+        // Mojmap: PlayerList#getPlayer(UUID).
         return s != null ? s.getPlayerList().getPlayer(uuid) : null;
     }
 
@@ -505,8 +498,7 @@ public final class Names {
 
     private GameRules.Key<?> findGameRuleKey(String name) {
         GameRules.Key<?>[] found = new GameRules.Key<?>[1];
-        // Mojmap: GameRules.visitGameRuleTypes(Visitor) walks every (Key, Type). TODO(acceptance):
-        // verify visitGameRuleTypes(Visitor)/Visitor.visit(Key,Type)/Key.getId() spellings on 1.21.1.
+        // Mojmap: GameRules.visitGameRuleTypes(Visitor) walks every (Key, Type).
         GameRules.visitGameRuleTypes(new GameRules.GameRuleTypeVisitor() {
             @Override
             public <T extends GameRules.Value<T>> void visit(GameRules.Key<T> key,
@@ -540,14 +532,12 @@ public final class Names {
     }
 
     private static <T extends Comparable<T>> String valueName(BlockState state, Property<T> property) {
-        // Mojmap: Property#getName(T) renders the value's serialized name. TODO(acceptance): verify
-        // getName(T value) spelling on 1.21.1 (Yarn's analogue is Property#name(T)).
+        // Mojmap: Property#getName(T) renders the value's serialized name.
         return property.getName(state.getValue(property));
     }
 
     private static String biomeId(ServerLevel world, BlockPos pos) {
         // Mojmap: Level#getBiome(BlockPos) → Holder<Biome>; unwrapKey() yields the registry key.
-        // TODO(acceptance): verify getBiome().unwrapKey()/registryAccess().registryOrThrow(...) on 1.21.1.
         var holder = world.getBiome(pos);
         return holder.unwrapKey()
                 .map((ResourceKey<Biome> key) -> key.location().toString())
@@ -577,7 +567,7 @@ public final class Names {
         e.x = pos.x;
         e.y = pos.y;
         e.z = pos.z;
-        // Mojmap: Entity#getTags() is the command-tag set. TODO(acceptance): verify getTags() spelling.
+        // Mojmap: Entity#getTags() is the command-tag set.
         e.tags = new ArrayList<>(entity.getTags());
         if (entity.getCustomName() != null) {
             e.customNameRaw = entity.getCustomName().getString();

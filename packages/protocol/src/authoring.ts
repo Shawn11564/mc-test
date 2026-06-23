@@ -104,7 +104,20 @@ export interface ScreenshotStep {
 }
 
 export interface GetBlockStep {
-  getBlock: { world?: string; x: number; y: number; z: number };
+  getBlock: {
+    world?: string;
+    x: number;
+    y: number;
+    z: number;
+    /** Per-step capability gate; missing → the step honestly skips. */
+    requires?: RequiredCapabilities;
+    /**
+     * Optional assertion: the expected block id (e.g. `minecraft:bedrock`). When set, the step
+     * FAILS unless the agent's authoritative `truth.getWorldBlock` returns exactly this type — turning
+     * the read into a real world-state assertion (vs. a bare read that only proves the call succeeded).
+     */
+    expect?: string;
+  };
 }
 
 export interface GetEntitiesStep {

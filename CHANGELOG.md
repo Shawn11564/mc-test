@@ -10,6 +10,53 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-06-22 — All three RENDERED CLIENTS (Fabric/Forge/NeoForge) boot + GUI-test green; rendered-server routing fixed
+- **Fixed an F5 regression that broke every rendered-client row.** `provisionServer` routed purely by
+  `loaderFamily(loader)`, so a `*-client` row (which names the CLIENT loader, e.g. `fabric`, but boots a
+  PAPER server via `server.paper`) wrongly took the modded path and resolved a Fabric server with
+  `loaderVersion=undefined` → HTTP 400. The CLI already computed `serverIsBukkit` (true whenever
+  `server.paper` is set) but never threaded it into the router. Now `provisionServer` honors an explicit
+  `serverIsBukkit` (new pure helper `serverUsesBukkit`, unit-tested) and only falls back to the loader
+  family — so client rows boot Paper, modded-server rows are unchanged.
+- **All three rendered clients verified GREEN in Docker (`mc-test/rendered:21`, Xvfb + Mesa llvmpipe):**
+  `fabric-1.21-client`, `forge-1.20.1-client` (modular launch on Java 17 / LWJGL 3.3.1), and
+  `neoforge-1.21-client` (modular launch) each boot a real Minecraft client, drive the SUT mod's client
+  `OpenRegions` Screen end-to-end (`/or` → click "Regions" → type a name → "Create" → chat
+  "Region created" → click "TestRegion" → chat "Region loaded"), capture a screenshot, and confirm
+  `assertPluginState regions.exists = true` via the co-selected Bukkit agent. The screenshot step now
+  captures a real PNG (no longer honest-skips). Run them with
+  `MC_TEST_RENDERED_HARNESS=tests/e2e/run-rendered-loaders.mjs bash scripts/run-rendered-docker.sh`.
+
+### 2026-06-22 — Forge + NeoForge modded SERVER agents now built + booted + green
+- **All three modded SERVER loaders (Fabric, NeoForge, Forge) now boot a real dedicated server and assert
+  `mod.loaded = true` over MCTP via the cost-1 `server` driver (no player join).** The Forge/NeoForge
+  server-mod truth agents are no longer acceptance-only/scaffolded: `agent-server-forge.jar` (ForgeGradle,
+  MC 1.20.1, Forge 47.3.39, built on Java 17) and `agent-server-neoforge.jar` (NeoGradle, MC 1.21.1,
+  NeoForge 21.1.234, built on Java 21) are **built and runtime-proven**. Each boots a real server,
+  downloads FerriteCore from Modrinth into `mods/`, and reports `mod.loaded = true` GREEN; a negative
+  control (asserting an absent mod) goes RED. Proof: `tests/e2e/run-modded-server-boot.mjs` prints
+  "2/2 ... passed" and `mc-test-report/report.html` shows 3 cards passed (JUnit `tests=3 failures=0
+  skipped=0`). The CI `e2e.yml` modded-server lane builds all three server agents (forge on Java 17) and
+  runs the harness. Both agents remain **standalone Gradle builds kept out of `agents/settings.gradle.kts`**
+  (they need network + a JDK), and `fakePlayers` stays intentionally unadvertised on forge/neoforge.
+- **Mojmap method spellings build-verified.** The `mappings/Names.java` method spellings in each agent
+  compiled against the real Forge 1.20.1 / NeoForge 1.21.1 Mojmap mappings and the lifecycle + `mod.loaded`
+  path is runtime-proven, so the earlier "verify spelling" notes are resolved.
+- **JPMS fix: neither agent bundles Gson anymore.** The loader/Minecraft already provides
+  `com.google.gson` as a module on the boot module path, so bundling it split the module graph; Gson is
+  now a compile-only dependency.
+- **Boot-log mod-load signal is positive-only for the FML loaders.** Forge/NeoForge boot logs are used as a
+  positive mod-load signal only, avoiding false negatives from their differing log formats.
+- **World-truth + fixture surface now runtime-exercised on the modded servers (beyond `mod.loaded`).** A new
+  `examples/regions/regions.worldtruth.mctest.yml` runs on all three modded-server rows and drives each
+  agent's real `mappings/Names.java` paths over MCTP: authoritative block reads (`getBlock` asserts
+  `minecraft:bedrock` at the flat world's bottom and `minecraft:air` above it), entity iteration
+  (`getEntities`), and the no-player fixture recipes (`gamerule` / `time` / `weather`) plus `fixture` reset.
+  Verified GREEN on real Fabric/Forge/NeoForge servers, with a negative control (`tests/e2e/worldtruth-negative.mctest.yml`)
+  that asserts a wrong block id → RED. The `getBlock` step gains an optional **`expect`** (a block id) that
+  turns the read into a real, case-insensitive world-state assertion; without it the read still exercises
+  the full server-side path. Both are wired into `tests/e2e/run-modded-server-boot.mjs` (the CI lane).
+
 ### Added
 - **F5 — modded SERVER support (v2): test server-side mods on real Fabric/Forge/NeoForge dedicated
   servers.** Until now only Bukkit-family servers (Paper/Spigot/Folia) could boot; `loader` was

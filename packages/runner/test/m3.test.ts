@@ -241,6 +241,38 @@ describe("M3 multi-connection fan-out + co-selection", () => {
     expect(stepByVerb(result, "getEntities")?.detail).toContain("1 entit");
   });
 
+  it("5b. getBlock `expect` asserts the block id — match → passed, mismatch → failed (the world-truth negative control)", async () => {
+    const driverUrl = await startDriver();
+    const { url: agentUrl } = await startServerAgent({ block: { type: "minecraft:bedrock" } });
+    const runner = new Runner(new DriverRegistry());
+    const getBlockExpect = (expectVal: string): NormalizedTest => ({
+      name: "getblock-expect",
+      requires: {},
+      steps: [
+        {
+          index: 0,
+          verb: "getBlock",
+          args: { world: "world", x: 0, y: -64, z: 0, expect: expectVal },
+          requires: { worldTruth: true },
+        },
+      ],
+    });
+    // Match → green, and the detail carries the asserted-vs-expected block id.
+    const ok = await runner.runTest(getBlockExpect("minecraft:bedrock"), mockDescriptor(driverUrl), driverUrl, EXEC, META, [
+      agentConn(agentUrl),
+    ]);
+    expect(ok.outcome).toBe("passed");
+    expect(stepByVerb(ok, "getBlock")?.detail).toContain("expected minecraft:bedrock");
+    // Mismatch → RED with a precise message (the mechanism behind worldtruth-negative.mctest.yml — proves
+    // the assertion reads REAL agent state, never a rubber stamp).
+    const bad = await runner.runTest(getBlockExpect("minecraft:diamond_block"), mockDescriptor(driverUrl), driverUrl, EXEC, META, [
+      agentConn(agentUrl),
+    ]);
+    expect(bad.outcome).toBe("failed");
+    expect(stepByVerb(bad, "getBlock")?.outcome).toBe("failed");
+    expect(stepByVerb(bad, "getBlock")?.error?.message ?? "").toContain("block assertion failed");
+  });
+
   it("6. one SessionGroup fans GUI to the driver and truth to the agent (no author plumbing)", async () => {
     const driverUrl = await startDriver();
     const { url: agentUrl, agent } = await startServerAgent({ seedRegions: ["TestRegion"] });

@@ -293,7 +293,21 @@ export async function executeStep(
         y: a["y"],
         z: a["z"],
       });
-      return `block: ${result.block?.type ?? "?"}`;
+      const got = result.block?.type ?? null;
+      // With `expect`, this is a real world-state assertion: FAIL unless the agent's authoritative
+      // block read matches (case-insensitive — agents emit lowercase `namespace:path`). Without it,
+      // it stays a bare read that still exercises the full server-side block-read path (and fails on
+      // any agent error, e.g. WORLD_NOT_READY / an unresolved mapping).
+      if (a["expect"] !== undefined) {
+        const want = String(a["expect"]);
+        if (got === null || got.toLowerCase() !== want.toLowerCase()) {
+          throw new Error(
+            `block assertion failed at ${a["x"]},${a["y"]},${a["z"]}: expected ${want}, got ${got ?? "?"}`,
+          );
+        }
+        return `block ${a["x"]},${a["y"]},${a["z"]} = ${got} (expected ${want})`;
+      }
+      return `block: ${got ?? "?"}`;
     }
     case "getEntities": {
       const result = await session.call<{ count?: number }>("truth.getEntities", a);

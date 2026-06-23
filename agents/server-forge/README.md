@@ -19,30 +19,32 @@ twin, DRIVERS.md §3).
 > `player.spawnFake` / `player.despawnFake`. A test that requires `fakePlayers` honestly **skips** on a
 > Forge target rather than false-greening.
 
-## ⚠️ Acceptance-only build (not built in this repo's CI)
+## Standalone build (not part of this repo's CI agent build)
 
 ForgeGradle downloads Minecraft + the MCP/official mappings + the Forge userdev and needs the
 **network** and a real **dedicated server runtime** to build and run. So this is a **standalone Gradle
-build** (its own `settings.gradle.kts`, **not** part of `agents/settings.gradle.kts`), and it is
-**not** compiled in this repo's CI — exactly like `agents/client-forge`, `agents/client-neoforge`, and
-`agents/server-fabric`. The sources here are written to be correct against the contract but are
-validated by inspection, not by a build in this environment.
+build** (its own `settings.gradle.kts`, **not** part of `agents/settings.gradle.kts`), like
+`agents/client-forge`, `agents/client-neoforge`, and `agents/server-fabric`. It IS built and booted: the
+`agent-server-forge.jar` is produced by ForgeGradle (MC 1.20.1, Forge 47.3.39, on Java 17) and runs on a
+real Forge 1.20.1 dedicated server, where it downloads FerriteCore from Modrinth into `mods/` and asserts
+`mod.loaded = true` over MCTP via the cost-1 `server` driver (no player join). The CI `e2e.yml`
+modded-server lane builds this agent (Forge on Java 17) and runs that harness.
 
 The **CI-provable** half of the server agent — the loader-neutral wire logic and the pure-Java handler
 skeleton — lives in `/agents/core` (the cross-driver `ConformanceTest`) and in `/agents/server-bukkit`,
 from which this module is mirrored. The pure-Java pieces shared between the server agents (`Params`,
 `StateQuery`, `FixtureLedger`, `AppliedFixture`) are copied byte-for-byte from `server-fabric` (only the
-package declaration differs). What needs a real Forge server (live `ServerLevel`, game rules,
-inventories) is acceptance-only and uses Mojmap/SRG mappings.
+package declaration differs). The parts that need a real Forge server (live `ServerLevel`, game rules,
+inventories) use Mojmap/SRG mappings.
 
-> **Mojmap spellings to verify on an acceptance build.** Forge 1.20.1 develops against Mojang (official)
-> names and reobfuscates to SRG at build. `mappings/Names.java` carries `// TODO(acceptance)` markers on
-> the method spellings that could not be confirmed without a real ForgeGradle build (e.g.
-> `ServerLevel#getMinBuildHeight`/`getMaxBuildHeight`, `Level#hasChunk`, `Level#getDayTime` /
-> `ServerLevel#setDayTime`, `ServerLevel#setWeatherParameters`, `GameRules#visitGameRuleTypes` /
-> `Key#getId`, `Property#getName(T)`, `Inventory#add` / `Container#clearContent`,
-> `PlayerList#getPlayerByName`/`getPlayer(UUID)`, `MinecraftServer#createCommandSourceStack` /
-> `Commands#performPrefixedCommand`). Verify each in the mapping-contract test on a real build.
+> **Mojmap spellings are build-verified.** Forge 1.20.1 develops against Mojang (official) names and
+> reobfuscates to SRG at build. `mappings/Names.java`'s method spellings COMPILED against the real Forge
+> Mojmap mappings (e.g. `ServerLevel#getMinBuildHeight`/`getMaxBuildHeight`, `Level#hasChunk`,
+> `Level#getDayTime` / `ServerLevel#setDayTime`, `ServerLevel#setWeatherParameters`,
+> `GameRules#visitGameRuleTypes` / `Key#getId`, `Property#getName(T)`, `Inventory#add` /
+> `Container#clearContent`, `PlayerList#getPlayerByName`/`getPlayer(UUID)`,
+> `MinecraftServer#createCommandSourceStack` / `Commands#performPrefixedCommand`), and the lifecycle +
+> `mod.loaded` path is runtime-proven on a real boot.
 
 ## Capabilities advertised
 
@@ -144,7 +146,7 @@ appears outside `mappings/Names.java`. This keeps the per-version obfuscation ta
 The base name is `agent-server-forge` (resolver/install form `agent-server-forge-<mc>.jar`, per the
 `agent-<variant>-<mc>.jar` convention).
 
-## Build (acceptance-only — needs ForgeGradle + network)
+## Build (standalone — needs ForgeGradle + network)
 
 The core must be published to mavenLocal first:
 
@@ -152,15 +154,15 @@ The core must be published to mavenLocal first:
 # in /agents
 gradle :core:build :core:publishToMavenLocal
 
-# in /agents/server-forge (standalone build; NEEDS NETWORK + ForgeGradle — not run in this repo's CI)
+# in /agents/server-forge (standalone build; NEEDS NETWORK + ForgeGradle; the CI e2e modded-server lane runs this)
 gradle build
 ```
 
 The reobfuscated **shaded** mod jar `build/libs/agent-server-forge.jar` shades the core +
-Java-WebSocket **+ Gson** via the Shadow plugin (Forge has no Loom `include` jar-in-jar). Note the
-**Gson** shading (like `server-fabric`, unlike `server-bukkit`): Paper ships Gson at runtime, but a
-vanilla Forge **dedicated server** does not reliably expose Gson to our classes, so this build **shades
-Gson in** to guarantee the envelope/JSON code resolves at runtime. `slf4j` is **excluded** from the shade
+Java-WebSocket via the Shadow plugin (Forge has no Loom `include` jar-in-jar). **Gson is NOT bundled**:
+it is a **compile-only** dependency because the loader/Minecraft already provides `com.google.gson` as a
+module on the boot module path under the JPMS module system — bundling it split the module graph at boot,
+so the JPMS fix dropped it from the shade. `slf4j` is likewise **excluded** from the shade
 (Forge already provides an `org.slf4j` module under the JPMS module system; bundling it would split the
 package at boot). The shaded jar is then **reobfuscated** (official → SRG) so `mappings/Names.java`'s
 `net.minecraft.*` calls resolve on a production (SRG-mapped) server.

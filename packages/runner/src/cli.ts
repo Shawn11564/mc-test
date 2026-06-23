@@ -81,8 +81,8 @@ const SERVER_FABRIC_CAPABILITIES: Capabilities = {
  * The Forge / NeoForge server-mod truth agents (F5). Same server-truth surface as the
  * Fabric agent, but for a FORGE / NEOFORGE server. `fakePlayers` is NOT advertised —
  * those loaders have no Carpet-style fake-player backend by default, so those steps
- * honestly skip (the agent's live grant is authoritative regardless). Scaffolded /
- * acceptance-only like the client forge/neoforge shims (ForgeGradle / NeoGradle build).
+ * honestly skip (the agent's live grant is authoritative regardless). Built and booted
+ * via the e2e modded-server lane (ForgeGradle / NeoGradle build).
  */
 const SERVER_FORGE_CAPABILITIES: Capabilities = {
   worldTruth: true,
@@ -123,9 +123,10 @@ const KNOWN_AGENTS: Record<string, { jarPath: string; advertised: Capabilities }
     advertised: SERVER_FABRIC_CAPABILITIES,
   },
   // F5: the Forge/NeoForge server-mod truth agents (ForgeGradle/NeoGradle build —
-  // acceptance-only; build-artifacts `agent-server-{forge,neoforge}.jar`). A modded
-  // forge/neoforge SERVER row co-selects one of these; absent its built jar the
-  // server-truth steps honestly skip (the cost-1 `server` driver needs an agent).
+  // built and booted via the e2e modded-server lane; build-artifacts
+  // `agent-server-{forge,neoforge}.jar`). A modded forge/neoforge SERVER row
+  // co-selects one of these; absent its built jar the server-truth steps honestly
+  // skip (the cost-1 `server` driver needs an agent).
   "server-forge": {
     jarPath: "agents/server-forge/build/libs/agent-server-forge.jar",
     advertised: SERVER_FORGE_CAPABILITIES,
@@ -391,6 +392,10 @@ function buildProvision(
     const server = await provisionServer({
       loader: target.loader,
       mc: target.mc,
+      // The rendered-client rows name a mod loader but boot a PAPER server (server.paper); route by the
+      // server family the CLI already resolved, not the client loader (else a fabric-client row would try
+      // to provision a Fabric SERVER and fail on an undefined loaderVersion).
+      serverIsBukkit,
       ...(target.loaderVersion ? { loaderVersion: target.loaderVersion } : {}),
       build: target.server?.paper?.build ?? "latest",
       ...(serverJar ? { serverJar } : {}),

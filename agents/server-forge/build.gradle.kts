@@ -1,11 +1,13 @@
 // mc-test server-forge agent — ForgeGradle BUILD CONFIG.
 //
-// !!! ACCEPTANCE-ONLY — NOT BUILT IN THIS REPO'S CI. !!!
-// ForgeGradle downloads Minecraft + the MCP/official mappings + the Forge userdev and needs the network
-// + a real (dedicated) server runtime, so this module is a STANDALONE Gradle build kept out of
-// `agents/settings.gradle.kts`. The CI-provable half of the server agent (the loader-neutral wire logic +
-// the pure-Java handler skeleton) lives in /agents/core (the cross-driver ConformanceTest) and is mirrored
-// from /agents/server-bukkit and /agents/server-fabric. This shim only supplies the entrypoint and the
+// STANDALONE Gradle build (kept out of `agents/settings.gradle.kts` so the core/server-bukkit build stays
+// fast + offline): ForgeGradle downloads Minecraft + the MCP/official mappings + the Forge userdev, so this
+// module needs network + a JDK 17 toolchain. It IS built + booted for real — the e2e `modded-server` lane
+// (.github/workflows/e2e.yml) builds `agent-server-forge.jar` and `tests/e2e/run-modded-server-boot.mjs`
+// boots a real Forge 1.20.1 dedicated server with it and asserts `mod.loaded = true` over MCTP (verified
+// 2026-06-22, alongside the Fabric + NeoForge servers). The loader-neutral wire logic + handler skeleton are
+// additionally covered offline at /agents/core (the cross-driver ConformanceTest) and mirror
+// /agents/server-bukkit + /agents/server-fabric; this shim supplies only the entrypoint and the
 // Mojmap/official-name `mappings/Names.java` server facade.
 //
 // The thin shim is the ONLY thing that recompiles per (loader × MC version) — Prime Directive 2.
@@ -83,11 +85,13 @@ dependencies {
     implementation("org.java-websocket:Java-WebSocket:1.5.7")
     shade("org.java-websocket:Java-WebSocket:1.5.7")
 
-    // Gson: like the server-fabric agent (and UNLIKE the Bukkit agent, where Paper ships Gson at
-    // runtime), a vanilla Forge DEDICATED SERVER does not reliably put Gson on the mod classloader for
-    // our classes, so shade it in to guarantee the envelope/JSON code resolves at runtime. See README.
+    // Gson: Forge/Minecraft already ships `com.google.gson` as a module on the boot module path (same as
+    // NeoForge), so shading our own copy into the agent jar makes it export `com.google.gson` too →
+    // a JPMS split-package `ResolutionException` (the same conflict the slf4j `exclude` in shadowJar
+    // avoids; verified against a real NeoForge dedicated-server boot). The core's JSON code resolves
+    // against the loader-provided Gson at runtime, so Gson stays a plain compile-time `implementation`
+    // and is NOT added to the `shade` configuration.
     implementation("com.google.code.gson:gson:2.11.0")
-    shade("com.google.code.gson:gson:2.11.0")
 
     // --- Tests ---------------------------------------------------------------
     // Fast PURE-JAVA unit tests of the loader-neutral helpers (Params/StateQuery/FixtureLedger): no
