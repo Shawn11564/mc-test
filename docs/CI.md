@@ -43,6 +43,18 @@ auto-detects sensible defaults from your project (Gradle vs Maven build command;
 
 Both produce the identical report + artifact + Pages output.
 
+## mc-test's own self-test report
+
+mc-test **dogfoods this** — it publishes its OWN report the same way. The E2E workflow
+(`.github/workflows/e2e.yml`, nightly + manual dispatch) runs the canonical `regions` tests across
+every environment (headless Paper, the rendered Fabric/Forge/NeoForge client GUIs, and the modded
+Fabric/Forge/NeoForge servers). A `publish-report` job then aggregates each lane's
+`mc-test-report/report.html` into one GitHub Pages site — a landing `index.html` that links each
+lane's report — served at `https://<owner>.github.io/<repo>/`, while every lane's full report stays a
+downloadable workflow artifact. The `deploy-report` job is best-effort (`continue-on-error`) and uses
+the same `upload-pages-artifact` → `deploy-pages` mechanism as the consumer publish above; enable it
+one-time via repo **Settings → Pages → Source: "GitHub Actions"**.
+
 ## Reusable workflow inputs
 
 The caller passes these to `Shawn11564/mc-test/.github/workflows/mc-test-ci.yml`:

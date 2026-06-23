@@ -10,6 +10,16 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-06-22 — mc-test publishes its OWN report.html (dogfoods the consumer publish model)
+- The E2E workflow (`.github/workflows/e2e.yml`) now publishes mc-test's own self-test report the same
+  way the reusable consumer workflow (`mc-test-ci.yml`) does for downstream projects. A new
+  `publish-report` job aggregates every lane's `mc-test-report/report.html` (Paper headless, the rendered
+  Fabric/Forge/NeoForge client GUIs, the modded servers, the multi-loader matrix, the Gradle front door)
+  into a single GitHub Pages site — a landing `index.html` linking each lane's report — and a best-effort
+  `deploy-report` job (`upload-pages-artifact` → `deploy-pages`, `continue-on-error`) serves it at
+  `https://<owner>.github.io/<repo>/`. Each lane's full report stays a downloadable artifact. One-time
+  setup: repo Settings → Pages → Source "GitHub Actions". Documented in `docs/CI.md`.
+
 ### 2026-06-22 — All three RENDERED CLIENTS (Fabric/Forge/NeoForge) boot + GUI-test green; rendered-server routing fixed
 - **Fixed an F5 regression that broke every rendered-client row.** `provisionServer` routed purely by
   `loaderFamily(loader)`, so a `*-client` row (which names the CLIENT loader, e.g. `fabric`, but boots a
