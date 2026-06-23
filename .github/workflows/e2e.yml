@@ -331,6 +331,14 @@ jobs:
           npm run build -w @mc-test/driver-pixel
           npm run build -w @mc-test/runner
 
+      # The loader toolchains (ForgeGradle/NeoGradle) decompile Minecraft, which is memory-heavy; the
+      # default Gradle build heap OOMs the NeoGradle agent build on the runner ("Java heap space"). Raise
+      # org.gradle.jvmargs globally (read by every wrapper here) so all three server agents build.
+      - name: Raise Gradle build heap for the loader toolchains
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1g" >> ~/.gradle/gradle.properties
+
       # Publish the agent-core SPI (the server-* agents shade/jarJar it), then build the three
       # server-side truth agents. All build + boot for real; `continue-on-error` only degrades a
       # transient toolchain/network failure to an honest per-loader skip in the harness below.
@@ -414,7 +422,10 @@ jobs:
           # junit/ + artifacts/ screenshots) under site/<name>/ and link it; note a missing one honestly.
           emit() {
             local rep
-            rep=$(find "_artifacts/$1" -name report.html 2>/dev/null | head -1 || true)
+            # A lane can emit several report.html files (a harness writes the positive run plus negative
+            # controls into sub-dirs via separate --out). Pick the SHALLOWEST path — the canonical
+            # top-level mc-test-report/report.html — not a nested _negative/ one (which is intentionally RED).
+            rep=$(find "_artifacts/$1" -name report.html 2>/dev/null | awk -F/ '{print NF, $0}' | sort -n | head -1 | cut -d' ' -f2- || true)
             if [ -n "$rep" ]; then
               mkdir -p "site/$1"
               cp -r "$(dirname "$rep")/." "site/$1/"
