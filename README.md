@@ -1,5 +1,12 @@
 # mc-test
 
+[![CI](https://github.com/Shawn11564/mc-test/actions/workflows/ci.yml/badge.svg)](https://github.com/Shawn11564/mc-test/actions/workflows/ci.yml)
+[![Nightly E2E](https://github.com/Shawn11564/mc-test/actions/workflows/e2e.yml/badge.svg)](https://github.com/Shawn11564/mc-test/actions/workflows/e2e.yml)
+
+> The nightly badge covers the real-boot lanes. The rendered-client lane is deliberately
+> `continue-on-error`, so it can fail without turning the badge red — a failure there opens a
+> [`nightly-e2e`](https://github.com/Shawn11564/mc-test/issues?q=is%3Aissue+label%3Anightly-e2e) issue instead.
+
 **A WebDriver/Appium-style automated testing framework for Minecraft plugins and mods** — across many
 Minecraft versions and loaders (Spigot/Paper/Folia; Fabric/Forge/NeoForge/Quilt; MC 1.8 → 1.21 and
 beyond). Write a test **once** in semantic steps, run it across the whole matrix, and validate
@@ -11,8 +18,8 @@ join localhost → /or → click "Regions" → click "TestRegion"
   → assert region "TestRegion" exists
 ```
 
-…runs unchanged on Paper 1.20.4 (headless bot), on a rendered Fabric/NeoForge client (in-process mod
-agent), and everywhere in between.
+…runs unchanged on Paper 1.20.4 (headless bot), on a rendered Fabric/Forge/NeoForge client
+(in-process mod agent), and everywhere in between.
 
 ## The narrow waist (the whole idea in 3 sentences)
 
@@ -45,8 +52,16 @@ in-game agents stay tiny, dumb, and cheap to port to each `(loader × version)`.
 
 > Status: **v1.0 Paper/plugin product is real** (merged to `main`). A real Paper boot drives
 > the regions GUI and asserts server-side state (`assertPluginState`); runnable via the CLI **and**
-> `gradle mcTest`, with CI gates, an HTML + JUnit report, and user docs. Rendered-client **mod** GUIs and
-> the multi-loader matrix are **v2** — those targets honestly *skip*. See
+> `gradle mcTest`, with CI gates, an HTML + JUnit report, and user docs.
+>
+> **v2 is also real, not just skips.** Rendered-client mod GUIs boot on all three loaders —
+> Fabric, Forge, NeoForge (a **real** client under Xvfb + Mesa, real clicks on real
+> `ClickableWidget`s) — and the cost-1 `server` driver boots real dedicated Fabric/Forge/NeoForge
+> **servers** and asserts `mod.loaded` against a genuine third-party mod pulled live from Modrinth
+> (not a fixture). These run in the nightly/dispatch E2E lane (`.github/workflows/e2e.yml`), not
+> on every PR — Fabric's rendered client is unconditional there; Forge/NeoForge's rendered-GREEN
+> boot additionally needs `MC_TEST_RENDERED_LOADERS` set on a GL-capable host. Absent that opt-in
+> (or a display), those specific rows honestly *skip* — never a false green. See
 > [`docs/V1_PLAN.md`](./docs/V1_PLAN.md) for status + what remains, and
 > [`docs/GETTING_STARTED.md`](./docs/GETTING_STARTED.md) to run it.
 
@@ -62,7 +77,7 @@ mvn -f examples/regions/plugin/pom.xml package
 npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
 
 # other commands
-npx mc-test doctor    # check Java, ports, downloads, matrix
+npx mc-test doctor    # preflight the deps your matrix needs (JDK, disk, agent jars, Gradle, display)
 npx mc-test init      # scaffold mc-test.yml + a sample test in your own plugin project
 ```
 

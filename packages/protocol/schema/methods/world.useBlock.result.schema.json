@@ -1,0 +1,152 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: world.useBlock",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "block": {
+          "additionalProperties": false,
+          "description": "Authoritative block state.",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "properties": {
+              "description": "Free-form by-name JSON object.",
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "nbtJson": {
+              "type": "string"
+            },
+            "nbt": {
+              "description": "Free-form by-name JSON object.",
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
+            "biome": {
+              "type": "string"
+            }
+          }
+        },
+        "face": {
+          "description": "Block face (interaction side).",
+          "anyOf": [
+            {
+              "const": "north",
+              "type": "string"
+            },
+            {
+              "const": "south",
+              "type": "string"
+            },
+            {
+              "const": "east",
+              "type": "string"
+            },
+            {
+              "const": "west",
+              "type": "string"
+            },
+            {
+              "const": "up",
+              "type": "string"
+            },
+            {
+              "const": "down",
+              "type": "string"
+            }
+          ]
+        },
+        "sneak": {
+          "type": "boolean"
+        },
+        "held": {
+          "additionalProperties": false,
+          "description": "Held-item snapshot (type null = empty hand).",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "count": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer"
+            },
+            "displayName": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

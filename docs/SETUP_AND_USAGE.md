@@ -18,13 +18,16 @@ reference see [`AUTHORING.md`](./AUTHORING.md); for the matrix schema see
 
 | Need | Why |
 |---|---|
-| **Node.js 18+** | the runner/engine (TypeScript) |
+| **Node.js 22+** | the runner/engine (TypeScript; `mineflayer` requires >=22) |
 | **JDK 17+ (21 recommended)** | boots the Minecraft server — `java -version` |
 | **Gradle 9.4.0** *(or the committed `./gradlew`)* | JVM agents + the Gradle front door |
 | **Maven** | builds the bundled example plugin — `mvn -version` |
 | **Network** | downloads the Paper jar once (cached in `~/.mc-test/cache`) |
 
-Run `npx mc-test doctor` any time to check Java, ports, downloads, and the matrix.
+Run `npx mc-test doctor` to preflight a session. It checks only what your matrix needs — JDK,
+disk, the agent jars your targets name, Gradle (only if something must still be built), and a
+display or the `mc-test/rendered:21` Docker image for rendered rows — and exits non-zero with a
+fix for each unmet dependency. `mc-test run` runs the same preflight before booting.
 
 ## 2. Build the framework (one time)
 
@@ -70,7 +73,8 @@ mc-test run <stepfile.mctest.yml> [more...]    run test(s) against the matrix
         [--target <id>|<id,id,...>|all] [--matrix mc-test.yml]
         [--plugin built-sut.jar] [--out dir] [--fail-on-skip]
 mc-test list                                   list targets in the matrix [--matrix mc-test.yml]
-mc-test doctor                                 check Java, ports, downloads, matrix
+mc-test doctor                                 preflight the deps your matrix needs (JDK, disk,
+        [--target <id>|<id,...>] [--strict]    agent jars, Gradle, display/Docker) — non-zero per unmet dep
 mc-test init                                   scaffold mc-test.yml + a sample test [--dir <dir>]
 mc-test --help                                 usage
 ```
@@ -203,8 +207,83 @@ steps:
 ```
 
 **Step verbs:** `join`, `leave`, `chat`, `command`, `waitForChat`/`assertChat`, `waitForScreen`,
-`listElements`, `click`, `type`, `press`, `screenshot`, `getBlock`, `getEntities`,
-`assertPluginState`, `fixture`, `spawnFakePlayer`.
+`listElements`, `click`, `type`, `press`, `screenshot`, `useBlock`, `attackBlock`, `setHeldItem`,
+`look`, `move`, `getBlock`, `waitForBlock`, `getContainer`, `getItem`, `getEntities`,
+`assertPluginState`, `waitForPluginState`, `fixture`, `spawnFakePlayer`.
+
+**Time verbs** — `waitForBlock` / `waitForPluginState` take the same arguments as `getBlock` /
+`assertPluginState` plus `timeoutMs` (default 10000) and `intervalMs` (default 250), and poll until
+the assertion holds. Use them whenever the SUT writes state *after* the action that triggered it (a
+scheduled task, a packet round-trip) — that is a sleep-free, flake-free alternative to asserting
+immediately and hoping:
+
+```yaml
+  - waitForBlock:
+      requires: { worldTruth: true }
+      x: 3, y: -60, z: 0
+      expect: minecraft:oak_wall_sign
+      expectProperties: { facing: east }
+      timeoutMs: 10000
+  - waitForPluginState:
+      requires: { pluginState: true }
+      query: shop.exists
+      args: { owner: Tester }
+      expect: true
+```
+
+A wait with no condition (`waitForBlock` with none of `expect`/`expectProperties`/`expectNbt`) is
+REJECTED rather than passing on the first read, and a timeout reports the last real mismatch — never
+a bare "timed out".
+
+**Server truth** (cap `worldTruth` — needs a co-selected server agent, else these steps honestly
+skip). Assert *where* a block ended up and *what* an item actually is, not just that a call
+returned:
+
+```yaml
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 3, y: -60, z: 0
+      expect: minecraft:oak_wall_sign      # block id
+      expectProperties: { facing: east }   # BLOCKSTATE — the type is the same on every face
+      expectNbt:                           # BLOCK ENTITY (sign text, container name, …)
+        front_text: { messages: ["ChestShop", "64 B 1:2", "", ""] }
+  - getContainer:
+      requires: { worldTruth: true }
+      x: 2, y: -60, z: 0
+      expect: minecraft:chest
+      expectCount: 2                       # occupied slots
+  - getItem:
+      requires: { worldTruth: true }
+      x: 2, y: -60, z: 0
+      slot: 0
+      expect:
+        type: minecraft:diamond_sword
+        displayName: Excalibur
+        componentsInclude: { enchants: { DAMAGE_ALL: 5 } }   # subset
+        # components: {...}        # EXACT whole-map equality
+        # componentsHash: sha256:… # the digest — identity in one field
+        # empty: true              # assert the slot is empty
+```
+
+> **Why components matter.** `type` + `count` is NOT an item's identity: a Cobblemon Poké Ball, a
+> ChestShop sign item and an ItemsAdder block are all vanilla materials plus data components, so
+> comparing materials alone would call them equal to plain vanilla stacks. Identity is `type` +
+> `componentsHash`. The component map uses the agent's own key names (the Bukkit agent reports
+> Bukkit's, so sharpness is `DAMAGE_ALL`) — read one back with a bare `getItem` to see the shape.
+
+**World interaction** (cap `worldInteraction` — the headless bot advertises it; the pixel stub does
+not, so those steps honestly skip there). Blocks are addressed by position + face, which is the one
+place coordinates are legal — a block in the world has no label to select on:
+
+```yaml
+  - setHeldItem: minecraft:oak_sign          # or { item: …, hand: off } / { slot: 0 }
+  - look: { at: { x: 2.5, y: -59.5, z: 0.5 }, force: true }
+  - useBlock: { pos: { x: 2, y: -60, z: 0 }, face: north, sneak: true }
+  # sneak suppresses the block's own use behavior, so the held item places on the
+  # clicked face — drop `sneak` and the chest just opens instead.
+  - attackBlock: { pos: { x: 2, y: -60, z: -1 }, face: south, breakBlock: true }
+  - move: { controls: { forward: true, sprint: true }, durationMs: 400 }
+```
 
 **Selectors** (semantic — never slot indices/pixels; present keys are ANDed): `label`/`text`,
 `textContains`, `loreContains`, `itemType`, `role`, `index`/`nth`, `within`, `testId`. Shorthand:

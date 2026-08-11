@@ -51,6 +51,18 @@
           "items": {
             "type": "string"
           }
+        },
+        "typedVia": {
+          "anyOf": [
+            {
+              "const": "textField",
+              "type": "string"
+            },
+            {
+              "const": "screenCharTyped",
+              "type": "string"
+            }
+          ]
         }
       }
     }

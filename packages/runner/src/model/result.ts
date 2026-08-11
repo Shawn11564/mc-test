@@ -87,6 +87,13 @@ export interface TestResult {
   notes?: string[];
   /** Boot-log mod-load detection for a modded-server target (F5). */
   modLoad?: ModLoad;
+  /** The §4 matrix case that produced this result, when applicable. */
+  matrixCase?: {
+    id: string;
+    config: Record<string, unknown>;
+    coverage: "full" | "pairwise";
+    environmentKey: string;
+  };
 }
 
 /** All test results for one (suite × target). */

@@ -1,0 +1,36 @@
+{
+  "method": "truth.getItem",
+  "description": "Read ONE container slot as server truth. An empty slot is an explicit item:null, never an omitted field.",
+  "request": { "jsonrpc": "2.0", "id": 41, "method": "truth.getItem", "params": { "sessionId": "s_srv_01", "world": "world", "x": 2, "y": -60, "z": 0, "slot": 0 } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 41,
+        "result": {
+          "ok": true,
+          "slot": 0,
+          "item": {
+            "type": "minecraft:diamond_sword",
+            "count": 1,
+            "slot": 0,
+            "displayName": "Excalibur",
+            "displayNameRaw": "§bExcalibur",
+            "lore": ["§7A shop-stock test item"],
+            "components": { "display": { "Name": "Excalibur", "Lore": ["A shop-stock test item"] } },
+            "componentsHash": "sha256:6f1c2a0b9d3e4f5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c"
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-slot",
+      "envelope": { "jsonrpc": "2.0", "id": 41, "result": { "ok": true, "slot": 5, "item": null } }
+    },
+    {
+      "name": "slot-out-of-range",
+      "envelope": { "jsonrpc": "2.0", "id": 41, "error": { "code": -32602, "message": "slot 99 out of range for a 27-slot inventory", "data": { "reason": "invalidParams", "retryable": false } } }
+    }
+  ]
+}

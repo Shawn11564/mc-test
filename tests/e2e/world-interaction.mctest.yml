@@ -1,0 +1,60 @@
+# Phase-2 world-interaction acceptance: the ChestShop shape, on a REAL server.
+#
+# Sneak-click a chest's north face while holding a sign → the sign must land on
+# THAT face (and the chest must survive). Every assertion is checked against the
+# SERVER, not against what the bot believes:
+#   - `/execute if block … run say <marker>` + waitForChat is vanilla server truth
+#     and needs no agent at all, so this scenario is self-contained;
+#   - the `getBlock` steps add the authoritative MCTP read and honestly SKIP
+#     (unmet: [worldTruth]) when no server agent is co-selected.
+#
+# Needs `ops: [Tester]` on the target (the bot runs /setblock, /give, /execute AS
+# the joined player) and a flat world (the runner forces level-type=minecraft:flat,
+# so the walkable surface is y=-60).
+name: world-interaction-chest-sign
+requires:
+  command: true
+  worldInteraction: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+
+  # --- arrange: a chest at (2,-60,0), a free north neighbour, a sign in hand ---
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 2 -60 -1 minecraft:air replace"
+  - command: "setblock 2 -60 0 minecraft:chest replace"
+  # Command feedback is our sync point: the block edit is applied AND the bot has
+  # been told about it before we interact (no sleep, no flake).
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+  - command: "give @s minecraft:oak_sign 1"
+  - waitForChat: { contains: "Gave 1", timeoutMs: 10000 }
+
+  # --- act: the world-interaction verbs under test ---------------------------
+  - move: { controls: { sneak: false }, durationMs: 50 }
+  - look: { at: { x: 2.5, y: -59.5, z: 0.5 }, force: true }
+  - setHeldItem: minecraft:oak_sign
+  - useBlock: { pos: { x: 2, y: -60, z: 0 }, face: north, sneak: true }
+
+  # --- assert: server truth, twice over --------------------------------------
+  - command: "execute if block 2 -60 -1 minecraft:oak_wall_sign run say MCTEST_SIGN_ON_FACE"
+  - waitForChat: { contains: "MCTEST_SIGN_ON_FACE", timeoutMs: 10000 }
+  - command: "execute if block 2 -60 0 minecraft:chest run say MCTEST_CHEST_INTACT"
+  - waitForChat: { contains: "MCTEST_CHEST_INTACT", timeoutMs: 10000 }
+  # Authoritative MCTP read (runs with a server agent; honest skip without one).
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: -1
+      expect: minecraft:oak_wall_sign
+
+  # --- act: attackBlock removes it again --------------------------------------
+  - attackBlock: { pos: { x: 2, y: -60, z: -1 }, face: south, breakBlock: true }
+  - command: "execute if block 2 -60 -1 minecraft:air run say MCTEST_SIGN_REMOVED"
+  - waitForChat: { contains: "MCTEST_SIGN_REMOVED", timeoutMs: 10000 }
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: -1
+      expect: minecraft:air

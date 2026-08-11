@@ -35,6 +35,21 @@ export const Vec3 = Type.Object(
 export type Vec3 = Static<typeof Vec3>;
 
 /**
+ * A block position. Coordinates are **integers** (a block grid cell), which is
+ * what the world-interaction verbs address — `Vec3` (doubles) stays the entity/
+ * world-space shape.
+ */
+export const BlockPos = Type.Object(
+  {
+    x: Type.Integer(),
+    y: Type.Integer(),
+    z: Type.Integer(),
+  },
+  { additionalProperties: false, description: "Block position (integer grid cell)." },
+);
+export type BlockPos = Static<typeof BlockPos>;
+
+/**
  * An arbitrary JSON value. Used for free-form payloads the protocol routes but
  * does not interpret (`fixture.set` args, `truth.assertPluginState` value, etc.).
  */

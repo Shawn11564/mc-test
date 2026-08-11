@@ -1,0 +1,27 @@
+# NEGATIVE CONTROL for the world-interaction acceptance (paired with
+# world-interaction.mctest.yml). Identical arrangement, but the click does NOT
+# sneak — so the chest's own use behavior wins, the GUI opens, and NOTHING is
+# placed on the clicked face.
+#
+# This is what makes the positive scenario non-vacuous: if `sneak` were dropped on
+# the wire (or the driver ignored it), the positive run would still be green here,
+# and this run would go red on MCTEST_FACE_STILL_AIR.
+name: world-interaction-no-sneak-places-nothing
+requires:
+  command: true
+  worldInteraction: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 2 -60 -1 minecraft:air replace"
+  - command: "setblock 2 -60 0 minecraft:chest replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+  - command: "give @s minecraft:oak_sign 1"
+  - waitForChat: { contains: "Gave 1", timeoutMs: 10000 }
+  - look: { at: { x: 2.5, y: -59.5, z: 0.5 }, force: true }
+  - setHeldItem: minecraft:oak_sign
+  # The ONLY difference from the positive scenario.
+  - useBlock: { pos: { x: 2, y: -60, z: 0 }, face: north, sneak: false }
+  - command: "execute if block 2 -60 -1 minecraft:air run say MCTEST_FACE_STILL_AIR"
+  - waitForChat: { contains: "MCTEST_FACE_STILL_AIR", timeoutMs: 10000 }

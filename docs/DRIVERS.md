@@ -40,6 +40,13 @@ Every driver implements a subset of this method set. Methods are grouped by the 
 - `screen.waitForScreen` — block until a screen matching a predicate appears or timeout (server-side convenience; runner may instead poll `screen.get`).
 - `screen.close` — close the current screen/container.
 
+**World-interaction primitives (cap `worldInteraction`):**
+- `world.useBlock` — right-click one face of one block (`sneak: true` suppresses the block's own use behavior, so a held item places against the clicked face).
+- `world.attackBlock` — left-click one face: a punch by default, a full dig with `breakBlock`.
+- `world.setHeldItem` — choose what the player holds, by item id or hotbar slot.
+- `world.look` — aim by yaw/pitch or at a world point.
+- `world.move` — hold/release the vanilla control axes (no pathfinding — that stays in the runner).
+
 **Chat / command primitives:**
 - `world.sendChat` — send a chat line.
 - `world.runCommand` — run a slash command (e.g. `/or`).
@@ -50,7 +57,9 @@ Every driver implements a subset of this method set. Methods are grouped by the 
 - `world.leave` — disconnect/leave the world.
 
 **World-truth primitives (server-side):** (result shapes per `PROTOCOL.md` §7.3 / §7.5)
-- `truth.getWorldBlock` — `{ world?, x, y, z } -> { block: { type, properties?, nbtJson?, biome? } }`.
+- `truth.getWorldBlock` — `{ world?, x, y, z } -> { block: { type, properties?, nbt?, nbtJson?, biome? } }`. `properties` is the blockstate (`facing`…); `nbt`/`nbtJson` is the block entity, absent when the block has none.
+- `truth.getContainer` — `{ world?, x, y, z, includeEmpty? } -> { container: { type, title?, size, itemCount, slots: ItemStack[] } }`.
+- `truth.getItem` — `{ world?, x, y, z, slot } -> { slot, item: ItemStack|null }`. An `ItemStack` carries `components` + `componentsHash`: identity is `type` + digest, never the material alone.
 - `truth.getEntities` — query entities by `{ world?, center, radius, type? }` -> `{ count, entities: [{ id, uuid, type, name?, position, tags?, customNameRaw? }] }`.
 - `truth.assertPluginState` — evaluate a named, plugin-registered probe by `query` (params `{ plugin?, query, args?, expect? }`, e.g. `query:"regions.exists"` `args:{name:"TestRegion"}`) and return `{ ok, query, value, matched, valueJson }`.
 
@@ -111,6 +120,7 @@ Capability keys are **booleans** advertised by drivers and **required** by tests
 | `pressKey` | `screen.pressKey` | raw key events |
 | `screenshot` | `screen.screenshot` | pixel capture of current screen |
 | `rendering` | (implies a real rendered client) | a GPU/Xvfb framebuffer exists |
+| `worldInteraction` | `world.useBlock`, `world.attackBlock`, `world.setHeldItem`, `world.look`, `world.move` | act on the world as the player |
 | `worldTruth` | `truth.getWorldBlock`, `truth.getEntities` | authoritative server world state |
 | `pluginState` | `truth.assertPluginState` | query SUT-registered probes |
 | `fixtures` | `fixture.set`, `fixture.reset` | mutate world/plugin state for setup |
@@ -141,6 +151,7 @@ This is the **default CI driver**. It logs into the server as a real protocol-le
     "command": true,
     "containerGui": true,
     "typeText": true,        // anvil/sign/book server-side text only; see §1.2
+    "worldInteraction": true, // phase 2: useBlock/attackBlock/setHeldItem/look/move over real protocol packets
     "testIdTags": false,     // bot CAN read PDC testId, but M2 advertises only the 5 core caps (BUILD_PROMPT §M2)
     "screenshot": false,     // no framebuffer; see limits
     "rendering": false,
@@ -359,7 +370,7 @@ This agent runs **inside the server JVM**. It is the source of ground truth: it 
 |-------------|-------------------------------|
 | `session.create`/`session.describe`/`session.close`/`session.ping` | Native in `/agents/core`, embedded in the plugin/mod's `onEnable`/`onInitialize`. WS server bound to a per-instance port. |
 | `world.join`/`world.leave` | Marks the agent's logical session against the running world; no client connection of its own (the agent already lives in the server JVM). |
-| `truth.getWorldBlock` | **Bukkit:** `world.getBlockAt(x,y,z)` → `{ type: block.getType().getKey() (lowercase `namespace:path`), properties: blockData, nbtJson?, biome? }`. **Fabric server:** `serverWorld.getBlockState(pos)`. Runs on the main server thread via the scheduler. Out-of-range/unloaded → `WORLD_NOT_READY`. Field shape per `PROTOCOL.md` §7.3 `truth.getWorldBlock`. |
+| `truth.getWorldBlock` / `truth.getContainer` / `truth.getItem` | **Bukkit:** `world.getBlockAt(x,y,z)` → `{ type: block.getType().getKey() (lowercase `namespace:path`), properties: blockData, nbt/nbtJson (block entity via `BlockState`: `Sign`/`Container`/`Skull`/`CreatureSpawner`/`Lectern` + PDC keys), biome? }`; container reads use `((Container) state).getInventory()` and render each stack through `ItemMeta#serialize()` (Bukkit API only — no NMS), hashing type+components for identity. **Fabric server:** `serverWorld.getBlockState(pos)`. Runs on the main server thread via the scheduler. Out-of-range/unloaded → `WORLD_NOT_READY`. Field shape per `PROTOCOL.md` §7.3 `truth.getWorldBlock`. |
 | `truth.getEntities` | **Bukkit:** `world.getNearbyEntities(loc, r, r, r)` (sphere) or `world.getEntities()` filtered by type → `{ ok, count, entities:[{ id, uuid, type, name?, position:{x,y,z}, tags?[], customNameRaw? }] }`. **Fabric:** `serverWorld.getEntitiesByType(...)`. `radius` > granted `worldTruth.radiusLimit` → `-32602 invalidParams`. Field shape per `PROTOCOL.md` §7.3. |
 | `truth.assertPluginState` | Resolves a `query` name (params `{ plugin?, query, args?, expect? }`). **Loader-provided built-in first:** the reserved SUT-agnostic queries `mod.loaded` / `plugin.loaded` (synonyms; `args:{ id }` or shorthand `mod.loaded(<id>)`) are answered from the **loader itself** — Bukkit `PluginManager` / `FabricLoader.isModLoaded` / (Neo)Forge `ModList.isLoaded` — **before** any SUT provider, so a **downloaded** third-party mod/plugin can be asserted loaded with no SUT cooperation (`PROTOCOL.md` §7.5). Otherwise: the SUT registers an `McTestStateProvider` via the Bukkit `ServicesManager` (see §3.2.1); a reflective/expression fallback (`regions.exists(name)`, `config.get(path)`, `perms.has`) covers SUTs without the SPI. Evaluates the optional `expect` predicate (`equals｜notEquals｜contains｜gt｜gte｜lt｜lte｜exists`) over the value and returns `{ ok, query, value, matched, valueJson }` (`matched:null` if no `expect`). Unknown query / evaluation failure → `ASSERT_FAILED`. The agent returns facts; the **runner** owns the verdict. Field shape per `PROTOCOL.md` §7.5. |
 | `fixture.set` | Applies a **named fixture** (params `{ fixture, args? }`): built-ins `gamerule`, `time`, `weather`, `inventory` (give/clear), `permissions` (grant/revoke). Any fixture a registered `McTestFixtureProvider#supports` (e.g. `regions.createRegion` from the SUT) is delegated to that provider. Records an undo per applied fixture. Returns `{ ok, fixture, applied:true, handle, result? }`. Unknown/failed → `FIXTURE_FAILED`; bad args → `-32602`. Field shape per `PROTOCOL.md` §7.5. |
@@ -464,7 +475,7 @@ handshake). The pieces:
 
 This driver treats the screen as **pixels**: it captures a framebuffer (from a rendered client it does not instrument), runs **OCR** (Tesseract) and **template matching** (OpenCV) to locate text/elements, and dispatches **OS-level mouse/keyboard** events. It resolves semantic selectors **visually** — `label`/`textContains` via OCR, `itemType`/`role` via template images. It has **no structural knowledge**: no widget tree, no NBT, no `testId`.
 
-> **Status (M5).** The package `/packages/driver-pixel` (`@mc-test/driver-pixel`) now exists as a **selectable stub** registered in the runner `DriverRegistry` at **cost 4** (the last resort — `server < headless < inprocess < pixel`), MCTP `agent.kind: pixelOcr`. The implemented stub advertises the **boolean** capability set `chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `typeText`, `pressKey` plus the advisory `brittle: true` descriptor (and all loaders + `mcVersionRange: ">=1.8"`); it does **not** advertise `testIdTags`, `worldTruth`, `pluginState`, `fixtures`, or `fakePlayers`. The richer §4.1 model — `"visual"` string-valued capabilities and the `pixelOnly` negotiation-pin — remains the **aspirational** form. The **OCR/template + OS-input backend is NOT implemented**: the stub is registered purely for capability negotiation, and `start()` fails honestly (`PixelDriverNotImplementedError`); selection never launches it (it is chosen only when nothing cheaper fits, or `driver: pixel` is pinned). `brittle` is a new **advisory-only quality descriptor** on the protocol `Capabilities` object — deliberately **excluded** from the canonical `CAPABILITY_KEYS` (which stays the 13 boolean keys), so it is **not** a matchable capability (like the `loader`/`mcVersionRange` target descriptors); a test cannot "require" `brittle`. The runner reads it solely to emit a **loud report note** (console + a JUnit `<property name="brittle" value="true"/>`) when a brittle driver is selected.
+> **Status (M5).** The package `/packages/driver-pixel` (`@mc-test/driver-pixel`) now exists as a **selectable stub** registered in the runner `DriverRegistry` at **cost 4** (the last resort — `server < headless < inprocess < pixel`), MCTP `agent.kind: pixelOcr`. The implemented stub advertises the **boolean** capability set `chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `typeText`, `pressKey` plus the advisory `brittle: true` descriptor (and all loaders + `mcVersionRange: ">=1.8"`); it does **not** advertise `testIdTags`, `worldInteraction`, `worldTruth`, `pluginState`, `fixtures`, or `fakePlayers` — so a world-interaction scenario pinned to `driver: pixel` is reported **skipped** (`NO_COMPATIBLE_DRIVER`, `unmet:["worldInteraction"]`) before anything is booted. The richer §4.1 model — `"visual"` string-valued capabilities and the `pixelOnly` negotiation-pin — remains the **aspirational** form. The **OCR/template + OS-input backend is NOT implemented**: the stub is registered purely for capability negotiation, and `start()` fails honestly (`PixelDriverNotImplementedError`); selection never launches it (it is chosen only when nothing cheaper fits, or `driver: pixel` is pinned). `brittle` is a new **advisory-only quality descriptor** on the protocol `Capabilities` object — deliberately **excluded** from the canonical `CAPABILITY_KEYS` (which stays the canonical boolean-key set), so it is **not** a matchable capability (like the `loader`/`mcVersionRange` target descriptors); a test cannot "require" `brittle`. The runner reads it solely to emit a **loud report note** (console + a JUnit `<property name="brittle" value="true"/>`) when a brittle driver is selected.
 
 ### 4.1 Capability set (advertised)
 
@@ -585,7 +596,7 @@ Only if the regions client is un-moddable (no in-process agent possible):
 **Notifications (server → client events):** `event.chat`, `event.screenChanged`, `event.log`, `event.disconnected`.
 
 **Capability keys (flat, lowerCamelCase):**
-`chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`.
+`chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `worldInteraction`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`.
 Target descriptors: `loader` (enum), `mcVersionRange` (string).
 Driver-local advertisements (NOT part of the canonical vocabulary): `pixelOnly` (pixel visual-resolution marker), `inventoryGridSnapshot` (headless debug grid), `worldViewBot` (headless partial entity view).
 

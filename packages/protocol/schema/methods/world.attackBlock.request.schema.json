@@ -1,0 +1,105 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: world.attackBlock",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "world.attackBlock",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId",
+        "pos"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "pos": {
+          "additionalProperties": false,
+          "description": "Block position (integer grid cell).",
+          "type": "object",
+          "required": [
+            "x",
+            "y",
+            "z"
+          ],
+          "properties": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "z": {
+              "type": "integer"
+            }
+          }
+        },
+        "face": {
+          "description": "Block face (interaction side).",
+          "anyOf": [
+            {
+              "const": "north",
+              "type": "string"
+            },
+            {
+              "const": "south",
+              "type": "string"
+            },
+            {
+              "const": "east",
+              "type": "string"
+            },
+            {
+              "const": "west",
+              "type": "string"
+            },
+            {
+              "const": "up",
+              "type": "string"
+            },
+            {
+              "const": "down",
+              "type": "string"
+            }
+          ]
+        },
+        "breakBlock": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

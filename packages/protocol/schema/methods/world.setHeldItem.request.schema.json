@@ -1,0 +1,72 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: world.setHeldItem",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "world.setHeldItem",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "slot": {
+          "minimum": 0,
+          "maximum": 8,
+          "type": "integer"
+        },
+        "hand": {
+          "description": "Interaction hand.",
+          "anyOf": [
+            {
+              "const": "main",
+              "type": "string"
+            },
+            {
+              "const": "off",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

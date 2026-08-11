@@ -1,0 +1,130 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: truth.getContainer",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "container"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "container": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "type",
+            "size",
+            "itemCount",
+            "slots"
+          ],
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "size": {
+              "type": "integer"
+            },
+            "itemCount": {
+              "type": "integer"
+            },
+            "slots": {
+              "type": "array",
+              "items": {
+                "additionalProperties": false,
+                "description": "Authoritative item stack (identity = type + componentsHash).",
+                "type": "object",
+                "required": [
+                  "type",
+                  "count"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer"
+                  },
+                  "slot": {
+                    "type": "integer"
+                  },
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "displayNameRaw": {
+                    "type": "string"
+                  },
+                  "lore": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "components": {
+                    "description": "Free-form by-name JSON object.",
+                    "type": "object",
+                    "patternProperties": {
+                      "^(.*)$": {}
+                    }
+                  },
+                  "componentsHash": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

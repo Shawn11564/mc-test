@@ -1,0 +1,27 @@
+{
+  "method": "world.attackBlock",
+  "description": "Left-click a block face: a single punch by default, a full dig with breakBlock:true.",
+  "request": { "jsonrpc": "2.0", "id": 31, "method": "world.attackBlock", "params": { "sessionId": "s_ui_01", "pos": { "x": 2, "y": -60, "z": 0 }, "face": "up", "breakBlock": false } },
+  "responses": [
+    {
+      "name": "success-punch",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "result": { "ok": true, "block": { "type": "minecraft:chest" }, "face": "up", "broken": false }
+      }
+    },
+    {
+      "name": "success-broken",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "result": { "ok": true, "block": { "type": "minecraft:chest" }, "face": "up", "broken": true, "tookMs": 412 }
+      }
+    },
+    {
+      "name": "timeout",
+      "envelope": { "jsonrpc": "2.0", "id": 31, "error": { "code": -32003, "message": "dig did not complete within timeoutMs", "data": { "reason": "TIMEOUT", "retryable": true } } }
+    }
+  ]
+}

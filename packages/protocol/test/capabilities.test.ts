@@ -80,7 +80,8 @@ describe("matchCapabilities", () => {
     expect(CAPABILITY_KEYS).toContain("containerGui");
     expect(CAPABILITY_KEYS).not.toContain("loader"); // loader is a target descriptor, not a boolean cap
     expect(CAPABILITY_KEYS).not.toContain("brittle"); // brittle is an advisory quality descriptor, not a boolean cap
-    expect(CAPABILITY_KEYS.length).toBe(13);
+    expect(CAPABILITY_KEYS).toContain("worldInteraction"); // acting on the world as the player
+    expect(CAPABILITY_KEYS.length).toBe(14);
   });
 
   it("ignores the advisory `brittle` descriptor (it never participates in matching)", () => {

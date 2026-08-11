@@ -16,6 +16,24 @@
 > [drivers](./DRIVERS.md) are swappable backends chosen by **capability negotiation**.
 > This document never talks about test *steps* — only about standing up the world those
 > steps run in. Authoring lives in [AUTHORING.md](./AUTHORING.md).
+>
+> **Implementation status.** Several constructs described below as the eventual matrix
+> shape — a `matrix:`/`useMatrix` expansion axis, a top-level named `sources:` block with
+> `{ ref: <name> }` lookups, `suites:` (with `match: { paths, tags }`), `defaults:` merged
+> under every target, a per-target `client:` launch-profile sub-block, and a `reporting:`
+> block — are **not implemented by the runner today**. `packages/runner/src/config/
+> loadMatrix.ts` warns at parse time on any `mc-test.yml` key it doesn't recognize, so
+> writing one of these into a real config is caught immediately rather than silently
+> doing nothing. The REAL, currently-read schema is
+> `packages/runner/src/model/Target.ts` (`MatrixFile`/`MatrixTarget`/`ProvisionPolicy`/
+> `WorldDef`/`Source`) — mirrored 1:1 by the worked example at
+> [`/mc-test.example.yml`](../mc-test.example.yml) and the CI-run
+> [`/mc-test.yml`](../mc-test.yml). Today: one target id = one `(loader, mc)` cell (no
+> axis expansion — write out each row); a `plugins`/`mods`/`server`/`loaderInstaller`
+> entry resolves via `path` / `url`+`sha256` / `modrinth: {...}` (or `paper`/`spigot` for
+> `server:`); which test files run against which targets is chosen on the CLI
+> (`mc-test run <stepfile...> --target <id,id|all>`), with per-`(test × target)` capability
+> negotiation driven by `requires:` **in the step file**, not by a `suites:` block here.
 
 ---
 
@@ -100,6 +118,7 @@ A target fully describes one place to run tests. Required keys are marked ✅.
 | `loaderVersion` | string | cond | — | Pinned mod-loader version, **threaded from the target to the in-process driver** for a rendered (`inprocess`) client (`DRIVERS.md` §2.4). **Fabric/Quilt:** optional — the Fabric loader version, else the provisioner resolves + pins the newest stable for `mc`. **Forge/NeoForge:** **REQUIRED** to run the modular installer launch (e.g. forge `"47.2.0"`, neoforge `"21.1.66"`). Mirrors `Target.client.loaderVersion` (§5.2). |
 | `plugins` | list<`Source`\|`{ref}`> | — | `[]` | Bukkit/Spigot/Paper **plugins** to install (the SUT and its deps). Dropped into `plugins/`. The regions plugin is one of these. |
 | `mods` | list<`Source`\|`{ref}`> | — | `[]` | Fabric/Forge/NeoForge/Quilt **mods** to install (the SUT and its deps). Dropped into `mods/`. The regions mod is one of these. For an `inprocess` (rendered-client) target these mods are installed into the **rendered client's** `mods/` (§5.2) alongside the client agent (§2.4.2). The regions client-GUI mod is one of these. For a modded **server** target the SUT mods + the `server-fabric`/`server-forge`/`server-neoforge` truth agent go into the server's `mods/` (§2.3). |
+| `clientMods` | list<`Source`> | — | — | Mods for the **rendered client only**, when the client and the server need different sets — the rendered-client-on-**modded-server** shape, where `mods` goes to the server's `mods/` and this to the launched client's. Omitted → the client gets `mods` (the single-list behavior, right for a client-side-only SUT on a Paper server). Every entry is resolved, so a `modrinth:` dependency reaches the client too instead of being dropped for having no local `path`. |
 | `expectMods` | list<string> | — | `[]` | **(F5)** Mod ids the loader **must** report loaded for this target. The runner scans the boot log for each id; a missing one fails the instance with **`MOD_NOT_LOADED`**. Useful to gate a modded-server test on a **downloaded** third-party mod actually loading. The same boot-log scan is also surfaced informationally as `modLoad` reporting (§6) even when `expectMods` is empty. |
 | `display` | `Display` enum | — | from `provision.display` | Per-target display backend for a rendered (`inprocess`/`pixel`) client: `xvfb` (Linux headless / CI) or `desktop` (a real display). Overrides the global `provision.display.backend` (§5.1) for this target only. Ignored for headless/server-side targets (no rendered client). |
 | `agents` | list<`AgentId`> | — | inferred from `driver`/`side` | The set of mc-test agents co-installed and **co-selected** for this target. Each entry is a known agent id — `server-bukkit`, `server-fabric`, `client-fabric`, `client-forge`, `client-neoforge` (resolved via `agentResolver`, §2.4; per-agent build/scaffold status is the rightmost column of that §2.4 table — `server-fabric`/`client-forge`/`client-neoforge` are **scaffolded (M5, acceptance-only)**); a per-agent artifact override may be supplied out-of-band via `agentSources` (keyed by agent id). When `agents` is omitted the runner infers them from `driver`/`side`. Listing `server-bukkit` on a Paper target installs the server agent and gives the test the server-owned capabilities (`worldTruth`, `pluginState`, `fixtures`, `fakePlayers`) over a **second MCTP connection** (§2.4.1, §4). Example: `agents: [ server-bukkit ]`. A client target typically lists both a client and a server agent, e.g. `agents: [ client-fabric, server-fabric ]`. |
@@ -889,31 +908,38 @@ the matrix without scraping the XML.
 ## 7. End-to-end: the regions example across the matrix
 
 The companion file [`/mc-test.example.yml`](../mc-test.example.yml) is a complete, valid,
-commented matrix that:
+commented matrix — every key in it is read by the runner (parsing it emits zero unknown-key
+warnings) — that:
 
-- Defines **named sources** for the regions SUT (plugin jar + Fabric/NeoForge mod jars) and
-  the four agents.
-- Spans **Paper + Fabric + NeoForge** across **1.20.4 / 1.21.1 / 1.21.4** via `matrix.mc`.
-- Carries the full **inprocess loader axis** (F4): `fabric-1.21-client`, `neoforge-1.21-client`,
-  and a `forge-1.20.1-client` row (loader `forge`, mc `1.20.1`, `loaderVersion: "47.2.0"`). The
-  **modular** (forge/neoforge) rows **honest-skip** with `UNSUPPORTED_TARGET` unless opted in via
-  `MC_TEST_RENDERED_LOADERS` (§5.1); only Fabric runs rendered by default.
-- Provides **two suites**:
-  - `regions-plugin-headless` (requires `chat, containerGui, pluginState`) — runs on the
-    **Paper** targets with the `headless` bot + `server-bukkit` agent. CI-fast, no display.
-  - `regions-mod-gui` (requires `chat, clientScreens, pluginState`) — runs on the **Fabric**
-    and **NeoForge** *client* targets with the `inprocess` driver under Xvfb, **co-selecting the
-    `server-bukkit` truth agent + the regions plugin** (the server is Paper, so the client agent
-    proves the click and the Bukkit agent proves the region — §2.4.2). Skipped (with a reason) on a
-    headless Paper target, demonstrating §4.
-- Uses world `flat-void` + a fixture (`fixture.set` region create) per §3.4, so the test is
-  hermetic; the assertion uses `truth.assertPluginState(regionExists "TestRegion")`.
+- Defines nine explicit target rows (one per `(loader, mc, driver)` cell — no axis expansion):
+  a Paper headless row, an old-version Paper row that honestly skips `UNSUPPORTED_TARGET`
+  (no 1.8.9 Paper build) alongside a Spigot 1.8.8 row that actually boots (BuildTools), the
+  full **inprocess** rendered-client loader axis — `fabric-1.21-client`,
+  `neoforge-1.21-client`, `forge-1.20.1-client` — and the full **`driver: server`**
+  server-truth axis — `fabric-server-1.21`, `neoforge-server-1.21`, `forge-server-1.20.1`.
+- Resolves the regions SUT's plugin/mod jars via `path:` (built locally first — see
+  [`GETTING_STARTED.md`](./GETTING_STARTED.md)) and the modded-server rows' third-party
+  dependency (FerriteCore) via a live `modrinth: { project, version }` lookup, checksum-verified
+  against Modrinth's published hash.
+- The **modular** (forge/neoforge) inprocess rows **honest-skip** with `UNSUPPORTED_TARGET`
+  unless opted in via `MC_TEST_RENDERED_LOADERS` (§5.1); only Fabric runs rendered by default
+  outside that opt-in.
+- Co-selects `agents: [server-bukkit]` (Paper rows) or `agents: [client-<loader>, server-bukkit]`
+  (rendered-client rows) so `truth.assertPluginState` **runs** instead of honestly skipping
+  `unmet:["pluginState"]`; the `driver: server` rows co-select `agents: [server-<loader>]`
+  instead (no player join — the only way to assert on Forge/NeoForge, whose FML handshake a bot
+  can't complete) and set `expectMods` as the secondary boot-log gate (§6).
+- References world `regions-world` (`world: { ref: regions-world }`), a named snapshot with an
+  optional `snapshot.path` per §3.4.
 
 The semantic test itself ("join localhost → `/or` → click **Regions** → click
 **TestRegion** → assert chat contains `Region loaded` AND region exists") is authored once in
-`/examples/regions/regions.mctest.yml` and bound to both suites; each driver resolves the **semantic
-selectors** (label `Regions`, label `TestRegion`) its own way (bot: container slot
-display-name; mod: `ClickableWidget.getMessage`), exactly as the prime directives require.
+`/examples/regions/regions.mctest.yml` and run against whichever target ids you pass to
+`mc-test run … --target <id,id|all>`; each `(test × target)` cell negotiates independently against
+the `requires:` capabilities declared **in the step file** (not in `mc-test.yml` — there is no
+`suites:` block), and each driver resolves the **semantic selectors** (label `Regions`, label
+`TestRegion`) its own way (bot: container slot display-name; mod: `ClickableWidget.getMessage`),
+exactly as the prime directives require.
 
 ---
 

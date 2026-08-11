@@ -3,6 +3,19 @@
   "description": "Type into the focused/targeted text field (anvil rename, sign, search).",
   "request": { "jsonrpc": "2.0", "id": 14, "method": "screen.typeText", "params": { "sessionId": "s_ui_01", "selector": { "role": "input" }, "text": "TestRegion", "submit": false, "clear": true } },
   "responses": [
-    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 14, "result": { "ok": true, "screenChanged": false } } }
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 14, "result": { "ok": true, "screenChanged": false, "typedVia": "textField" } } },
+    {
+      "name": "success-sign-editor-fallback",
+      "description": "A screen that owns its editing and has NO text widget (the vanilla sign editor): the agent replays characters on the Screen itself and SAYS so via typedVia.",
+      "envelope": { "jsonrpc": "2.0", "id": 14, "result": { "ok": true, "screenChanged": false, "typedVia": "screenCharTyped" } }
+    },
+    {
+      "name": "element-not-found",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "error": { "code": -32000, "message": "No element matched selector", "data": { "reason": "ELEMENT_NOT_FOUND", "retryable": true, "details": { "selector": { "role": "input" } } } }
+      }
+    }
   ]
 }

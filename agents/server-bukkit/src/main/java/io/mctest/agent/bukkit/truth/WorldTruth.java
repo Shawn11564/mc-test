@@ -7,11 +7,16 @@ import io.mctest.agent.bukkit.Params;
 import io.mctest.agent.core.McTestException;
 import io.mctest.agent.core.McTestSession;
 import java.util.Locale;
+import io.mctest.agent.core.Canonical;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
+import org.bukkit.block.Container;
 import org.bukkit.entity.Entity;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
 /**
@@ -67,10 +72,109 @@ public final class WorldTruth {
             }
             blockJson.addProperty("biome",
                     block.getBiome().getKey().toString());
+            // Block-entity data (sign text, container contents, plugin PDC keys). ABSENT when the
+            // block has no block entity — a reader must be able to tell "no block entity" from
+            // "an empty one", which is why this is null-checked rather than defaulted to {}.
+            JsonObject nbt = BlockEntityTruth.read(block);
+            if (nbt != null) {
+                blockJson.add("nbt", nbt);
+                blockJson.addProperty("nbtJson", Canonical.json(nbt));
+            }
 
             JsonObject result = new JsonObject();
             result.addProperty("ok", true);
             result.add("block", blockJson);
+            return result;
+        }, timeout);
+    }
+
+    /**
+     * {@code truth.getContainer} params {@code { world?, x, y, z, includeEmpty? }} to
+     * {@code { ok, container:{ type, title?, size, itemCount, slots:[ItemStack] } }}. A block that
+     * is not a container gives {@code -32602 invalidParams} (an empty slot list would read as "the
+     * chest is empty", which is a different and false claim).
+     */
+    public JsonObject getContainer(McTestSession session, JsonObject params) throws McTestException {
+        String worldName = Params.optString(params, "world", null);
+        int x = Params.requireInt(params, "x");
+        int y = Params.requireInt(params, "y");
+        int z = Params.requireInt(params, "z");
+        boolean includeEmpty = params.has("includeEmpty")
+                && params.get("includeEmpty").isJsonPrimitive()
+                && params.get("includeEmpty").getAsBoolean();
+        long timeout = Params.timeoutMs(params, 15000);
+
+        return MainThread.call(plugin, () -> {
+            Block block = requireLoadedBlock(worldName, x, y, z);
+            Container container = requireContainer(block, x, y, z);
+            Inventory inv = container.getInventory();
+
+            JsonArray slots = new JsonArray();
+            int itemCount = 0;
+            for (int slot = 0; slot < inv.getSize(); slot++) {
+                ItemStack stack = inv.getItem(slot);
+                if (ItemTruth.isEmpty(stack)) {
+                    if (includeEmpty) {
+                        JsonObject empty = new JsonObject();
+                        empty.addProperty("type", "minecraft:air");
+                        empty.addProperty("count", 0);
+                        empty.addProperty("slot", slot);
+                        slots.add(empty);
+                    }
+                    continue;
+                }
+                slots.add(ItemTruth.describe(stack, slot));
+                itemCount++;
+            }
+
+            JsonObject containerJson = new JsonObject();
+            containerJson.addProperty("type", materialId(block));
+            String title = containerTitle(container);
+            if (title != null) {
+                containerJson.addProperty("title", title);
+            }
+            containerJson.addProperty("size", inv.getSize());
+            containerJson.addProperty("itemCount", itemCount);
+            containerJson.add("slots", slots);
+
+            JsonObject result = new JsonObject();
+            result.addProperty("ok", true);
+            result.add("container", containerJson);
+            return result;
+        }, timeout);
+    }
+
+    /**
+     * {@code truth.getItem} params {@code { world?, x, y, z, slot }} to
+     * {@code { ok, slot, item: ItemStack|null }}. An empty slot is an explicit {@code null} (never
+     * an omitted field); a slot outside the inventory gives {@code -32602 invalidParams}.
+     */
+    public JsonObject getItem(McTestSession session, JsonObject params) throws McTestException {
+        String worldName = Params.optString(params, "world", null);
+        int x = Params.requireInt(params, "x");
+        int y = Params.requireInt(params, "y");
+        int z = Params.requireInt(params, "z");
+        int slot = Params.requireInt(params, "slot");
+        long timeout = Params.timeoutMs(params, 15000);
+
+        return MainThread.call(plugin, () -> {
+            Block block = requireLoadedBlock(worldName, x, y, z);
+            Container container = requireContainer(block, x, y, z);
+            Inventory inv = container.getInventory();
+            if (slot < 0 || slot >= inv.getSize()) {
+                throw McTestException.invalidParams("slot " + slot + " out of range for a "
+                        + inv.getSize() + "-slot inventory");
+            }
+            ItemStack stack = inv.getItem(slot);
+
+            JsonObject result = new JsonObject();
+            result.addProperty("ok", true);
+            result.addProperty("slot", slot);
+            if (ItemTruth.isEmpty(stack)) {
+                result.add("item", com.google.gson.JsonNull.INSTANCE);
+            } else {
+                result.add("item", ItemTruth.describe(stack, slot));
+            }
             return result;
         }, timeout);
     }
@@ -134,6 +238,41 @@ public final class WorldTruth {
     }
 
     // --- helpers (called only on the server thread) ---
+
+    /** Resolves + range/loaded-checks a block, raising the same WORLD_NOT_READY errors as getWorldBlock. */
+    private Block requireLoadedBlock(String worldName, int x, int y, int z) throws McTestException {
+        World world = resolveWorld(worldName);
+        if (world == null) {
+            throw McTestException.worldNotReady("World not loaded: "
+                    + (worldName != null ? worldName : "<default>"));
+        }
+        if (y < world.getMinHeight() || y >= world.getMaxHeight()) {
+            throw McTestException.worldNotReady("y out of range for world " + world.getName() + ": " + y);
+        }
+        if (!world.isChunkLoaded(x >> 4, z >> 4)) {
+            throw McTestException.worldNotReady("Chunk not loaded at " + x + "," + z);
+        }
+        return world.getBlockAt(x, y, z);
+    }
+
+    /** The block's container state, or {@code -32602} naming what is actually there. */
+    private static Container requireContainer(Block block, int x, int y, int z) throws McTestException {
+        BlockState state = block.getState();
+        if (!(state instanceof Container)) {
+            throw McTestException.invalidParams("Block at " + x + "," + y + "," + z + " is "
+                    + materialId(block) + ", not a container");
+        }
+        return (Container) state;
+    }
+
+    private static String containerTitle(Container container) {
+        try {
+            return container.getCustomName();
+        } catch (Throwable ignored) {
+            // Name APIs differ across versions; an unreadable title is simply absent.
+            return null;
+        }
+    }
 
     private World resolveWorld(String worldName) {
         if (worldName != null && !worldName.isEmpty()) {

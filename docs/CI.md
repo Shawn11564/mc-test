@@ -55,6 +55,15 @@ downloadable workflow artifact. The `deploy-report` job is best-effort (`continu
 the same `upload-pages-artifact` → `deploy-pages` mechanism as the consumer publish above; enable it
 one-time via repo **Settings → Pages → Source: "GitHub Actions"**.
 
+A final `notify` job makes nightly failures impossible to miss. It reads the run's **per-job**
+conclusions from the Actions API rather than the `needs` context, because a lane marked
+`continue-on-error` (the rendered-client lane) reports `success` to `needs` even when it failed — a
+`needs`-based check is blind to exactly the lanes most likely to break. On any failing job it opens a
+single tracking issue labelled **`nightly-e2e`** (commenting on it rather than opening a duplicate on
+subsequent nights), and it **closes that issue automatically** when a run comes back fully green. It
+does not fail the workflow: keeping the fragile GL lane non-blocking is deliberate, so the remedy is
+visibility rather than a new gate. It needs `issues: write` + `actions: read`.
+
 ## Reusable workflow inputs
 
 The caller passes these to `Shawn11564/mc-test/.github/workflows/mc-test-ci.yml`:

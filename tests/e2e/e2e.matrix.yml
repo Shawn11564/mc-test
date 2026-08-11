@@ -41,6 +41,93 @@ targets:
       - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
     world: { ref: regions-world }
 
+  # PHASE-2 WORLD-INTERACTION target. Deliberately plugin-free: the world-interaction
+  # scenario (tests/e2e/world-interaction.mctest.yml) arranges its own world with
+  # vanilla commands, so it needs no SUT jar — only an OP'd bot (the headless bot runs
+  # /setblock, /give and /execute AS the joined player). No `agents:` either, which
+  # makes this row double as the honest-skip control for the truth half: the scenario's
+  # `getBlock` steps SKIP unmet=[worldTruth] while the vanilla `execute if block` +
+  # say assertions still prove the placement against the real server.
+  - id: paper-interaction
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    ops: [Tester]
+    world: { ref: regions-world }
+
+  # Same row WITH the Bukkit truth agent: the `getBlock` steps then RUN and the
+  # placement is confirmed by an authoritative MCTP read as well.
+  - id: paper-interaction-agent
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    ops: [Tester]
+    agents: [server-bukkit]
+    world: { ref: regions-world }
+
+  # PHASE-2 STEP-3 target for the TIME verbs: OP'd (the scenario drops falling sand with
+  # /setblock) + the regions plugin and Bukkit truth agent (so waitForPluginState has real
+  # plugin state to poll). Headless — the time verbs are server-truth, no client needed.
+  - id: paper-time-verbs
+    loader: paper
+    mc: "1.20.4"
+    driver: headless
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    ops: [Tester]
+    plugins:
+      - { path: ./examples/regions/plugin/target/regions-plugin.jar, as: regions.jar }
+    agents: [server-bukkit]
+    world: { ref: regions-world }
+
+  # PHASE-2 STEP-3 target: a RENDERED Fabric client + the Bukkit truth agent, OP'd, for
+  # tests/e2e/client-sign-typing.mctest.yml (type onto a real sign editor, then confirm the
+  # text through server truth with a wait verb). Paper server: the SUT here is vanilla sign
+  # behavior + the agent, not a mod, so no modded server is needed. `display: desktop` runs on
+  # a windowed host; CI overrides to xvfb.
+  - id: fabric-client-signs
+    loader: fabric
+    mc: "1.21.1"
+    driver: inprocess
+    server: { paper: { project: paper, version: "1.21.1", build: latest } }
+    ops: [Tester]
+    display: desktop
+    agents: [ client-fabric, server-bukkit ]
+    world: { ref: regions-world }
+
+  # RENDERED CLIENT on a MODDED SERVER (the row ChestShop's shape needs). Mirrors
+  # mc-test.yml's `fabric-server-1.21-client`: no `server:` key, so the MODDED path boots a real
+  # Fabric dedicated server while the in-process driver launches a real Fabric client; `mods` is
+  # the SERVER's set and `clientMods` the CLIENT's. Both halves are agent-backed —
+  # client-fabric renders/types, server-fabric answers truth.
+  - id: fabric-server-client
+    loader: fabric
+    mc: "1.21.1"
+    loaderVersion: "0.19.3"
+    driver: inprocess
+    ops: [Tester]
+    mods:
+      - { path: ./examples/regions/mod-fabric/build/libs/openregions-fabric.jar, as: regions.jar }
+      - { modrinth: { project: fabric-api, loader: fabric, gameVersion: "1.21.1" }, as: fabric-api.jar }
+    clientMods:
+      - { path: ./examples/regions/mod-fabric/build/libs/openregions-fabric.jar, as: regions.jar }
+      - { modrinth: { project: fabric-api, loader: fabric, gameVersion: "1.21.1" }, as: fabric-api.jar }
+    display: desktop
+    agents: [ client-fabric, server-fabric ]
+    world: { ref: regions-world }
+
+  # The capability-skip control for phase 2: the pixel/OCR driver is a stub that
+  # sees only pixels — it advertises no `worldInteraction`, so a world-interaction
+  # scenario pinned here is SKIPPED (NO_COMPATIBLE_DRIVER, unmet=[worldInteraction])
+  # before anything is even booted. Never a false green, never a crash.
+  - id: pixel-interaction
+    loader: paper
+    mc: "1.20.4"
+    driver: pixel
+    server: { paper: { project: paper, version: "1.20.4", build: latest } }
+    world: { ref: regions-world }
+
   # F3 RENDERED-CLIENT target — mirrors mc-test.yml's fabric-1.21-client row. The in-process
   # driver launches a REAL Fabric 1.21.1 client (under Xvfb in CI) hosting the client-fabric
   # agent, which renders/clicks the SUT mod's client Screen; the Paper 1.21.1 server hosts the

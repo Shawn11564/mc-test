@@ -295,7 +295,11 @@ export class Runner {
             outcome = "failed";
             failure = {
               message: `step ${step.index} (${step.verb}) failed: ${errMessage(err)}`,
-              type: reason ?? "Error",
+              // Matrix fixture reset/setup is runner mechanics rather than an
+              // invariant assertion. Its failure is therefore a case `error`,
+              // while authored assertion failures retain their MCTP reason and
+              // report as `fail`.
+              type: step.index < 0 ? "Error" : reason ?? "Error",
             };
             break;
           }
@@ -438,6 +442,112 @@ export class Runner {
         await provisioned.stop().catch(() => {});
         // Free the per-instance work dir on success; the provider retains it on
         // failure (keepOnFailure) so logs/artifacts survive for triage.
+        await provisioned.cleanup?.(failed).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Run concrete cases that share one provisioned environment. Matrix expansion
+   * calls this for each environment-variant group: the server and driver boot
+   * once, while every case still receives its own MCTP session and fixture-reset
+   * preamble. This keeps case verdicts isolated without paying a boot per cell.
+   */
+  async runTargetCases(
+    tests: NormalizedTest[],
+    meta: TargetMeta,
+    provision: () => Promise<ProvisionHandle>,
+    defaultUsername = "Tester",
+    outputDir?: string,
+  ): Promise<TestResult[]> {
+    if (tests.length === 0) return [];
+    const selections = tests.map((test) => this.selectDriver(test, meta.driverPin));
+    const descriptor = selections[0]!.descriptor;
+    if (!descriptor || selections.some((selection) => selection.descriptor?.id !== descriptor.id)) {
+      return tests.map((test, i) => ({
+        name: test.name,
+        target: meta.target,
+        ...(meta.loader ? { loader: meta.loader } : {}),
+        ...(meta.mc ? { mc: meta.mc } : {}),
+        outcome: "skipped" as const,
+        durationMs: 0,
+        steps: [],
+        skip: selections[i]!.skip ?? {
+          category: "configuration" as const,
+          reason: "MATRIX_DRIVER_MISMATCH",
+          unmet: [],
+          message: "matrix cases in one environment group selected different drivers",
+        },
+        ...(test.matrixCase ? { matrixCase: {
+          id: test.matrixCase.id,
+          config: test.matrixCase.config,
+          coverage: test.matrixCase.coverage,
+          environmentKey: test.matrixCase.environmentKey,
+        } } : {}),
+      }));
+    }
+
+    let provisioned: ProvisionHandle | undefined;
+    let driver: Awaited<ReturnType<DriverDescriptor["create"]>> | undefined;
+    let failed = true;
+    const results: TestResult[] = [];
+    try {
+      provisioned = await provision();
+      driver = await descriptor.create(meta.launch);
+      for (const test of tests) {
+        const caseName = test.matrixCase ? `${test.name}-${test.matrixCase.id}` : test.name;
+        const exec: ExecContext = {
+          host: provisioned.host,
+          port: provisioned.port,
+          defaultUsername,
+          ...(outputDir ? { artifactsDir: artifactDirFor(outputDir, meta.target, caseName) } : {}),
+          ...(outputDir ? { baselineDir: baselineDirFor(outputDir, meta.target) } : {}),
+        };
+        const result = await this.runTest(test, descriptor, driver.url, exec, meta, provisioned.agents ?? []);
+        if (test.matrixCase) {
+          result.matrixCase = {
+            id: test.matrixCase.id,
+            config: test.matrixCase.config,
+            coverage: test.matrixCase.coverage,
+            environmentKey: test.matrixCase.environmentKey,
+          };
+        }
+        if (provisioned.modLoad) result.modLoad = provisioned.modLoad;
+        if (provisioned.logPath && result.outcome === "failed") {
+          result.artifacts = [...(result.artifacts ?? []), provisioned.logPath];
+        }
+        results.push(result);
+      }
+      failed = results.some((result) => result.outcome === "failed");
+      return results;
+    } catch (err) {
+      const msg = errMessage(err);
+      const skipped = msg.startsWith("UNSUPPORTED_TARGET:");
+      failed = !skipped;
+      return tests.map((test) => ({
+        name: test.name,
+        target: meta.target,
+        ...(meta.loader ? { loader: meta.loader } : {}),
+        ...(meta.mc ? { mc: meta.mc } : {}),
+        driver: descriptor.id,
+        outcome: skipped ? "skipped" as const : "failed" as const,
+        durationMs: 0,
+        steps: [],
+        ...(skipped
+          ? { skip: { category: "environment" as const, reason: "UNSUPPORTED_TARGET", unmet: [], message: msg } }
+          : { failure: { message: msg, type: "ProvisionError" } }),
+        ...(provisioned?.logPath ? { artifacts: [provisioned.logPath] } : {}),
+        ...(test.matrixCase ? { matrixCase: {
+          id: test.matrixCase.id,
+          config: test.matrixCase.config,
+          coverage: test.matrixCase.coverage,
+          environmentKey: test.matrixCase.environmentKey,
+        } } : {}),
+      }));
+    } finally {
+      if (driver) await driver.stop().catch(() => {});
+      if (provisioned) {
+        await provisioned.stop().catch(() => {});
         await provisioned.cleanup?.(failed).catch(() => {});
       }
     }

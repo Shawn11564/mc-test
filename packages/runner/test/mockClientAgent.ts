@@ -61,11 +61,22 @@ export class MockClientAgent {
   private listReveals: number;
 
   // per-connection-ish state (single session for tests)
-  private screen: "none" | "root" | "list" = "none";
+  private screen: "none" | "root" | "list" | "sign" = "none";
   private chat: string[] = [];
+  /**
+   * What was typed into the sign editor. The sign screen deliberately exposes NO
+   * elements — that is the whole point of the charTyped fallback: there is no
+   * TextFieldWidget to select, so `typeText` must reach the Screen itself.
+   */
+  private signText: string | null = null;
 
   /** Every method this agent received — proves which verbs route here. */
   readonly calls: string[] = [];
+
+  /** What the sign editor ended up holding (null until something typed into it). */
+  get signContents(): string | null {
+    return this.signText;
+  }
 
   constructor(opts: MockClientAgentOptions = {}) {
     this.caps = opts.capabilities ?? DEFAULT_CAPS;
@@ -175,7 +186,11 @@ export class MockClientAgent {
       case "world.sendChat":
         return { ok: true };
       case "world.runCommand": {
-        if (String(params["command"]).replace(/^\//, "") === "or") this.screen = "root";
+        const cmd = String(params["command"]).replace(/^\//, "");
+        if (cmd === "or") this.screen = "root";
+        // Stands in for right-clicking a placed sign: the vanilla client opens a sign
+        // EDITOR — a screen with no text widget that owns its own editing.
+        if (cmd === "editsign") this.screen = "sign";
         return { ok: true, screenChanged: true };
       }
       case "world.waitForChat": {
@@ -186,7 +201,14 @@ export class MockClientAgent {
       }
       case "screen.waitForScreen": {
         const match = params["match"] as { title?: string } | undefined;
-        const title = this.screen === "root" ? "OpenRegions" : this.screen === "list" ? "Regions" : "";
+        const title =
+          this.screen === "root"
+            ? "OpenRegions"
+            : this.screen === "list"
+              ? "Regions"
+              : this.screen === "sign"
+                ? "Edit Sign"
+                : "";
         if (this.screen === "none") this.err(-32003, "TIMEOUT", "no screen");
         if (match?.title && !title.toLowerCase().includes(match.title.toLowerCase())) {
           this.err(-32003, "TIMEOUT", "screen title mismatch");
@@ -233,8 +255,15 @@ export class MockClientAgent {
         }
         return { ok: true, screenChanged: false, resolved: { via, widgetId: `el_0`, screenId: `screen:${this.screen}` } };
       }
-      case "screen.typeText":
-        return { ok: true, screenChanged: false };
+      case "screen.typeText": {
+        // A sign-editor screen has NO text widget and owns its editing: the agent reports the
+        // screen-level charTyped fallback. Any other screen types through a real field.
+        if (this.screen === "sign") {
+          this.signText = String(params["text"] ?? "");
+          return { ok: true, screenChanged: false, typedVia: "screenCharTyped" };
+        }
+        return { ok: true, screenChanged: false, typedVia: "textField" };
+      }
       case "screen.pressKey":
         return { ok: true, screenChanged: false };
       case "screen.screenshot":

@@ -23,6 +23,7 @@ export const CAPABILITY_KEYS = [
   "clientScreens",
   "screenshot",
   "rendering",
+  "worldInteraction",
   "worldTruth",
   "pluginState",
   "fixtures",
@@ -66,6 +67,13 @@ export const Capabilities = Type.Object(
     clientScreens: Type.Optional(Type.Boolean()),
     screenshot: Type.Optional(Type.Boolean()),
     rendering: Type.Optional(Type.Boolean()),
+    /**
+     * The agent can act on the world AS the player: `world.useBlock`,
+     * `world.attackBlock`, `world.setHeldItem`, `world.look`, `world.move`
+     * (PROTOCOL.md §6.1 / §7.2). Distinct from `worldTruth`, which only *reads*
+     * authoritative state — a driver may have one without the other.
+     */
+    worldInteraction: Type.Optional(Type.Boolean()),
     worldTruth: Type.Optional(Type.Boolean()),
     pluginState: Type.Optional(Type.Boolean()),
     fixtures: Type.Optional(Type.Boolean()),

@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - uses: actions/setup-java@v4
         with:
@@ -60,6 +60,23 @@ jobs:
       - name: Run real-boot E2E harness
         run: node tests/e2e/run-real-boot.mjs --flake=3
 
+      # Phase-2 world-interaction verbs: positive placement, its no-sneak negative
+      # control, the truth-confirmed run (Bukkit agent), and the pixel capability skip.
+      - name: Run world-interaction E2E harness
+        run: node tests/e2e/run-world-interaction.mjs
+
+      # Phase-2 truth vocabulary: facing on a placed sign, block-entity NBT, and
+      # component-exact container items — each with a negative control that must go red.
+      - name: Run truth-vocabulary E2E harness
+        run: node tests/e2e/run-truth-vocabulary.mjs
+
+      # Phase-2 time verbs: a genuinely deferred state (falling sand) caught by
+      # waitForBlock, with the assert-once negative control that proves the wait is
+      # load-bearing. The rendered sign-typing cases are opt-in (MC_TEST_RENDERED=1) and
+      # run in the GL-capable fabric-rendered lane instead.
+      - name: Run time-verb E2E harness
+        run: node tests/e2e/run-time-verbs.mjs
+
       - name: Upload report + retained failure instances
         if: always()
         uses: actions/upload-artifact@v4
@@ -81,7 +98,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - uses: actions/setup-java@v4
         with:
@@ -183,6 +200,15 @@ jobs:
       - name: Run rendered-client E2E harness (Xvfb)
         run: xvfb-run -a node tests/e2e/run-rendered-boot.mjs --flake=1
 
+      # Phase-2 SIGN-EDITOR typing on a real client: the server opens a real sign editor,
+      # `type` reaches it through the charTyped fallback (no text widget exists to select),
+      # and waitForBlock confirms the typed line in the block entity via server truth. The
+      # rendered cases are opt-in so the headless lane skips them loudly rather than silently.
+      - name: Run sign-typing + time-verb E2E harness (Xvfb)
+        env:
+          MC_TEST_RENDERED: "1"
+        run: xvfb-run -a node tests/e2e/run-time-verbs.mjs
+
       - name: Upload report + screenshots + server/client logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -215,7 +241,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       - uses: actions/setup-java@v4
         with:
@@ -307,7 +333,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
       # Both JDKs: 21 is the default (NeoForge 1.21.1 + Fabric, and it also boots the Forge 1.20.1
       # SERVER fine — verified); 17 is only for BUILDING the Forge agent jar, whose ForgeGradle
@@ -471,3 +497,90 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+  # ─────────────────── Nightly status: notify on ANY lane failure ───────────────────
+  # An unwatched nightly rots silently, so this job makes every failure land somewhere a
+  # human sees it: one tracking issue labelled `nightly-e2e`, opened on the first failure,
+  # commented on for each subsequent one, and closed automatically when a run comes back
+  # fully clean.
+  #
+  # It reads the run's JOB conclusions from the API rather than `needs.*.result`, and that
+  # detail is the whole point: a lane marked `continue-on-error` (the rendered-client lane)
+  # reports `success` to `needs` even when it failed, so a `needs`-based notifier would be
+  # blind to exactly the lanes most likely to break. That masking hid a rendered-client
+  # flake in 8 of the 45 nightlies between 2026-06-23 and 2026-08-04 while every run badge
+  # stayed green. This job deliberately does NOT fail the workflow — `continue-on-error` on
+  # the fragile GL lane is an intentional choice (a flaky GL surface must not block); the
+  # fix is visibility, not a new gate.
+  notify:
+    name: Report nightly status
+    # Depends on EVERY other job (including the two `continue-on-error` ones) so it runs
+    # strictly last and sees a final conclusion for each.
+    needs:
+      [paper-regions, gradle-front-door, fabric-rendered-client, multi-loader-matrix, modded-server, publish-report, deploy-report]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read   # read this run's per-job conclusions
+      issues: write   # open / comment / close the tracking issue
+    steps:
+      - name: Open, update, or close the nightly tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LABEL: nightly-e2e
+        run: |
+          set -euo pipefail
+
+          # This job is still `in_progress` while it runs, so it can never list itself.
+          jobs_json=$(gh api "/repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100")
+          failed=$(echo "$jobs_json" | jq -r '
+            .jobs[] | select(.conclusion == "failure")
+            | "- **\(.name)** — failed at: \([.steps[]? | select(.conclusion == "failure") | .name] | join(", "))"')
+
+          existing=$(gh issue list --repo "$REPO" --label "$LABEL" --state open \
+                       --limit 1 --json number --jq '.[0].number // empty')
+
+          if [ -z "$failed" ]; then
+            echo "All lanes green."
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$REPO" \
+                --body "✅ Nightly E2E is green again — all lanes passed in [this run]($RUN_URL). Closing."
+              gh issue close "$existing" --repo "$REPO"
+            fi
+            exit 0
+          fi
+
+          echo "Failing lanes:"; echo "$failed"
+
+          body=$(cat <<EOF
+          The nightly E2E workflow had failing lane(s).
+
+          **Run:** $RUN_URL
+          **Commit:** \`${GITHUB_SHA:0:7}\`
+
+          ### Failing lanes
+          $failed
+
+          > Lanes marked \`continue-on-error\` (the rendered-client lane) do **not** turn the run
+          > red, so the badge above may still be green. This issue is generated from the per-job
+          > conclusions precisely so those failures stay visible. Reports + screenshots for the
+          > failing lane are attached to the run as artifacts.
+
+          This issue closes itself when a later nightly comes back fully green.
+          EOF
+          )
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+            echo "Commented on existing issue #$existing."
+          else
+            # The label may not exist yet on a fresh repo; creating it is idempotent enough.
+            gh label create "$LABEL" --repo "$REPO" --color B60205 \
+              --description "A nightly E2E lane failed" 2>/dev/null || true
+            gh issue create --repo "$REPO" --label "$LABEL" \
+              --title "Nightly E2E failing — $(date -u +%Y-%m-%d)" --body "$body"
+          fi

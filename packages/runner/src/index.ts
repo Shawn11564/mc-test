@@ -20,7 +20,11 @@ export {
 } from "./drivers/DriverRegistry.js";
 export { MctpClient, MctpRpcError } from "./drivers/MctpClient.js";
 export { Session } from "./engine/Session.js";
-export { withSelectorWaits, type SelectorWaitOptions } from "./engine/SelectorWaits.js";
+export {
+  withSelectorWaits,
+  UnsatisfiedError,
+  type SelectorWaitOptions,
+} from "./engine/SelectorWaits.js";
 export {
   matchCapabilities,
   requiredKeys,
@@ -37,9 +41,21 @@ export {
   type StepCapReq,
 } from "./engine/StepExecutor.js";
 export { stepCapMatch } from "./engine/CapabilityMatch.js";
+export {
+  canonicalJson,
+  deepEqual,
+  describeItem,
+  matchItem,
+  matchProperties,
+  matchSubset,
+  type TruthItem,
+} from "./engine/TruthMatch.js";
 export { loadSteps, parseStepDocument } from "./config/loadSteps.js";
-export { loadMatrix, parseMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
+export { expandMatrix, type MatrixCase, type MatrixCoverage, type MatrixDefinition, type MatrixBinding } from "./engine/MatrixExpansion.js";
+export { loadMatrix, parseMatrix, findTarget, resolveWorld, collectUnknownKeys } from "./config/loadMatrix.js";
 export { renderJUnit, writeJUnit } from "./report/JUnitReporter.js";
+export { buildResultsReport, toResultCase, writeResults } from "./report/ResultsReporter.js";
+export type { ResultsReport, ResultCase, CaseStatus } from "./report/ResultsReporter.js";
 export {
   buildSkipMatrix,
   renderSkipMatrix,

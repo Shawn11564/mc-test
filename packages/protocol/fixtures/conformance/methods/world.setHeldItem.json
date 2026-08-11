@@ -1,0 +1,23 @@
+{
+  "method": "world.setHeldItem",
+  "description": "Select what the player holds, by item id or by hotbar slot. Nothing matching in the inventory is ELEMENT_NOT_FOUND, never a silent empty hand.",
+  "request": { "jsonrpc": "2.0", "id": 32, "method": "world.setHeldItem", "params": { "sessionId": "s_ui_01", "item": "minecraft:oak_sign", "hand": "main" } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "result": { "ok": true, "held": { "type": "minecraft:oak_sign", "count": 16, "slot": 0, "displayName": "Oak Sign" } }
+      }
+    },
+    {
+      "name": "success-empty-hand",
+      "envelope": { "jsonrpc": "2.0", "id": 32, "result": { "ok": true, "held": { "type": null, "slot": 3 } } }
+    },
+    {
+      "name": "not-in-inventory",
+      "envelope": { "jsonrpc": "2.0", "id": 32, "error": { "code": -32000, "message": "No inventory stack matches 'minecraft:oak_sign'", "data": { "reason": "ELEMENT_NOT_FOUND", "retryable": false, "details": { "item": "minecraft:oak_sign" } } } }
+    }
+  ]
+}

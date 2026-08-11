@@ -207,6 +207,8 @@ public final class FixtureManager {
                 return applyInventory(handle, args);
             case "permissions":
                 return applyPermissions(handle, args);
+            case "signEditor":
+                return applySignEditor(handle, args);
             default:
                 throw McTestException.fixtureFailed("Unknown fixture: " + fixture);
         }
@@ -283,6 +285,70 @@ public final class FixtureManager {
             world.setStorm(prevStorm);
             world.setThundering(prevThunder);
         }, null);
+    }
+
+    /**
+     * {@code signEditor} — args {@code { x, y, z, player?, world? }}: ask the SERVER to open the
+     * sign-edit screen on a player's CLIENT ({@code Player#openSign}).
+     *
+     * <p>Why this is a fixture and not a client verb: the sign editor is the one screen a test cannot
+     * reach with the GUI verbs (it has no widgets to click) and cannot reach by placing a sign either
+     * (the rendered client advertises no {@code worldInteraction} yet). But the vanilla protocol lets
+     * the SERVER open it — which is exactly a fixture's job: put the world into the state the test
+     * needs, deterministically, before the steps that exercise it. The client then really is showing a
+     * real sign editor, so the {@code screen.typeText} charTyped fallback is exercised for real.
+     *
+     * <p>Reverting is a no-op: opening a screen mutates no world state (and force-closing a screen the
+     * test may still be using would be worse than leaving it).
+     */
+    private Applied applySignEditor(String handle, Map<String, Object> args) throws McTestException {
+        Object rawX = args.get("x");
+        Object rawY = args.get("y");
+        Object rawZ = args.get("z");
+        if (!(rawX instanceof Number) || !(rawY instanceof Number) || !(rawZ instanceof Number)) {
+            throw McTestException.invalidParams("signEditor requires numeric { x, y, z }");
+        }
+        World world = resolveWorld(str(args.get("world")));
+        if (world == null) {
+            throw McTestException.fixtureFailed("World not loaded for signEditor");
+        }
+        String playerName = str(args.get("player"));
+        Player player = playerName != null
+                ? Bukkit.getPlayerExact(playerName)
+                : (Bukkit.getOnlinePlayers().isEmpty() ? null : Bukkit.getOnlinePlayers().iterator().next());
+        if (player == null) {
+            throw McTestException.fixtureFailed("No online player to open a sign editor for"
+                    + (playerName != null ? ": " + playerName : ""));
+        }
+        org.bukkit.block.Block block = world.getBlockAt(((Number) rawX).intValue(),
+                ((Number) rawY).intValue(), ((Number) rawZ).intValue());
+        org.bukkit.block.BlockState state = block.getState();
+        if (!(state instanceof org.bukkit.block.Sign)) {
+            throw McTestException.fixtureFailed("Block at " + block.getX() + "," + block.getY() + ","
+                    + block.getZ() + " is " + block.getType() + ", not a sign");
+        }
+        org.bukkit.block.Sign sign = (org.bukkit.block.Sign) state;
+        try {
+            // A waxed sign refuses edits outright; unwax so the editor is genuinely usable rather
+            // than opening a screen that silently discards everything typed into it.
+            sign.setWaxed(false);
+            sign.update(true, false);
+        } catch (Throwable pre120) {
+            // Waxing arrived in 1.20; older servers have nothing to undo.
+        }
+        try {
+            player.openSign(sign);
+        } catch (Throwable e) {
+            throw McTestException.fixtureFailed("openSign failed: " + e);
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("player", player.getName());
+        result.addProperty("x", block.getX());
+        result.addProperty("y", block.getY());
+        result.addProperty("z", block.getZ());
+        return new Applied(handle, () -> {
+            /* opening a screen mutates no world state — nothing to revert */
+        }, result);
     }
 
     @SuppressWarnings("unchecked")

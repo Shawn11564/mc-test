@@ -1,0 +1,60 @@
+# Phase-2 step-3 acceptance: a CLIENT test types onto a REAL sign screen, and the
+# typed text is confirmed by SERVER truth through a wait verb.
+#
+# The sign editor is the screen the GUI verbs cannot reach: it has no widgets to
+# click and no TextFieldWidget/EditBox to type into, so before the charTyped
+# fallback every sign-typing step was ELEMENT_NOT_FOUND (correctly — the plan-A fix
+# made the old silent pass impossible). Here:
+#   1. the OP'd client player places a sign with /setblock;
+#   2. the SERVER opens the sign editor on the client (the `signEditor` fixture →
+#      Bukkit `Player#openSign`) — the rendered client advertises no
+#      worldInteraction yet, and the vanilla protocol lets the server do this;
+#   3. `type` reaches the screen through the charTyped fallback (the step detail
+#      reports `via screenCharTyped`, so the fallback is never invisible);
+#   4. ESC closes the editor, which is when the client sends its sign update;
+#   5. `waitForBlock` polls SERVER truth until the block entity carries the typed
+#      line — a genuinely DEFERRED state (a client→server packet round-trip), which
+#      is exactly what the time verbs exist for. An assert-once `getBlock` here
+#      would race the packet.
+#
+# Requires a rendered client (driver: inprocess, GL-capable host) + the Bukkit truth
+# agent. Steps gated on clientScreens honestly SKIP on a headless target, and the
+# truth steps skip without the agent.
+name: client-sign-typing
+requires:
+  command: true
+  clientScreens: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  # A standing sign the player can see, two blocks away.
+  - command: "setblock 2 -60 0 minecraft:oak_sign[rotation=8] replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+
+  # The server opens the real sign editor on this client.
+  - fixture:
+      requires: { fixtures: true }
+      name: signEditor
+      args: { x: 2, y: -60, z: 0, player: Tester }
+  - waitForScreen: { kind: clientScreen, timeoutMs: 10000 }
+
+  # Type onto it. No selector: there is no text widget to name — the agent replays
+  # the characters on the Screen itself and reports `typedVia: screenCharTyped`.
+  - type: { text: "ChestShop", clear: true }
+
+  # ESC closes the editor; the client sends its sign update as it closes.
+  - press: { key: escape }
+
+  # SERVER truth, polled until the typed line arrives (the deferred half).
+  - waitForBlock:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      expect: minecraft:oak_sign
+      expectNbt:
+        front_text:
+          messages: ["ChestShop", "", "", ""]
+      timeoutMs: 10000
+      intervalMs: 250

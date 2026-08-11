@@ -46,6 +46,14 @@ import org.lwjgl.glfw.GLFW;
  */
 public final class Names implements ClientBridge {
 
+    /**
+     * Backspaces sent to empty a screen-owned editor for {@code clear:true}. A sign line holds at
+     * most 15 characters, so this covers the whole line with margin; extra backspaces on an empty
+     * field are harmless no-ops.
+     */
+    private static final int CLEAR_BACKSPACES = 24;
+
+
     private final Minecraft client = Minecraft.getInstance();
 
     /** Recent client chat lines (plain text), oldest→newest, captured for {@code world.waitForChat}. */
@@ -191,8 +199,48 @@ public final class Names implements ClientBridge {
                     field.keyPressed(GLFW.GLFW_KEY_ENTER, 0, 0);
                 }
             });
+            return true;
         }
         return false;
+    }
+
+    /**
+     * Screen-level fallback for {@code screen.typeText}: replays characters on the open Screen for
+     * screens that own their own text editing and expose NO {@code EditBox} — the vanilla
+     * SIGN EDITOR (it drives a {@code SelectionManager} straight from {@code Screen#charTyped}).
+     *
+     * <p>Honesty is carried by {@code charTyped}'s own boolean: we report {@code true} only when the
+     * screen actually CONSUMED the characters, so a screen that ignores text still becomes
+     * {@code ELEMENT_NOT_FOUND} in core rather than a silent {@code ok:true}. Core decides when to
+     * call this (no-selector only) — this method is pure mapping tax.
+     */
+    @Override
+    public boolean typeIntoScreen(String text, boolean clear, boolean submit) {
+        return callOnClient(() -> {
+            Screen screen = client.screen;
+            if (screen == null) {
+                return false;
+            }
+            boolean clearedAny = false;
+            if (clear) {
+                // No setText to call: a screen-owned editor is emptied the way a player would,
+                // with backspaces. Bounded by the longest line a sign can hold.
+                for (int i = 0; i < CLEAR_BACKSPACES; i++) {
+                    clearedAny |= screen.keyPressed(GLFW.GLFW_KEY_BACKSPACE, 0, 0);
+                }
+            }
+            boolean typedAny = false;
+            for (int i = 0; i < text.length(); i++) {
+                typedAny |= screen.charTyped(text.charAt(i), 0);
+            }
+            if (submit) {
+                // On a sign editor ENTER advances a line / finishes the edit.
+                screen.keyPressed(GLFW.GLFW_KEY_ENTER, 0, 0);
+            }
+            // An empty text with clear:true is satisfied by the clear alone; an empty text with no
+            // clear typed nothing, and claiming success there would be the false green again.
+            return text.isEmpty() ? (clear && clearedAny) : typedAny;
+        });
     }
 
     @Override

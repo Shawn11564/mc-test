@@ -1,0 +1,57 @@
+# Phase-2 step-3: `waitForBlock` against a genuinely DEFERRED state on a real server,
+# with no plugin and no sleep in the test.
+#
+# The deferred state is vanilla physics: sand placed in mid-air FALLS, so the block
+# only appears at the landing position several ticks later. That is the same shape as
+# a plugin writing state from a scheduled task — the case an assert-once read races.
+# `tests/e2e/time-verbs-negative.mctest.yml` is the control: the identical scenario
+# with `getBlock` instead of `waitForBlock` must go RED, which is what proves the wait
+# verb is doing real work rather than decorating a state that was already true.
+#
+# `waitForPluginState` is then exercised against the regions plugin's real state.
+# Needs `ops: [Tester]` + the Bukkit truth agent (truth steps skip honestly without it).
+name: time-verbs-deferred-state
+requires:
+  command: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 4 -60 0 minecraft:air replace"
+  # Drop the sand from 20 blocks up: ~1s of flight, so the landing is unambiguously
+  # in the future when the next step starts polling.
+  - command: "setblock 4 -40 0 minecraft:sand replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+
+  # Poll authoritative server truth until the sand has actually landed.
+  - waitForBlock:
+      requires: { worldTruth: true }
+      x: 4
+      y: -60
+      z: 0
+      expect: minecraft:sand
+      timeoutMs: 15000
+      intervalMs: 250
+
+  # …and the assert-once twin now agrees, since the state has settled.
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 4
+      y: -60
+      z: 0
+      expect: minecraft:sand
+
+  # waitForPluginState against the regions plugin's real state (the GUI creates it).
+  - command: "or"
+  - waitForScreen: { titleContains: "OpenRegions", timeoutMs: 10000 }
+  - click: "Regions"
+  - click: "Create"
+  - assertChat: { contains: "Region created", timeoutMs: 10000 }
+  - waitForPluginState:
+      requires: { pluginState: true }
+      plugin: OpenRegions
+      query: regions.exists
+      args: { name: Sanctuary }
+      expect: true
+      timeoutMs: 10000
+      intervalMs: 250

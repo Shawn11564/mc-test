@@ -2,13 +2,55 @@
  * The write-once fluent authoring API. Compiles to the SAME `NormalizedTest`
  * the YAML loader produces, so both surfaces run identically through the engine.
  */
-import type { RequiredCapabilities, Selector } from "@mc-test/protocol";
+import type {
+  BlockFace,
+  BlockPos,
+  Hand,
+  ItemExpectation,
+  MoveControls,
+  RequiredCapabilities,
+  Selector,
+  Vec3,
+} from "@mc-test/protocol";
 import type { NormalizedTest, NormalizedStep } from "../model/Step.js";
 
 export interface JoinArgs {
   host?: string;
   port?: number;
   username?: string;
+}
+
+export interface GetBlockArgs {
+  requires?: RequiredCapabilities;
+  world?: string;
+  x: number;
+  y: number;
+  z: number;
+  expect?: string;
+  expectProperties?: Record<string, string | number | boolean>;
+  expectNbt?: Record<string, unknown>;
+}
+
+export interface GetContainerArgs {
+  requires?: RequiredCapabilities;
+  world?: string;
+  x: number;
+  y: number;
+  z: number;
+  includeEmpty?: boolean;
+  expect?: string;
+  expectCount?: number;
+  expectSlots?: Record<string, ItemExpectation>;
+}
+
+export interface GetItemArgs {
+  requires?: RequiredCapabilities;
+  world?: string;
+  x: number;
+  y: number;
+  z: number;
+  slot: number;
+  expect?: ItemExpectation;
 }
 
 export interface AssertPluginStateArgs {
@@ -75,9 +117,61 @@ export class FluentTest {
   press(args: { key: string }): this {
     return this.push("press", args);
   }
+  /** Right-click a block face (`sneak: true` = the placement/ChestShop shape). */
+  useBlock(args: { pos: BlockPos; face?: BlockFace; hand?: Hand; sneak?: boolean; cursor?: Vec3 }): this {
+    return this.push("useBlock", args);
+  }
+  /** Left-click a block face: a punch by default, a full dig with `breakBlock`. */
+  attackBlock(args: { pos: BlockPos; face?: BlockFace; breakBlock?: boolean }): this {
+    return this.push("attackBlock", args);
+  }
+  /** Select what the player holds — an item id, or `{ slot }` / `{ item, hand }`. */
+  setHeldItem(args: string | { item?: string; slot?: number; hand?: Hand }): this {
+    return this.push("setHeldItem", args);
+  }
+  look(args: { yaw?: number; pitch?: number; at?: Vec3; force?: boolean }): this {
+    return this.push("look", args);
+  }
+  move(args: { controls?: MoveControls; durationMs?: number; stop?: boolean }): this {
+    return this.push("move", args);
+  }
   assertPluginState(args: AssertPluginStateArgs): this {
     const { requires, ...rest } = args;
     return this.push("assertPluginState", rest, requires);
+  }
+  /**
+   * Authoritative block read + optional assertions: `expect` (block id),
+   * `expectProperties` (blockstate subset, e.g. `{ facing: "east" }`), and
+   * `expectNbt` (block-entity subset). Server-owned → gate with
+   * `requires: { worldTruth: true }` so it honestly skips with no server agent.
+   */
+  getBlock(args: GetBlockArgs): this {
+    const { requires, ...rest } = args;
+    return this.push("getBlock", rest, requires);
+  }
+  /**
+   * Poll the authoritative block read until the assertions hold (or the budget
+   * expires). The assert-until twin of `getBlock` — for state a SUT writes a few
+   * ticks after the action that triggered it.
+   */
+  waitForBlock(args: GetBlockArgs & { timeoutMs?: number; intervalMs?: number }): this {
+    const { requires, ...rest } = args;
+    return this.push("waitForBlock", rest, requires);
+  }
+  /** Poll a plugin-state query until its predicate holds. Assert-until twin of `assertPluginState`. */
+  waitForPluginState(args: AssertPluginStateArgs & { timeoutMs?: number; intervalMs?: number }): this {
+    const { requires, ...rest } = args;
+    return this.push("waitForPluginState", rest, requires);
+  }
+  /** Read a container's contents and optionally assert per-slot item identity. */
+  getContainer(args: GetContainerArgs): this {
+    const { requires, ...rest } = args;
+    return this.push("getContainer", rest, requires);
+  }
+  /** Read one container slot and assert its identity (`components` is EXACT). */
+  getItem(args: GetItemArgs): this {
+    const { requires, ...rest } = args;
+    return this.push("getItem", rest, requires);
   }
 
   /** Materialize the normalized test (the engine's input). */

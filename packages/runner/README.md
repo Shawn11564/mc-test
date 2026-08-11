@@ -9,7 +9,7 @@ server, runs the steps over MCTP, and writes JUnit XML.
 ```bash
 mc-test run <stepfile.mctest.yml> --target <id> [--matrix mc-test.yml] [--out dir]
 mc-test list    [--matrix mc-test.yml]
-mc-test doctor  [--matrix mc-test.yml]
+mc-test doctor  [--matrix mc-test.yml] [--target <id>] [--strict]   # preflight the session's deps
 mc-test init    [--dir <dir>]          # scaffold mc-test.yml + a sample test
 mc-test init-ci [--dir <dir>] [--standalone]   # scaffold a GitHub Actions workflow (see docs/CI.md)
 mc-test clean   [--all] [--runtime] [--dry-run]   # reclaim .mc-test/run

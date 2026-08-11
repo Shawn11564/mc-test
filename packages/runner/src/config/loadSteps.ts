@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { STEP_VERBS, type RequiredCapabilities, type StepVerb } from "@mc-test/protocol";
 import type { NormalizedStep, NormalizedTest } from "../model/Step.js";
+import type { MatrixCoverage, MatrixDefinition } from "../engine/MatrixExpansion.js";
 
 const STEP_VERB_SET = new Set<string>(STEP_VERBS);
 
@@ -44,10 +45,18 @@ export function parseStepDocument(doc: unknown, sourceName: string): NormalizedT
   const name = String(d["name"] ?? sourceName);
   const requires = (d["requires"] as RequiredCapabilities | undefined) ?? {};
   const optional = d["optional"] as RequiredCapabilities | undefined;
+  const matrix = d["matrix"] as MatrixDefinition | undefined;
+  const coverage = d["coverage"] as MatrixCoverage | undefined;
+  if (coverage !== undefined && coverage !== "full" && coverage !== "pairwise") {
+    throw new Error(`${sourceName}: 'coverage' must be 'full' or 'pairwise'`);
+  }
+  if (matrix !== undefined && (!matrix || typeof matrix !== "object" || Array.isArray(matrix))) {
+    throw new Error(`${sourceName}: 'matrix' must be a mapping`);
+  }
   const rawSteps = d["steps"];
   if (!Array.isArray(rawSteps)) throw new Error(`${sourceName}: 'steps' must be a list`);
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, sourceName));
-  return { name, requires, ...(optional ? { optional } : {}), steps };
+  return { name, requires, ...(optional ? { optional } : {}), ...(matrix ? { matrix } : {}), ...(coverage ? { coverage } : {}), steps };
 }
 
 /** Load and parse a `*.mctest.yml` step file. */

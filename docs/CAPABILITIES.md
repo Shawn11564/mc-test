@@ -84,7 +84,8 @@ The capability keys are **defined in `PROTOCOL.md`** (the single source of truth
 | `clientScreens` | Read & interact with a **client-rendered Screen** (real mod GUI: `Screen`/`ClickableWidget`). | `screen.listElements`, `screen.clickElement`, `screen.get`, `screen.typeText`, `screen.pressKey` | `{ widgetRoles: string[] }` |
 | `rendering` | A live rendering pipeline exists (a real framebuffer is being drawn). Prerequisite for visual checks. | *(none directly; gates `screenshot` quality and pixel selectors)* | `{ headless: bool, display: "xvfb"｜"desktop" }` |
 | `screenshot` | Capture an image artifact of the current screen/region. | `screen.screenshot` | `{ format: string[], maxWidth: int, maxHeight: int }` |
-| `worldTruth` | Read authoritative server world state (blocks, entities). | `truth.getWorldBlock`, `truth.getEntities` | `{ dimensions: string[] }` |
+| `worldInteraction` | Act on the world **as the player**: click/attack a block face, choose the held item, aim, move. | `world.useBlock`, `world.attackBlock`, `world.setHeldItem`, `world.look`, `world.move` | `{ reach: number }` — max interaction distance honored. |
+| `worldTruth` | Read authoritative server world state: blocks (incl. blockstate properties + block-entity data), entities, and container contents. | `truth.getWorldBlock`, `truth.getEntities`, `truth.getContainer`, `truth.getItem` | `{ dimensions: string[] }` |
 | `pluginState` | Assert against authoritative plugin/mod runtime state on the server. | `truth.assertPluginState` | `{ namespaces: string[] }` — e.g. `["regions"]`. |
 | `fixtures` | Deterministically set up/tear down world & plugin state before steps. | `fixture.set` | `{ kinds: string[] }` — e.g. `["region", "block", "inventory"]`. |
 | `fakePlayers` | Spawn/despawn server-side fake players to drive multi-actor scenarios. | `player.spawnFake`, `player.despawnFake` | `{ max: int, engine: "carpet"｜"native" }` |
@@ -94,6 +95,8 @@ Notes per key:
 - **`command` vs `chat`.** `/or` requires `command`. Asserting that the response line `"Region loaded"` appeared requires `chat` (specifically inbound capture via `world.waitForChat`). The regions test therefore requires **both**.
 - **`containerGui` vs `clientScreens`.** Both back the same three read/interact primitives (`screen.listElements`, `screen.clickElement`, `screen.get`) so a selector like `screen.clickElement(label "Regions")` is *written once*; the **driver** decides whether "Regions" resolves to a container slot's display-name (`containerGui`) or a widget's `getMessage()` (`clientScreens`). A test that must run on either declares **one** of them via an `anyOf` group (see [§10](#10-declaring-required-capabilities--yaml-front-matter)). `screen.typeText`/`screen.pressKey` are only guaranteed under `clientScreens` (text fields in real Screens); container menus expose only click.
 - **`rendering` is a prerequisite, not a payload.** It asserts pixels are actually being drawn. `screenshot` without `rendering` is allowed (an agent may grab a logical/last-known buffer) but such an image is flagged `rendered:false` in the artifact manifest. Pixel/OCR selectors (`role: "pixel"`, template/OCR resolution) require **both** `rendering` and `screenshot`.
+- **Item identity is `type` + `componentsHash`, never `type` alone.** A modded item is a vanilla material plus data components, so `truth.getContainer`/`truth.getItem` carry a canonical `components` map and a digest over it. An agent that cannot see components omits the field (rather than reporting `{}`), and the runner FAILS a component assertion against such an agent — passing there would green-light every Cobblemon/ChestShop/ItemsAdder item as "equal to a plain one".
+- **`worldInteraction` is ACT, `worldTruth` is READ.** They are orthogonal and usually live on different connections: the headless bot places the sign (`worldInteraction`), the server agent confirms where it landed (`worldTruth`). A driver may advertise either alone — the pixel/OCR stub has neither, so world-interaction steps honestly skip there.
 - **`worldTruth` and `pluginState` are independent.** "Region TestRegion exists" is a `pluginState` assertion in namespace `regions`. "Block at (10,64,10) is `minecraft:beacon`" is `worldTruth`. The regions test uses `pluginState`; many tests use neither.
 - **`fixtures` and `fakePlayers` are setup capabilities**, evaluated the same way as interaction capabilities but typically required by the test *prelude* (`setup:` / `.fixture(...)`), not the assertions.
 
@@ -113,6 +116,7 @@ Legend: **✅ yes (always advertised)** · **⚠️ conditional (advertised only
 | `clientScreens` | ❌ | ✅ | ❌ | ⚠️ ¹ |
 | `rendering` | ❌ | ⚠️ ² | ❌ | ✅ |
 | `screenshot` | ❌ | ⚠️ ² | ❌ | ✅ |
+| `worldInteraction` | ✅ | ⚠️ ⁶ | ❌ | ❌ |
 | `worldTruth` | ⚠️ ³ | ⚠️ ⁴ | ✅ | ❌ |
 | `pluginState` | ❌ | ❌ | ✅ | ❌ |
 | `fixtures` | ❌ | ❌ | ✅ | ❌ |
@@ -129,6 +133,7 @@ Footnotes (conditions under which a ⚠️ becomes ✅ for that target):
 3. **`headless` + `worldTruth`** — the Mineflayer bot only has client-side world knowledge (loaded chunks around it). It advertises `worldTruth` **only when paired with the server agent in the same session** (co-driver), so authoritative reads go through `truth.getWorldBlock`/`truth.getEntities` on the server. Standalone, it does **not** advertise `worldTruth`.
 4. **`inprocess` + `worldTruth`** — same rule as headless: advertised only when co-driven by the server agent. The client agent never asserts world-truth on its own.
 5. **`server` + `fakePlayers`** — advertised when a fake-player engine is present: **Carpet** (`engine:"carpet"`) on Fabric server targets, or the native fake-player shim in the server-mod variant. A bare Bukkit/Paper server without the engine advertises everything else but **not** `fakePlayers`.
+6. **`inprocess` + `worldInteraction`** — the client agent has a real player and a real interaction manager, so the capability is *implementable* there; it is advertised only once the client agents implement the `world.*` interaction methods. Until then the in-process driver does not advertise it and world-interaction steps on a rendered-client row honestly **skip** (`unmet:["worldInteraction"]`) rather than silently doing nothing. The `headless` driver advertises it unconditionally (Mineflayer drives the real protocol packets).
 
 **Co-driver rule (multi-driver sessions).** `worldTruth`, `pluginState`, `fixtures`, and `fakePlayers` are **server-owned**. A primarily client-facing test (using `inprocess` or `headless` for UI) gets these by attaching the **`server` driver as a co-driver** in the same session. The runner does this automatically when the required set spans both UI and server-owned capabilities (see [§6](#6-the-negotiation-handshake) and [§7](#7-driver-selection-algorithm)). The advertised set the runner reasons about is the **union** of the primary driver's and the co-driver's advertisements.
 
@@ -155,8 +160,15 @@ The MCTP primitives are **the only** methods an agent exposes (PRIME DIRECTIVE: 
 | `screen.typeText` | `clientScreens` | Guaranteed only on real client text fields. |
 | `screen.pressKey` | `clientScreens` | Synthetic key press into focused widget. |
 | `screen.screenshot` | `screenshot` | Image artifact; quality flagged by `rendering`. |
+| `world.useBlock` | `worldInteraction` | Right-click one face of one block (`sneak: true` suppresses the block's use behavior → the held item places on that face). |
+| `world.attackBlock` | `worldInteraction` | Left-click one face: a punch, or a full dig with `breakBlock`. |
+| `world.setHeldItem` | `worldInteraction` | Choose the held item by id or hotbar slot; an unmatched id is `ELEMENT_NOT_FOUND`. |
+| `world.look` | `worldInteraction` | Aim by angles or at a point. |
+| `world.move` | `worldInteraction` | Hold/release the vanilla control axes (no pathfinding). |
 | `truth.getWorldBlock` | `worldTruth` | Authoritative block read. |
 | `truth.getEntities` | `worldTruth` | Authoritative entity query. |
+| `truth.getContainer` | `worldTruth` | A container block's whole inventory, each stack with its components + identity digest. |
+| `truth.getItem` | `worldTruth` | One container slot; an empty slot is an explicit `item: null`. |
 | `truth.assertPluginState` | `pluginState` | e.g. region `TestRegion` exists in namespace `regions`. |
 | `fixture.set` | `fixtures` | Deterministic pre-state. |
 | `player.spawnFake` | `fakePlayers` | Multi-actor; despawn via the paired `player.despawnFake` primitive. |

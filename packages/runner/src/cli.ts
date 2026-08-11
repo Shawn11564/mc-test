@@ -5,7 +5,12 @@
  *   mc-test run <stepfile.mctest.yml> [more.mctest.yml ...] [--target <id>|all]
  *           [--matrix mc-test.yml] [--plugin built-sut.jar] [--out dir]
  *   mc-test list   [--matrix mc-test.yml]
- *   mc-test doctor [--matrix mc-test.yml]
+ *   mc-test doctor [--matrix mc-test.yml] [--target <id>] [--strict]
+ *
+ * `doctor` is the pre-session preflight: it checks only the dependencies the SELECTED
+ * targets need and exits non-zero with a remedy for each unmet one. `run` performs the
+ * same preflight before booting (see `buildPreflight`), aborting only on failures that
+ * make a truthful result impossible and letting the rest become honest skips.
  *
  * `--plugin` overrides each target's SUT jar with a build-graph artifact (used by
  * the Gradle front door so the freshly-built jar is tested without editing the
@@ -15,11 +20,13 @@ import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
 import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
 import { runMatrix, resolveConcurrency } from "./engine/runMatrix.js";
+import { expandMatrix } from "./engine/MatrixExpansion.js";
 import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPreflight.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { findFreePort, type AgentSpec, type ModLoad } from "./provision/serverCommon.js";
@@ -39,9 +46,19 @@ import { resolveArtifact } from "./provision/sources.js";
 import { resolveJavaForMc, resolveJdk, requiredJavaMajor, javaMajorOf } from "./provision/jdk.js";
 import { resolveSpigotJar } from "./provision/buildtools.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
+import { writeResults } from "./report/ResultsReporter.js";
 import { writeHtml } from "./report/HtmlReporter.js";
 import { renderSkipMatrix } from "./report/SkipMatrix.js";
 import { collectArtifacts } from "./report/Artifacts.js";
+import {
+  deriveNeeds,
+  runPreflight,
+  defaultProbe,
+  formatReport,
+  exitCode,
+  blockingFailures,
+  type DoctorReport,
+} from "./doctor/Preflight.js";
 import type { MatrixFile, MatrixTarget } from "./model/Target.js";
 import type { TestResult } from "./model/result.js";
 
@@ -205,6 +222,17 @@ function expandHome(p: string): string {
   return p.startsWith("~") ? join(homedir(), p.slice(1)) : p;
 }
 
+/** Best-effort git commit of the project under test (cwd) — absent when not a git checkout. */
+function currentSha(): string | undefined {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] })
+      .toString("utf8")
+      .trim();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Resolve the configured **server** agents into install specs (M3). Client
  *  agents (M4) are launched by the in-process driver, not the provisioner, so
  *  they are skipped here. Unknown agent names throw with a clear message; a
@@ -249,10 +277,21 @@ function resolveClientAgentJar(target: MatrixTarget): string {
  * connects to; the rendered client itself is launched by the driver via this
  * context. (For M4's no-boot CI this path is wired but not exercised.)
  */
-function buildLaunchContext(target: MatrixTarget, clientJavaPath?: string): DriverLaunchContext {
-  const mods = (target.mods ?? [])
-    .filter((m) => m.path)
-    .map((m) => resolve(m.path!));
+async function buildLaunchContext(
+  target: MatrixTarget,
+  cacheDir: string,
+  clientJavaPath?: string,
+): Promise<DriverLaunchContext> {
+  // `clientMods` (when given) states the CLIENT's set explicitly — the shape a
+  // rendered-client-on-MODDED-SERVER row needs, where the two sides differ. Otherwise the
+  // client gets `mods` as before. Either way every entry is RESOLVED (so a `modrinth:` dep
+  // reaches the client too, rather than being silently dropped for having no local path —
+  // which would leave the client missing a dependency the SUT needs to load at all).
+  const source = target.clientMods ?? target.mods ?? [];
+  const mods: string[] = [];
+  for (const m of source) {
+    mods.push(await resolveArtifact(m, cacheDir));
+  }
   return {
     ...(target.mc ? { mc: target.mc } : {}),
     ...(target.loader ? { loader: target.loader } : {}),
@@ -412,6 +451,7 @@ function buildProvision(
       ...(world?.levelName ? { levelName: world.levelName } : {}),
       ...(target.serverProps ? { serverProps: target.serverProps } : {}),
       ...(target.ops ? { ops: target.ops } : {}),
+      ...(target.timeoutSec ? { bootTimeoutMs: target.timeoutSec * 1000 } : {}),
       eulaAccepted: prov.eulaAccepted ?? false,
       ...(target.expectMods ? { expectModIds: target.expectMods } : {}),
       shareRuntime: runOpts.shareRuntime,
@@ -480,7 +520,11 @@ function printResult(result: TestResult): void {
 }
 
 /** Build the `TargetMeta` for one matrix row (driver pin + inprocess launch ctx). */
-function targetMetaFor(target: MatrixTarget, clientJavaPath?: string): TargetMeta {
+async function targetMetaFor(
+  target: MatrixTarget,
+  cacheDir: string,
+  clientJavaPath?: string,
+): Promise<TargetMeta> {
   // An `inprocess` target launches a rendered client: thread a launch context
   // (mc/loader/display, SUT mods, client-agent jar, the MC-matched client JDK) to
   // the driver. The server is still provisioned (M3 wiring intact) for the client to
@@ -490,7 +534,9 @@ function targetMetaFor(target: MatrixTarget, clientJavaPath?: string): TargetMet
     loader: target.loader,
     mc: target.mc,
     ...(target.driver && target.driver !== "auto" ? { driverPin: target.driver } : {}),
-    ...(target.driver === "inprocess" ? { launch: buildLaunchContext(target, clientJavaPath) } : {}),
+    ...(target.driver === "inprocess"
+      ? { launch: await buildLaunchContext(target, cacheDir, clientJavaPath) }
+      : {}),
   };
 }
 
@@ -589,9 +635,54 @@ async function runOneTarget(
   const clientJavaPath =
     target.driver === "inprocess" ? await resolveClientJava(target.mc, matrix.provision ?? {}) : undefined;
   // `outDir` lets the screenshot verb persist PNGs + seed/diff baselines under it.
-  const result = await runner.runTarget(test, targetMetaFor(target, clientJavaPath), buildProvision(matrix, target, runOpts), "Tester", outDir);
+  const meta = await targetMetaFor(target, expandHome(matrix.provision?.cacheDir ?? "~/.mc-test/cache"), clientJavaPath);
+  const result = await runner.runTarget(test, meta, buildProvision(matrix, target, runOpts), "Tester", outDir);
+  if (test.matrixCase) {
+    result.matrixCase = {
+      id: test.matrixCase.id,
+      config: test.matrixCase.config,
+      coverage: test.matrixCase.coverage,
+      environmentKey: test.matrixCase.environmentKey,
+    };
+  }
   printResult(result);
   return result;
+}
+
+/** Run one environment-variant group under a single server/driver boot. */
+async function runTargetGroup(
+  runner: Runner,
+  matrix: MatrixFile,
+  target: MatrixTarget,
+  tests: ReturnType<typeof loadSteps>[],
+  outDir: string,
+  runOpts: RunOpts,
+): Promise<TestResult[]> {
+  const skipped: TestResult[] = [];
+  const runnable: ReturnType<typeof loadSteps>[] = [];
+  for (const test of tests) {
+    const pre = preflightSkip(test, target);
+    if (pre) {
+      if (test.matrixCase) pre.matrixCase = {
+        id: test.matrixCase.id,
+        config: test.matrixCase.config,
+        coverage: test.matrixCase.coverage,
+        environmentKey: test.matrixCase.environmentKey,
+      };
+      skipped.push(pre);
+      printResult(pre);
+    } else {
+      runnable.push(test);
+    }
+  }
+  if (!runnable.length) return skipped;
+  console.log(`Running ${runnable.length} matrix case(s) against target '${target.id}' (${target.loader} ${target.mc}) in one environment boot…`);
+  const clientJavaPath =
+    target.driver === "inprocess" ? await resolveClientJava(target.mc, matrix.provision ?? {}) : undefined;
+  const meta = await targetMetaFor(target, expandHome(matrix.provision?.cacheDir ?? "~/.mc-test/cache"), clientJavaPath);
+  const results = await runner.runTargetCases(runnable, meta, buildProvision(matrix, target, runOpts), "Tester", outDir);
+  for (const result of results) printResult(result);
+  return [...skipped, ...results];
 }
 
 async function cmdRun(args: Args): Promise<number> {
@@ -647,6 +738,38 @@ async function cmdRun(args: Args): Promise<number> {
     targets = targets.map((t) => ({ ...t, plugins: [{ path: pluginOverride }] }));
   }
 
+  // ── Preflight: check the session's dependencies BEFORE booting anything ──────
+  // Runs on every session so a missing JDK or a full disk fails in a second with a
+  // remedy, not four minutes into a boot with an unrelated-looking error. Only
+  // BLOCKING failures abort (nothing truthful could come of the run); an unbuilt
+  // agent jar or an absent display is left to degrade into an honest skip, which is
+  // the whole point of capability negotiation. `--strict-preflight` refuses to run a
+  // degraded session at all; `--no-preflight` opts out.
+  if (args.flags["no-preflight"] !== "true") {
+    const strictPre = args.flags["strict-preflight"] === "true";
+    const report = await buildPreflight({
+      matrixPath,
+      targets,
+      workDir: resolve(matrix.provision?.workDir ?? ".mc-test/run"),
+    });
+    const blocking = blockingFailures(report);
+    const notable = report.checks.filter((c) => c.status !== "ok");
+    if (blocking.length > 0 || (strictPre && notable.some((c) => c.status === "fail"))) {
+      console.error(`\nPreflight failed — not booting:\n`);
+      console.error(formatReport(report, { strict: strictPre }));
+      console.error(`\n(re-check with \`mc-test doctor\`; bypass with --no-preflight)`);
+      return 2;
+    }
+    if (notable.length > 0) {
+      console.log("Preflight warnings (the affected steps will honestly skip):");
+      for (const c of notable) {
+        console.log(`  ${c.status === "warn" ? "!" : "✗"} ${c.label}: ${c.detail}`);
+        if (c.remedy) console.log(`      → ${c.remedy}`);
+      }
+      console.log("");
+    }
+  }
+
   const tests = stepFiles.map((f) => loadSteps(resolve(f)));
   const outDir = resolve(args.flags["out"] ?? "mc-test-report");
   const runner = new Runner(defaultRegistry());
@@ -697,20 +820,41 @@ async function cmdRun(args: Args): Promise<number> {
     }
     jobs = targets.map((target, i) => ({ target, test: tests[i]! }));
   } else {
-    jobs = targets.flatMap((target) => tests.map((test) => ({ target, test })));
+    jobs = targets.flatMap((target) => tests.flatMap((test) => {
+      const cases = expandMatrix(test);
+      return (cases.length ? cases : [{ test }]).map(({ test: concrete }) => ({ target, test: concrete }));
+    }));
   }
   const concurrency = resolveConcurrency(args.flags["concurrency"], jobs.length);
   if (concurrency > 1) {
     console.log(`Running ${jobs.length} (target × test) job(s) with concurrency ${concurrency}.`);
   }
-  const results: TestResult[] = await runMatrix(jobs.length, concurrency, (i) => {
-    const { target, test } = jobs[i]!;
-    return runOneTarget(runner, matrix, target, test, outDir, runOpts);
+  // Environment-bound dimensions choose a provisioned variant. All otherwise
+  // identical cases share one boot; an unbound/ordinary test remains a singleton.
+  const groups = new Map<string, { target: MatrixTarget; tests: ReturnType<typeof loadSteps>[] }>();
+  for (const [i, job] of jobs.entries()) {
+    const env = job.test.matrixCase?.environmentKey;
+    const key = env === undefined ? `${job.target.id}\u0000single\u0000${i}` : `${job.target.id}\u0000${env}`;
+    const group = groups.get(key);
+    if (group) group.tests.push(job.test);
+    else groups.set(key, { target: job.target, tests: [job.test] });
+  }
+  const groupedResults = await runMatrix(groups.size, concurrency, (i) => {
+    const group = [...groups.values()][i]!;
+    return group.tests.length === 1
+      ? runOneTarget(runner, matrix, group.target, group.tests[0]!, outDir, runOpts).then((result) => [result])
+      : runTargetGroup(runner, matrix, group.target, group.tests, outDir, runOpts);
   });
+  const results = groupedResults.flat();
 
-  // One aggregated JUnit (one <testsuite> per target) + a human HTML report + artifacts.
+  // One aggregated JUnit (one <testsuite> per target) + a typed results.json (spec §6:
+  // commandcenter/40-testing-loop.md — the structured artifact other tooling parses
+  // instead of scraping XML/console text) + a human HTML report + artifacts.
   const junitPath = join(outDir, "junit", "results.xml");
   writeJUnit(junitPath, results);
+  const resultsJsonPath = join(outDir, "results.json");
+  const targetIds = [...new Set(targets.map((t) => t.id))].join(",");
+  writeResults(resultsJsonPath, results, targetIds, currentSha());
   const htmlPath = join(outDir, "report.html");
   writeHtml(htmlPath, results);
   let artifactCount = 0;
@@ -723,8 +867,9 @@ async function cmdRun(args: Args): Promise<number> {
   if (results.length > 1) {
     console.log(`\n${renderSkipMatrix(results)}`);
   }
-  console.log(`\nJUnit: ${junitPath}`);
-  console.log(`HTML:  ${htmlPath}`);
+  console.log(`\nJUnit:   ${junitPath}`);
+  console.log(`Results: ${resultsJsonPath}`);
+  console.log(`HTML:    ${htmlPath}`);
   if (artifactCount) console.log(`Artifacts: ${join(outDir, "artifacts")}`);
 
   const failOnSkip = args.flags["fail-on-skip"] === "true";
@@ -1075,66 +1220,112 @@ function cmdClean(args: Args): number {
   return 0;
 }
 
-/** `mc-test doctor` — environment + config readiness checks. */
-async function cmdDoctor(args: Args): Promise<number> {
-  console.log("mc-test doctor:");
-  let hardFail = false;
-  const line = (ok: boolean | "warn", label: string, detail = ""): void => {
-    const mark = ok === true ? "✓" : ok === "warn" ? "!" : "✗";
-    console.log(`  ${mark} ${label}${detail ? `: ${detail}` : ""}`);
-    if (ok === false) hardFail = true;
+/**
+ * Resolve one agent name to its built-jar path for preflight, honoring a target's
+ * `agentSources` override. Mirrors `resolveAgents`/`resolveClientAgent` but never
+ * throws on an unknown name — the matrix loader owns that error.
+ */
+function preflightAgentJar(
+  target: MatrixTarget,
+  name: string,
+): { jarPath: string; kind: "server" | "client" } | null {
+  const known = KNOWN_AGENTS[name];
+  const knownClient = KNOWN_CLIENT_AGENTS[name];
+  const builtIn = known?.jarPath ?? knownClient?.jarPath;
+  if (!builtIn) return null;
+  const override = target.agentSources?.[name]?.path;
+  return {
+    // A user-supplied override is CWD-relative; the built-in path is monorepo-relative.
+    jarPath: override ? resolve(override) : resolve(REPO_ROOT, builtIn),
+    kind: known ? "server" : "client",
   };
+}
 
-  line(true, "node", process.version);
+/**
+ * Build the preflight report for a set of targets. Shared by `doctor` and the
+ * pre-session gate in `run` so both judge the environment by exactly the same
+ * rules (and only against what the SELECTED targets actually need).
+ */
+async function buildPreflight(opts: {
+  matrixPath: string;
+  targets: MatrixTarget[];
+  workDir: string;
+  matrixError?: string;
+}): Promise<DoctorReport> {
+  const needs = deriveNeeds(opts.targets, preflightAgentJar);
+  return runPreflight({
+    probe: defaultProbe(),
+    needs,
+    targets: opts.targets,
+    matrixPath: opts.matrixPath,
+    matrixError: opts.matrixError,
+    workDir: opts.workDir,
+  });
+}
 
-  const java = await checkCommand("java", ["-version"]);
-  line(java, "java", java ? "present" : "MISSING — needed to boot a server");
+/**
+ * `mc-test doctor` — the preflight you run before a session. Checks only what the
+ * selected targets need (JDK, disk, agent jars, Gradle when something must be
+ * built, a display or the pinned Docker image for rendered rows) and exits
+ * NON-ZERO with a remedy line for every unmet dependency. `--strict` also fails on
+ * warnings; `--target` narrows the preflight to the rows you intend to run.
+ */
+async function cmdDoctor(args: Args): Promise<number> {
+  const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
+  const strict = args.flags["strict"] === "true";
 
+  // Load the matrix defensively: a parse error is itself a reported check rather
+  // than a stack trace, so doctor still prints the host-level findings.
+  let matrix: MatrixFile | undefined;
+  let matrixError: string | undefined;
+  if (existsSync(matrixPath)) {
+    try {
+      matrix = loadMatrix(matrixPath);
+    } catch (err) {
+      matrixError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  let targets = matrix?.targets ?? [];
+  const sel = args.flags["target"];
+  if (sel && sel !== "all" && matrix) {
+    const ids = sel.split(",").map((s) => s.trim()).filter(Boolean);
+    const picked: MatrixTarget[] = [];
+    for (const id of ids) {
+      const t = findTarget(matrix, id);
+      if (!t) {
+        console.error(`target '${id}' not found in ${matrixPath}`);
+        return 2;
+      }
+      picked.push(t);
+    }
+    targets = picked;
+  }
+
+  const workDir = resolve(matrix?.provision?.workDir ?? ".mc-test/run");
+  const report = await buildPreflight({ matrixPath, targets, workDir, matrixError });
+
+  console.log(
+    `mc-test doctor — preflight for ${report.targetCount} target(s)${sel && sel !== "all" ? ` (--target ${sel})` : ""}\n`,
+  );
+  console.log(formatReport(report, { strict }));
+
+  // Network/ports are host conditions rather than declared dependencies, so they
+  // stay advisory (an offline run against a warm cache is perfectly valid).
   let net = false;
   try {
     net = (await fetch("https://fill.papermc.io/v3/projects/paper")).ok;
   } catch {
     net = false;
   }
-  line(net ? true : "warn", "PaperMC fill API", net ? "reachable" : "unreachable (offline? server jars can't download)");
-
+  if (!net) console.log("\n  ! PaperMC fill API unreachable (offline? cached server jars still work)");
   try {
-    const p = await findFreePort("127.0.0.1", 25700, 25899);
-    line(true, "ports", `free port available (e.g. ${p})`);
+    await findFreePort("127.0.0.1", 25700, 25899);
   } catch {
-    line("warn", "ports", "no free port in 25700–25899");
+    console.log("  ! no free port in 25700–25899");
   }
 
-  const matrixPath = resolve(args.flags["matrix"] ?? "mc-test.yml");
-  if (existsSync(matrixPath)) {
-    try {
-      const matrix = loadMatrix(matrixPath);
-      line(true, "matrix", `${matrixPath} (${matrix.targets.length} target(s))`);
-    } catch (err) {
-      line(false, "matrix", `${matrixPath} — parse error: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  } else {
-    line("warn", "matrix", `${matrixPath} not found (run \`mc-test init\`)`);
-  }
-
-  const agentJar = resolve(REPO_ROOT, KNOWN_AGENTS["server-bukkit"]!.jarPath);
-  line(
-    existsSync(agentJar) ? true : "warn",
-    "server-bukkit agent jar",
-    existsSync(agentJar) ? "built" : "not built (assertPluginState/fixtures will skip)",
-  );
-
-  return hardFail ? 1 : 0;
-}
-
-function checkCommand(cmd: string, cmdArgs: string[]): Promise<boolean> {
-  return new Promise((resolveCheck) => {
-    import("node:child_process").then(({ spawn }) => {
-      const p = spawn(cmd, cmdArgs, { stdio: "ignore" });
-      p.once("error", () => resolveCheck(false));
-      p.once("exit", (code) => resolveCheck(code === 0));
-    });
-  });
+  return exitCode(report, { strict });
 }
 
 /** Top-level usage, printed on `--help`/`-h`/`help`/no-command and on an unknown command. */
@@ -1151,8 +1342,13 @@ commands:
         [--keep]                        retain every env dir under .mc-test/run (inspect)
         [--reuse]                       rapid dev: reuse+reset one env dir per target
         [--no-share]                    don't share libraries/cache/versions across runs
+        [--no-preflight]                skip the pre-session dependency check
+        [--strict-preflight]            refuse to run a degraded session (any unmet dep)
   list                                  list targets in the matrix [--matrix mc-test.yml]
-  doctor                                check Java, ports, downloads, matrix [--matrix mc-test.yml]
+  doctor                                preflight the deps your matrix needs — JDK, disk,
+                                        agent jars, Gradle, display/Docker rendered image.
+                                        Exits non-zero per unmet dependency, with a fix.
+        [--matrix mc-test.yml] [--target <id>|<id,id,...>] [--strict]
   clean                                 reclaim .mc-test/run env dirs [--all] [--runtime] [--dry-run]
   init                                  scaffold mc-test.yml + a sample test [--dir <dir>]
   init-ci                               scaffold a GitHub Actions workflow that runs your

@@ -3,6 +3,7 @@ package io.mctest.agent.core.client;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonArray;
@@ -212,6 +213,91 @@ class ScreenConformanceTest {
         assertTrue(result.get("ok").getAsBoolean());
         assertFalse(result.get("screenChanged").getAsBoolean());
         assertEquals("TestRegion", bridge.lastTypedText);
+        // A real text field must be reported as such — the fallback path is never claimed here.
+        assertEquals("textField", result.get("typedVia").getAsString());
+    }
+
+    /**
+     * SIGN-EDITOR TYPING (spec §9 phase 2). A screen with no text-input widget that OWNS its editing
+     * (the vanilla sign editor drives a SelectionManager from {@code Screen#charTyped}) must be
+     * typeable via the screen-level fallback — and the result must SAY so, so a report can never hide
+     * that the text went in through the fallback rather than a real field.
+     */
+    @Test
+    void typeTextFallsBackToScreenCharTypedOnASignEditor() throws Exception {
+        String session = createClientSession();
+        bridge.hasTextField = false;        // no TextFieldWidget/EditBox anywhere …
+        bridge.screenConsumesChars = true;  // … but the screen consumes characters (sign editor)
+
+        JsonObject p = new JsonObject();
+        p.addProperty("text", "ChestShop");
+        p.addProperty("clear", true);
+        p.addProperty("submit", true);
+        JsonObject result = call("screen.typeText", withSession(session, p)).getAsJsonObject("result");
+        assertTrue(result.get("ok").getAsBoolean());
+        assertEquals("screenCharTyped", result.get("typedVia").getAsString());
+        assertEquals("ChestShop", bridge.lastScreenTypedText);
+        assertTrue(bridge.lastScreenClear);
+        assertTrue(bridge.lastScreenSubmit);
+    }
+
+    /**
+     * The fallback must not become a new false green: a screen that IGNORES characters is still not
+     * typeable, so the step fails ELEMENT_NOT_FOUND exactly as before the fallback existed.
+     */
+    @Test
+    void typeTextStillFailsWhenTheScreenIgnoresCharacters() throws Exception {
+        String session = createClientSession();
+        bridge.hasTextField = false;
+        bridge.screenConsumesChars = false; // the screen swallows nothing
+
+        JsonObject p = new JsonObject();
+        p.addProperty("text", "ChestShop");
+        JsonObject error = call("screen.typeText", withSession(session, p)).getAsJsonObject("error");
+        assertEquals(Errors.ELEMENT_NOT_FOUND, error.get("code").getAsInt());
+        assertNull(bridge.lastScreenTypedText);
+    }
+
+    /**
+     * With an explicit selector the author named ONE element. If that element is not a text input,
+     * typing into the screen instead would answer a different question — so the fallback is NOT
+     * attempted and the step fails, even on a screen that would have consumed the characters.
+     */
+    @Test
+    void typeTextWithASelectorNeverFallsBackToTheScreen() throws Exception {
+        String session = createClientSession();
+        bridge.screenConsumesChars = true; // the screen WOULD consume …
+
+        JsonObject p = new JsonObject();
+        JsonObject sel = new JsonObject();
+        sel.addProperty("role", "button"); // … but this names the Regions BUTTON, not a text field
+        p.add("selector", sel);
+        p.addProperty("text", "ChestShop");
+        JsonObject error = call("screen.typeText", withSession(session, p)).getAsJsonObject("error");
+        assertEquals(Errors.ELEMENT_NOT_FOUND, error.get("code").getAsInt());
+        assertNull(bridge.lastScreenTypedText);
+    }
+
+    /**
+     * Regression for the typeText false-green (ground truth §2 / spec §9 phase 1): a screen with no
+     * {@code TextFieldWidget}/{@code EditBox} at all (e.g. a sign-edit screen) must FAIL the step with
+     * ELEMENT_NOT_FOUND, never silently report {@code ok: true} with the text swallowed.
+     */
+    @Test
+    void typeTextFailsWhenScreenHasNoTextField() throws Exception {
+        String session = createClientSession();
+        bridge.hasTextField = false; // simulate a screen with no text-input widget (sign editor)
+
+        // No selector — "type into the focused field" — but there is no focusable text field on this
+        // screen, so the bridge cannot find one to type into.
+        JsonObject p = new JsonObject();
+        p.addProperty("text", "TestRegion");
+        JsonObject error = call("screen.typeText", withSession(session, p)).getAsJsonObject("error");
+        assertEquals(Errors.ELEMENT_NOT_FOUND, error.get("code").getAsInt());
+        assertEquals(Errors.REASON_ELEMENT_NOT_FOUND,
+                error.getAsJsonObject("data").get("reason").getAsString());
+        // The text must never have reached the bridge as a recorded success — no false green.
+        assertFalse("TestRegion".equals(bridge.lastTypedText));
     }
 
     @Test
@@ -530,6 +616,20 @@ class ScreenConformanceTest {
         boolean closed;
         String joinedHost;
         String joinedUsername;
+        /**
+         * Flips off the fake's only text-input widget to simulate a screen with no
+         * {@code TextFieldWidget}/{@code EditBox} (e.g. a sign-edit screen) — the false-green regression case.
+         */
+        boolean hasTextField = true;
+        /**
+         * Whether this screen OWNS its text editing and consumes {@code Screen#charTyped} — true for a
+         * vanilla sign editor, false for a screen that simply ignores typing. Drives the
+         * {@code typeIntoScreen} fallback so both outcomes (typed / still not typeable) are covered.
+         */
+        boolean screenConsumesChars = false;
+        String lastScreenTypedText;
+        boolean lastScreenClear;
+        boolean lastScreenSubmit;
 
         @Override
         public ScreenSnapshot snapshot() {
@@ -544,9 +644,11 @@ class ScreenConformanceTest {
             button.testId = "regions:root:regions";
             snap.elements.add(button);
 
-            // An input field (role=input) for typeText resolution.
-            Element input = new Element("regions:root:search", "input", "");
-            snap.elements.add(input);
+            if (hasTextField) {
+                // An input field (role=input) for typeText resolution.
+                Element input = new Element("regions:root:search", "input", "");
+                snap.elements.add(input);
+            }
 
             // Two list entries so role=listItem matches >1 (ambiguity control).
             Element entry1 = new Element("regions:entry:TestRegion", "listItem", "TestRegion");
@@ -566,8 +668,29 @@ class ScreenConformanceTest {
 
         @Override
         public boolean typeText(String elementId, String text, boolean clear, boolean submit) {
+            // Mirrors the real bridges: a resolved elementId must name the actual text-input widget, and
+            // an absent elementId ("type into the focused field") only succeeds if one is focused/present.
+            boolean isTextField = elementId != null
+                    ? "regions:root:search".equals(elementId)
+                    : hasTextField;
+            if (!isTextField) {
+                return false;
+            }
             this.lastTypedText = text;
-            return false;
+            return true;
+        }
+
+        @Override
+        public boolean typeIntoScreen(String text, boolean clear, boolean submit) {
+            // Mirrors the real shims: the verdict is whether the SCREEN consumed the characters
+            // (charTyped's own boolean), not merely that we tried.
+            if (!screenConsumesChars) {
+                return false;
+            }
+            this.lastScreenTypedText = text;
+            this.lastScreenClear = clear;
+            this.lastScreenSubmit = submit;
+            return text.isEmpty() ? clear : true;
         }
 
         @Override

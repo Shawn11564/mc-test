@@ -13,6 +13,7 @@ import {
   JsonRpcVersion,
   JsonRpcId,
   Vec3,
+  BlockPos,
   JsonValue,
   JsonObject,
   Obj,
@@ -214,12 +215,61 @@ export const Entity = Obj(
 );
 export type Entity = Static<typeof Entity>;
 
+/**
+ * One item stack as authoritative server truth (`truth.getContainer` /
+ * `truth.getItem`).
+ *
+ * `type` + `count` are NOT an identity: two stacks of the same material differ by
+ * their **data components** (custom name, lore, enchantments, custom model data,
+ * mod-defined custom data). A modded item — a Cobblemon Poké Ball, a ChestShop
+ * sign item, an ItemsAdder block — is a vanilla material plus components, so a
+ * test that compares only `type` would call it equal to a plain one. `components`
+ * carries the agent's canonical view of that data and `componentsHash` is its
+ * stable digest: **item identity is `type` + `componentsHash`**, and comparing
+ * hashes is how "this item only equals itself" is asserted.
+ */
+export const ItemStack = Obj(
+  {
+    type: Type.String(),
+    count: Type.Integer(),
+    /** Slot index within the container this stack was read from. */
+    slot: Type.Optional(Type.Integer()),
+    /** Color-stripped display name, when the stack has one. */
+    displayName: Type.Optional(Type.String()),
+    /** Untouched runtime display name (for reports). */
+    displayNameRaw: Type.Optional(Type.String()),
+    lore: Type.Optional(Type.Array(Type.String())),
+    /**
+     * The stack's data components, canonicalized by the agent (keys sorted, values
+     * reduced to JSON scalars/arrays/objects). Absent means the agent cannot see
+     * components at all — never "this stack has none"; an empty object means it
+     * genuinely has none.
+     */
+    components: Type.Optional(JsonObject),
+    /**
+     * Stable digest over `type` + the canonical `components` form. Equal hashes ⇒
+     * the agent saw identical stacks; different hashes ⇒ genuinely different items.
+     */
+    componentsHash: Type.Optional(Type.String()),
+  },
+  { description: "Authoritative item stack (identity = type + componentsHash)." },
+);
+export type ItemStack = Static<typeof ItemStack>;
+
 /** Authoritative block state returned by `truth.getWorldBlock`. */
 export const Block = Obj(
   {
     type: Type.String(),
     properties: Type.Optional(JsonObject),
+    /**
+     * The block entity's data as a JSON string, keyed by the vanilla NBT names
+     * where the agent's API exposes the value (e.g. `front_text.messages`,
+     * `CustomName`, `Items`). Absent = this block has no block entity, or the
+     * agent cannot read it — never "the block entity is empty".
+     */
     nbtJson: Type.Optional(Type.String()),
+    /** The same block-entity data pre-parsed, so tests need not parse `nbtJson`. */
+    nbt: Type.Optional(JsonObject),
     biome: Type.Optional(Type.String()),
   },
   { description: "Authoritative block state." },
@@ -283,6 +333,58 @@ const ScreenChange = Type.Union([
   Type.Literal("closed"),
   Type.Literal("replaced"),
 ]);
+
+/** The six faces of a block, as Minecraft names them. */
+export const BlockFace = Type.Union(
+  [
+    Type.Literal("north"),
+    Type.Literal("south"),
+    Type.Literal("east"),
+    Type.Literal("west"),
+    Type.Literal("up"),
+    Type.Literal("down"),
+  ],
+  { description: "Block face (interaction side)." },
+);
+export type BlockFace = Static<typeof BlockFace>;
+
+/** Which hand an interaction uses. */
+export const Hand = Type.Union([Type.Literal("main"), Type.Literal("off")], {
+  description: "Interaction hand.",
+});
+export type Hand = Static<typeof Hand>;
+
+/**
+ * A held-item snapshot returned by the interaction verbs — `type: null` means an
+ * empty hand (an honest "nothing held", never an omitted field the caller could
+ * misread as "unchanged").
+ */
+export const HeldItem = Obj(
+  {
+    type: Type.Union([Type.String(), Type.Null()]),
+    count: Type.Optional(Type.Integer()),
+    /** Hotbar index (0–8) the item is selected from, for the main hand. */
+    slot: Type.Optional(Type.Integer()),
+    displayName: Type.Optional(Type.String()),
+  },
+  { description: "Held-item snapshot (type null = empty hand)." },
+);
+export type HeldItem = Static<typeof HeldItem>;
+
+/** The movement controls a `world.move` call may hold (vanilla input axes). */
+export const MoveControls = Obj(
+  {
+    forward: Type.Optional(Type.Boolean()),
+    back: Type.Optional(Type.Boolean()),
+    left: Type.Optional(Type.Boolean()),
+    right: Type.Optional(Type.Boolean()),
+    jump: Type.Optional(Type.Boolean()),
+    sprint: Type.Optional(Type.Boolean()),
+    sneak: Type.Optional(Type.Boolean()),
+  },
+  { description: "Primitive movement control states." },
+);
+export type MoveControls = Static<typeof MoveControls>;
 
 // ===========================================================================
 // 4. Generic envelopes (for the top-level schema files)
@@ -484,6 +586,120 @@ export type WorldWaitForChatParams = Static<typeof WorldWaitForChatParams>;
 export const WorldWaitForChatResult = ResultObject({ chat: ChatLine });
 export type WorldWaitForChatResult = Static<typeof WorldWaitForChatResult>;
 
+// --- world.* interaction (cap `worldInteraction`) ---------------------------
+//
+// The five primitives that let a test ACT on the world as the player, rather
+// than only through GUIs and chat. Each performs exactly ONE observable action;
+// waiting/retrying/asserting stays in the runner (PROTOCOL.md §7.2).
+
+export const WorldUseBlockParams = StatefulParams({
+  /** The block to interact with (its own grid cell, NOT the neighbour). */
+  pos: BlockPos,
+  /** Which face is clicked. Default `up`. */
+  face: Type.Optional(BlockFace),
+  /** Default `main`. */
+  hand: Type.Optional(Hand),
+  /**
+   * Hold sneak for the interaction. Sneaking SUPPRESSES a block's own use
+   * behavior (a chest does not open) and is what makes a held block/item place
+   * against the clicked face — the canonical placement-test shape.
+   */
+  sneak: Type.Optional(Type.Boolean()),
+  /**
+   * Where on the face the cursor lands, in face-local 0..1 coordinates.
+   * Omitted → the face centre.
+   */
+  cursor: Type.Optional(Vec3),
+});
+export type WorldUseBlockParams = Static<typeof WorldUseBlockParams>;
+
+export const WorldUseBlockResult = ResultObject({
+  /** The block that was clicked, as the agent saw it at click time. */
+  block: Type.Optional(Block),
+  face: Type.Optional(BlockFace),
+  sneak: Type.Optional(Type.Boolean()),
+  held: Type.Optional(HeldItem),
+});
+export type WorldUseBlockResult = Static<typeof WorldUseBlockResult>;
+
+export const WorldAttackBlockParams = StatefulParams({
+  pos: BlockPos,
+  /** Which face is struck. Default `up`. */
+  face: Type.Optional(BlockFace),
+  /**
+   * `false` (default) = one left-click "punch" (start + abort digging), the
+   * primitive a protection/anti-grief SUT reacts to. `true` = dig the block to
+   * completion. NOTE: in creative mode a punch breaks instantly — that is
+   * vanilla behavior, not an agent liberty.
+   */
+  breakBlock: Type.Optional(Type.Boolean()),
+});
+export type WorldAttackBlockParams = Static<typeof WorldAttackBlockParams>;
+
+export const WorldAttackBlockResult = ResultObject({
+  block: Type.Optional(Block),
+  face: Type.Optional(BlockFace),
+  /** Whether the block was actually removed (agent-observed). */
+  broken: Type.Optional(Type.Boolean()),
+});
+export type WorldAttackBlockResult = Static<typeof WorldAttackBlockResult>;
+
+export const WorldSetHeldItemParams = StatefulParams({
+  /**
+   * Namespaced item id to hold, e.g. `minecraft:oak_sign`. The agent selects a
+   * matching stack from the player's inventory; nothing matching →
+   * `ELEMENT_NOT_FOUND` (never a silent empty hand).
+   */
+  item: Type.Optional(Type.String()),
+  /** Hotbar index 0–8 to select instead of resolving by item id. */
+  slot: Type.Optional(Type.Integer({ minimum: 0, maximum: 8 })),
+  /** Default `main`. */
+  hand: Type.Optional(Hand),
+});
+export type WorldSetHeldItemParams = Static<typeof WorldSetHeldItemParams>;
+
+export const WorldSetHeldItemResult = ResultObject({ held: HeldItem });
+export type WorldSetHeldItemResult = Static<typeof WorldSetHeldItemResult>;
+
+export const WorldLookParams = StatefulParams({
+  /** Absolute yaw in degrees (Minecraft convention). */
+  yaw: Type.Optional(Type.Number()),
+  /** Absolute pitch in degrees (−90 up … +90 down). */
+  pitch: Type.Optional(Type.Number()),
+  /** Look at a world-space point instead of explicit angles. */
+  at: Type.Optional(Vec3),
+  /** Snap instantly rather than rotating over several ticks. */
+  force: Type.Optional(Type.Boolean()),
+});
+export type WorldLookParams = Static<typeof WorldLookParams>;
+
+export const WorldLookResult = ResultObject({
+  yaw: Type.Optional(Type.Number()),
+  pitch: Type.Optional(Type.Number()),
+  position: Type.Optional(Vec3),
+});
+export type WorldLookResult = Static<typeof WorldLookResult>;
+
+export const WorldMoveParams = StatefulParams({
+  /** Control states to apply. Omitted keys are left untouched. */
+  controls: Type.Optional(MoveControls),
+  /**
+   * Hold the given controls this long, then release exactly the ones this call
+   * set. Omitted → the controls stay held until a later `world.move`.
+   */
+  durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+  /** Release every control state (overrides `controls`). */
+  stop: Type.Optional(Type.Boolean()),
+});
+export type WorldMoveParams = Static<typeof WorldMoveParams>;
+
+export const WorldMoveResult = ResultObject({
+  position: Type.Optional(Vec3),
+  /** Control states still held when the call returned. */
+  held: Type.Optional(Type.Array(Type.String())),
+});
+export type WorldMoveResult = Static<typeof WorldMoveResult>;
+
 // --- screen.* --------------------------------------------------------------
 
 export const ScreenGetParams = StatefulParams({
@@ -525,7 +741,18 @@ export const ScreenTypeTextParams = StatefulParams({
 });
 export type ScreenTypeTextParams = Static<typeof ScreenTypeTextParams>;
 
-export const ScreenTypeTextResult = ResultObject({});
+export const ScreenTypeTextResult = ResultObject({
+  /**
+   * Which input path actually consumed the text: `textField` (a real
+   * `TextFieldWidget`/`EditBox`) or `screenCharTyped` (the screen-level fallback for
+   * screens that own their editing and expose no text widget — the vanilla sign
+   * editor). Reported so a run can never hide that a sign was typed through the
+   * fallback; a `false` from BOTH paths is still `ELEMENT_NOT_FOUND`, never `ok`.
+   */
+  typedVia: Type.Optional(
+    Type.Union([Type.Literal("textField"), Type.Literal("screenCharTyped")]),
+  ),
+});
 export type ScreenTypeTextResult = Static<typeof ScreenTypeTextResult>;
 
 export const ScreenPressKeyParams = StatefulParams({
@@ -609,6 +836,48 @@ export const TruthGetEntitiesResult = ResultObject({
   entities: Type.Array(Entity),
 });
 export type TruthGetEntitiesResult = Static<typeof TruthGetEntitiesResult>;
+
+export const TruthGetContainerParams = StatefulParams({
+  world: Type.Optional(Type.String()),
+  x: Type.Integer(),
+  y: Type.Integer(),
+  z: Type.Integer(),
+  /** Include empty slots as `null` entries (default: only occupied slots). */
+  includeEmpty: Type.Optional(Type.Boolean()),
+});
+export type TruthGetContainerParams = Static<typeof TruthGetContainerParams>;
+
+export const TruthGetContainerResult = ResultObject({
+  container: Obj({
+    /** The container block's id, e.g. `minecraft:chest`. */
+    type: Type.String(),
+    /** Custom container name, when set. */
+    title: Type.Optional(Type.String()),
+    /** Total slot count of the inventory (including empty ones). */
+    size: Type.Integer(),
+    /** Number of occupied slots. */
+    itemCount: Type.Integer(),
+    slots: Type.Array(ItemStack),
+  }),
+});
+export type TruthGetContainerResult = Static<typeof TruthGetContainerResult>;
+
+export const TruthGetItemParams = StatefulParams({
+  world: Type.Optional(Type.String()),
+  x: Type.Integer(),
+  y: Type.Integer(),
+  z: Type.Integer(),
+  /** Slot index within the container's inventory. */
+  slot: Type.Integer({ minimum: 0 }),
+});
+export type TruthGetItemParams = Static<typeof TruthGetItemParams>;
+
+export const TruthGetItemResult = ResultObject({
+  slot: Type.Integer(),
+  /** `null` for an empty slot — an explicit "nothing here", never an omitted field. */
+  item: Type.Union([ItemStack, Type.Null()]),
+});
+export type TruthGetItemResult = Static<typeof TruthGetItemResult>;
 
 /** Predicate the agent evaluates against a plugin-state value (one comparator). */
 export const ExpectPredicate = Obj({

@@ -1,0 +1,114 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: truth.getItem",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "slot",
+        "item"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "slot": {
+          "type": "integer"
+        },
+        "item": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "description": "Authoritative item stack (identity = type + componentsHash).",
+              "type": "object",
+              "required": [
+                "type",
+                "count"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "slot": {
+                  "type": "integer"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "displayNameRaw": {
+                  "type": "string"
+                },
+                "lore": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "components": {
+                  "description": "Free-form by-name JSON object.",
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {}
+                  }
+                },
+                "componentsHash": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -29,6 +29,12 @@ export const METHOD_NAMES = [
   "world.sendChat",
   "world.runCommand",
   "world.waitForChat",
+  // world interaction (acting as the player)
+  "world.useBlock",
+  "world.attackBlock",
+  "world.setHeldItem",
+  "world.look",
+  "world.move",
   // screen / GUI primitives
   "screen.get",
   "screen.listElements",
@@ -41,6 +47,8 @@ export const METHOD_NAMES = [
   // world-truth
   "truth.getWorldBlock",
   "truth.getEntities",
+  "truth.getContainer",
+  "truth.getItem",
   "truth.assertPluginState",
   // fixtures & doubles
   "fixture.set",
@@ -75,6 +83,11 @@ export interface MctpMethods {
   "world.sendChat": { params: M.WorldSendChatParams; result: M.WorldSendChatResult };
   "world.runCommand": { params: M.WorldRunCommandParams; result: M.WorldRunCommandResult };
   "world.waitForChat": { params: M.WorldWaitForChatParams; result: M.WorldWaitForChatResult };
+  "world.useBlock": { params: M.WorldUseBlockParams; result: M.WorldUseBlockResult };
+  "world.attackBlock": { params: M.WorldAttackBlockParams; result: M.WorldAttackBlockResult };
+  "world.setHeldItem": { params: M.WorldSetHeldItemParams; result: M.WorldSetHeldItemResult };
+  "world.look": { params: M.WorldLookParams; result: M.WorldLookResult };
+  "world.move": { params: M.WorldMoveParams; result: M.WorldMoveResult };
   "screen.get": { params: M.ScreenGetParams; result: M.ScreenGetResult };
   "screen.listElements": { params: M.ScreenListElementsParams; result: M.ScreenListElementsResult };
   "screen.clickElement": { params: M.ScreenClickElementParams; result: M.ScreenClickElementResult };
@@ -88,6 +101,8 @@ export interface MctpMethods {
   "screen.close": { params: M.ScreenCloseParams; result: M.ScreenCloseResult };
   "truth.getWorldBlock": { params: M.TruthGetWorldBlockParams; result: M.TruthGetWorldBlockResult };
   "truth.getEntities": { params: M.TruthGetEntitiesParams; result: M.TruthGetEntitiesResult };
+  "truth.getContainer": { params: M.TruthGetContainerParams; result: M.TruthGetContainerResult };
+  "truth.getItem": { params: M.TruthGetItemParams; result: M.TruthGetItemResult };
   "truth.assertPluginState": {
     params: M.TruthAssertPluginStateParams;
     result: M.TruthAssertPluginStateResult;
@@ -133,6 +148,11 @@ export const METHOD_SCHEMAS: Record<MethodName, MethodSchemaEntry> = {
   "world.sendChat": { params: M.WorldSendChatParams, result: M.WorldSendChatResult, paramsOptional: false },
   "world.runCommand": { params: M.WorldRunCommandParams, result: M.WorldRunCommandResult, paramsOptional: false },
   "world.waitForChat": { params: M.WorldWaitForChatParams, result: M.WorldWaitForChatResult, paramsOptional: false },
+  "world.useBlock": { params: M.WorldUseBlockParams, result: M.WorldUseBlockResult, paramsOptional: false },
+  "world.attackBlock": { params: M.WorldAttackBlockParams, result: M.WorldAttackBlockResult, paramsOptional: false },
+  "world.setHeldItem": { params: M.WorldSetHeldItemParams, result: M.WorldSetHeldItemResult, paramsOptional: false },
+  "world.look": { params: M.WorldLookParams, result: M.WorldLookResult, paramsOptional: false },
+  "world.move": { params: M.WorldMoveParams, result: M.WorldMoveResult, paramsOptional: false },
   "screen.get": { params: M.ScreenGetParams, result: M.ScreenGetResult, paramsOptional: false },
   "screen.listElements": { params: M.ScreenListElementsParams, result: M.ScreenListElementsResult, paramsOptional: false },
   "screen.clickElement": { params: M.ScreenClickElementParams, result: M.ScreenClickElementResult, paramsOptional: false },
@@ -143,6 +163,8 @@ export const METHOD_SCHEMAS: Record<MethodName, MethodSchemaEntry> = {
   "screen.close": { params: M.ScreenCloseParams, result: M.ScreenCloseResult, paramsOptional: false },
   "truth.getWorldBlock": { params: M.TruthGetWorldBlockParams, result: M.TruthGetWorldBlockResult, paramsOptional: false },
   "truth.getEntities": { params: M.TruthGetEntitiesParams, result: M.TruthGetEntitiesResult, paramsOptional: false },
+  "truth.getContainer": { params: M.TruthGetContainerParams, result: M.TruthGetContainerResult, paramsOptional: false },
+  "truth.getItem": { params: M.TruthGetItemParams, result: M.TruthGetItemResult, paramsOptional: false },
   "truth.assertPluginState": { params: M.TruthAssertPluginStateParams, result: M.TruthAssertPluginStateResult, paramsOptional: false },
   "fixture.set": { params: M.FixtureSetParams, result: M.FixtureSetResult, paramsOptional: false },
   "fixture.reset": { params: M.FixtureResetParams, result: M.FixtureResetResult, paramsOptional: false },

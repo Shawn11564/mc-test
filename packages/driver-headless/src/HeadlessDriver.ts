@@ -14,6 +14,7 @@ import {
   MCTP_ERROR_CODES,
   PROTOCOL_VERSION,
   SUPPORTED_PROTOCOLS,
+  type BlockFace,
   type Selector,
 } from "@mc-test/protocol";
 import { HEADLESS_AGENT_KIND, HEADLESS_CAPABILITY_KEYS } from "./capabilities.js";
@@ -25,6 +26,16 @@ import {
 } from "./primitives/containerGui.js";
 import { primaryVia, resolveSelector } from "./primitives/selectorResolve.js";
 import { runCommand, sendChat, waitForChat, type ChatRecord } from "./primitives/world.js";
+import {
+  attackBlock,
+  FACE_VECTORS,
+  look,
+  move,
+  setHeldItem,
+  toBlock,
+  toHeldItem,
+  useBlock,
+} from "./primitives/worldInteraction.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -159,6 +170,16 @@ export class HeadlessDriver {
         return { ok: true, screenChanged: false };
       case "world.waitForChat":
         return this.worldWaitForChat(params);
+      case "world.useBlock":
+        return this.worldUseBlock(params);
+      case "world.attackBlock":
+        return this.worldAttackBlock(params);
+      case "world.setHeldItem":
+        return this.worldSetHeldItem(params);
+      case "world.look":
+        return this.worldLook(params);
+      case "world.move":
+        return this.worldMove(params);
       case "screen.get":
         return { ok: true, screen: snapshot(this.requireBot()) };
       case "screen.listElements":
@@ -318,6 +339,141 @@ export class HeadlessDriver {
         filter,
       });
     }
+  }
+
+  // --- world interaction (cap `worldInteraction`) -----------------------------
+
+  private async worldUseBlock(params: Record<string, unknown>): Promise<unknown> {
+    const bot = this.requireBot();
+    const pos = this.requireBlockPos(params["pos"], "world.useBlock");
+    const face = this.blockFace(params["face"]);
+    const before = (bot.currentWindow as { id?: number } | null)?.id ?? null;
+    const used = await useBlock(bot, {
+      pos,
+      face,
+      ...(params["hand"] === "off" ? { hand: "off" as const } : {}),
+      ...(params["sneak"] === true ? { sneak: true } : {}),
+      ...(params["cursor"] ? { cursor: params["cursor"] as { x: number; y: number; z: number } } : {}),
+    });
+    if (!used) {
+      throw new McptError(
+        MCTP_ERROR_CODES.WORLD_NOT_READY,
+        "WORLD_NOT_READY",
+        `No block at ${pos.x},${pos.y},${pos.z} (chunk not loaded)`,
+        { pos },
+      );
+    }
+    await sleep(120);
+    const after = (bot.currentWindow as { id?: number } | null)?.id ?? null;
+    return {
+      ok: true,
+      screenChanged: before !== after,
+      block: toBlock(used.block),
+      face: used.face,
+      sneak: params["sneak"] === true,
+      held: toHeldItem(bot.heldItem as never, bot.quickBarSlot),
+    };
+  }
+
+  private async worldAttackBlock(params: Record<string, unknown>): Promise<unknown> {
+    const bot = this.requireBot();
+    const pos = this.requireBlockPos(params["pos"], "world.attackBlock");
+    const face = this.blockFace(params["face"]);
+    const hit = await attackBlock(bot, { pos, face, breakBlock: params["breakBlock"] === true });
+    if (!hit) {
+      throw new McptError(
+        MCTP_ERROR_CODES.WORLD_NOT_READY,
+        "WORLD_NOT_READY",
+        `No block at ${pos.x},${pos.y},${pos.z} (chunk not loaded)`,
+        { pos },
+      );
+    }
+    return { ok: true, block: toBlock(hit.block), face: hit.face, broken: hit.broken };
+  }
+
+  private async worldSetHeldItem(params: Record<string, unknown>): Promise<unknown> {
+    const bot = this.requireBot();
+    const held = await setHeldItem(bot, {
+      ...(typeof params["item"] === "string" ? { item: params["item"] } : {}),
+      ...(typeof params["slot"] === "number" ? { slot: params["slot"] } : {}),
+      ...(params["hand"] === "off" ? { hand: "off" as const } : {}),
+    });
+    if (!held) {
+      // An unmatched item is a HARD failure: silently leaving the hand empty is
+      // exactly the kind of false green this capability exists to avoid.
+      throw new McptError(
+        MCTP_ERROR_CODES.ELEMENT_NOT_FOUND,
+        "ELEMENT_NOT_FOUND",
+        `No inventory stack matches '${String(params["item"])}'`,
+        { details: { item: String(params["item"]) } },
+      );
+    }
+    return { ok: true, held };
+  }
+
+  private async worldLook(params: Record<string, unknown>): Promise<unknown> {
+    const bot = this.requireBot();
+    const angles = await look(bot, {
+      ...(typeof params["yaw"] === "number" ? { yaw: params["yaw"] } : {}),
+      ...(typeof params["pitch"] === "number" ? { pitch: params["pitch"] } : {}),
+      ...(params["at"] ? { at: params["at"] as { x: number; y: number; z: number } } : {}),
+      ...(typeof params["force"] === "boolean" ? { force: params["force"] } : {}),
+    });
+    const p = bot.entity?.position;
+    return {
+      ok: true,
+      yaw: angles.yaw,
+      pitch: angles.pitch,
+      ...(p ? { position: { x: p.x, y: p.y, z: p.z } } : {}),
+    };
+  }
+
+  private async worldMove(params: Record<string, unknown>): Promise<unknown> {
+    const bot = this.requireBot();
+    const held = await move(bot, {
+      ...(params["controls"] ? { controls: params["controls"] as Record<string, boolean> } : {}),
+      ...(typeof params["durationMs"] === "number" ? { durationMs: params["durationMs"] } : {}),
+      ...(params["stop"] === true ? { stop: true } : {}),
+    });
+    const p = bot.entity?.position;
+    return {
+      ok: true,
+      held,
+      ...(p ? { position: { x: p.x, y: p.y, z: p.z } } : {}),
+      ...(params["stop"] === true ? { warnings: ["all control states released"] } : {}),
+    };
+  }
+
+  /** Validate a `pos` param into integer block coordinates. */
+  private requireBlockPos(raw: unknown, method: string): { x: number; y: number; z: number } {
+    const p = raw as { x?: unknown; y?: unknown; z?: unknown } | undefined;
+    if (
+      !p ||
+      typeof p.x !== "number" ||
+      typeof p.y !== "number" ||
+      typeof p.z !== "number"
+    ) {
+      throw new McptError(
+        MCTP_ERROR_CODES.INVALID_PARAMS,
+        "invalidParams",
+        `${method} requires pos: { x, y, z }`,
+      );
+    }
+    return { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) };
+  }
+
+  /** Validate an optional `face` param (default `up`). */
+  private blockFace(raw: unknown): BlockFace {
+    if (raw === undefined) return "up";
+    const face = String(raw);
+    if (!(face in FACE_VECTORS)) {
+      throw new McptError(
+        MCTP_ERROR_CODES.INVALID_PARAMS,
+        "invalidParams",
+        `unknown block face '${face}' (expected north|south|east|west|up|down)`,
+      );
+    }
+    return face as BlockFace;
   }
 
   // --- screen ----------------------------------------------------------------

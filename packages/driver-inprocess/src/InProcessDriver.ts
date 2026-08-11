@@ -46,6 +46,12 @@ export interface SpawnContext {
   /** Fail if `MCTP listening` is not seen within this budget (default 180s). */
   readyTimeoutMs?: number;
   onLog?: (line: string) => void;
+  /**
+   * The client's per-instance game dir. Used ONLY as the last-resort teardown marker: it appears
+   * in the client JVM's own command line, so it identifies this client precisely even if the
+   * spawned pid is no longer the live process.
+   */
+  gameDir?: string;
 }
 
 /** Options for an in-process (rendered-client) launch. */
@@ -173,6 +179,7 @@ export class InProcessDriver {
     const spawner = this.opts.spawn ?? defaultSpawn;
     this.spawned = await spawner(launch, {
       logFile: join(client.gameDir, "client.log"),
+      gameDir: client.gameDir,
       onLog: log,
     });
     this.url = this.spawned.url;
@@ -254,13 +261,149 @@ async function defaultSpawn(launch: ClientLaunch, ctx: SpawnContext): Promise<Sp
 
   return {
     url: `ws://127.0.0.1:${port}/mctp`,
-    stop: () =>
-      new Promise<void>((resolve) => {
-        child.once("exit", () => {
-          logStream?.end();
-          resolve();
-        });
-        child.kill();
-      }),
+    stop: () => stopClientProcess(child, logStream, onLog, ctx.gameDir),
   };
+}
+
+/**
+ * Tear down the rendered client for real.
+ *
+ * A plain `child.kill()` + "wait for `exit`" is not enough here, and getting it wrong is
+ * expensive: a surviving client keeps the extracted GLFW/LWJGL natives mapped, so the NEXT
+ * rendered run fails to re-stage them (`EBUSY … glfw.dll` on Windows) — a leak that reads as
+ * a flaky rendered lane rather than as the resource problem it is. So:
+ *
+ *  1. ask nicely (`SIGTERM`) and give the JVM a moment to run its shutdown hooks;
+ *  2. escalate to `SIGKILL`, and on Windows to `taskkill /T /F`, which kills the whole tree
+ *     (Node's `kill()` only targets the process it spawned);
+ *  3. NEVER hang — resolve after the budget either way, and SURFACE a surviving pid instead of
+ *     swallowing it, matching how the workspace GC surfaces an undeletable env dir.
+ */
+async function stopClientProcess(
+  child: import("node:child_process").ChildProcess,
+  logStream: { end: () => void } | null,
+  onLog: (line: string) => void,
+  gameDir?: string,
+): Promise<void> {
+  const pid = child.pid;
+  /**
+   * Liveness from the OS, NOT from Node's bookkeeping. `child.exitCode`/`signalCode` report
+   * what Node believes about the pipe it holds, and for a rendered Minecraft client that can
+   * read "exited" while the JVM is very much alive — which is precisely how the leak hid: every
+   * escalation below was skipped because the driver thought the job was already done.
+   * `process.kill(pid, 0)` sends no signal and throws `ESRCH` only when the pid is really gone.
+   */
+  const alive = (): boolean => {
+    if (pid === undefined) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const wait = async (ms: number): Promise<void> => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline && alive()) {
+      await new Promise<void>((r) => setTimeout(r, 100));
+    }
+  };
+
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    /* already gone */
+  }
+  await wait(3000);
+
+  if (alive()) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+    await wait(2000);
+  }
+
+  // Windows: Node's kill can miss a JVM whose console handle it no longer owns, and it never
+  // reaps grandchildren. taskkill /T /F is the reliable tree kill.
+  const { spawnSync } = await import("node:child_process");
+  if (alive() && process.platform === "win32" && pid !== undefined) {
+    try {
+      spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+    } catch {
+      /* taskkill unavailable — fall through */
+    }
+    await wait(2000);
+  }
+
+  // ALWAYS sweep by the client's own game dir — not only when the spawned pid is still alive.
+  // The launcher RE-EXECS: the java we spawn hands off to a second JVM and exits, so the pid we
+  // hold is gone while the real client keeps running (and keeps the natives mapped, breaking the
+  // next rendered run with EBUSY on glfw.dll). A pid-based teardown can therefore look like it
+  // succeeded while leaking the actual client — which is exactly how this hid.
+  //
+  // The game dir is per-instance and appears in the client JVM's own command line, so matching on
+  // it is precise: it can only ever name THIS client, never another run's and never an unrelated
+  // JVM (a Gradle daemon, the server).
+  if (gameDir) {
+    killByGameDir(spawnSync, gameDir);
+    await new Promise<void>((r) => setTimeout(r, 500));
+    const survivors = countByGameDir(spawnSync, gameDir);
+    logStream?.end();
+    if (survivors > 0) {
+      // Surface it rather than swallow it: a surviving client will break the next rendered run.
+      onLog(
+        `⚠ ${survivors} rendered-client process(es) for ${gameDir} did not exit; they still hold the ` +
+          `extracted natives and will break the next rendered run with EBUSY on glfw/lwjgl`,
+      );
+    }
+    return;
+  }
+
+  logStream?.end();
+  if (alive()) {
+    onLog(
+      `⚠ rendered client (pid ${pid ?? "?"}) did not exit; it still holds the extracted natives and ` +
+        `will break the next rendered run with EBUSY on glfw/lwjgl — kill it manually`,
+    );
+  }
+}
+
+/** PowerShell/`pgrep` predicate matching only the JVMs launched with this game dir. */
+function gameDirFilter(gameDir: string): string {
+  return `Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*${gameDir.replace(/'/g, "''")}*' }`;
+}
+
+/** Force-kill every JVM running with this game dir. Best-effort; never throws. */
+function killByGameDir(spawnSync: typeof import("node:child_process").spawnSync, gameDir: string): void {
+  try {
+    if (process.platform === "win32") {
+      spawnSync(
+        "powershell",
+        ["-NoProfile", "-Command", `${gameDirFilter(gameDir)} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`],
+        { stdio: "ignore" },
+      );
+    } else {
+      spawnSync("pkill", ["-9", "-f", gameDir], { stdio: "ignore" });
+    }
+  } catch {
+    /* no shell helper available — the caller reports any survivors */
+  }
+}
+
+/** How many JVMs are still running with this game dir (0 when the helper is unavailable). */
+function countByGameDir(spawnSync: typeof import("node:child_process").spawnSync, gameDir: string): number {
+  try {
+    const r =
+      process.platform === "win32"
+        ? spawnSync("powershell", ["-NoProfile", "-Command", `@(${gameDirFilter(gameDir)}).Count`], {
+            encoding: "utf8",
+          })
+        : spawnSync("pgrep", ["-fc", gameDir], { encoding: "utf8" });
+    const n = Number.parseInt((r.stdout ?? "").trim(), 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
 }

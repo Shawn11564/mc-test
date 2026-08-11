@@ -4,6 +4,7 @@
  * engine runs them identically.
  */
 import type { RequiredCapabilities, StepVerb } from "@mc-test/protocol";
+import type { MatrixCoverage, MatrixDefinition } from "../engine/MatrixExpansion.js";
 
 /** One normalized step: a canonical verb + its argument bag + optional per-step caps. */
 export interface NormalizedStep {
@@ -24,4 +25,15 @@ export interface NormalizedTest {
   requires: RequiredCapabilities;
   optional?: RequiredCapabilities;
   steps: NormalizedStep[];
+  /** §4 matrix declaration, present only on parameterized test files. */
+  matrix?: MatrixDefinition;
+  coverage?: MatrixCoverage;
+  /** Concrete case identity after matrix expansion (not authored directly). */
+  matrixCase?: {
+    id: string;
+    config: Record<string, unknown>;
+    coverage: MatrixCoverage;
+    environmentKey: string;
+    setup: Array<{ action: string; dimension: string; value: unknown }>;
+  };
 }

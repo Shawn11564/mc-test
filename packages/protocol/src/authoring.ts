@@ -11,8 +11,8 @@
  */
 import type { Loader, RequiredCapabilities } from "./capabilities.js";
 import type { Selector } from "./selectors.js";
-import type { Vec3 } from "./common.js";
-import type { ChatChannel, ScreenKind } from "./mctp.js";
+import type { BlockPos, Vec3 } from "./common.js";
+import type { BlockFace, ChatChannel, Hand, MoveControls, ScreenKind } from "./mctp.js";
 
 /** The driver kinds a target may select (cost order: server < headless < inprocess < pixel). */
 export type DriverId = "server" | "headless" | "inprocess" | "pixel";
@@ -103,6 +103,58 @@ export interface ScreenshotStep {
   screenshot: { name?: string; region?: "screen" | "gui"; maxWidth?: number; maxHeight?: number };
 }
 
+/**
+ * World-interaction verbs (cap `worldInteraction`). A test ACTS on the world as
+ * the player: the placement/protection shape (`sneak`-click a face with an item
+ * held) that GUI + chat verbs alone cannot express.
+ */
+export interface UseBlockStep {
+  useBlock: {
+    pos: BlockPos;
+    face?: BlockFace;
+    hand?: Hand;
+    sneak?: boolean;
+    cursor?: Vec3;
+    /** Per-step capability gate; missing → the step honestly skips. */
+    requires?: RequiredCapabilities;
+  };
+}
+
+export interface AttackBlockStep {
+  attackBlock: {
+    pos: BlockPos;
+    face?: BlockFace;
+    /** Dig the block to completion rather than a single punch. */
+    breakBlock?: boolean;
+    requires?: RequiredCapabilities;
+  };
+}
+
+export interface SetHeldItemStep {
+  setHeldItem:
+    | string
+    | { item?: string; slot?: number; hand?: Hand; requires?: RequiredCapabilities };
+}
+
+export interface LookStep {
+  look: {
+    yaw?: number;
+    pitch?: number;
+    at?: Vec3;
+    force?: boolean;
+    requires?: RequiredCapabilities;
+  };
+}
+
+export interface MoveStep {
+  move: {
+    controls?: MoveControls;
+    durationMs?: number;
+    stop?: boolean;
+    requires?: RequiredCapabilities;
+  };
+}
+
 export interface GetBlockStep {
   getBlock: {
     world?: string;
@@ -117,6 +169,106 @@ export interface GetBlockStep {
      * the read into a real world-state assertion (vs. a bare read that only proves the call succeeded).
      */
     expect?: string;
+    /**
+     * Blockstate property assertions, e.g. `{ facing: "east" }`. Compared against
+     * the agent's authoritative `block.properties` as a **subset**: every listed
+     * key must match (values compared as strings, case-insensitively), unlisted
+     * properties are ignored. A property the block does not have is a FAILURE, not
+     * a skip — `facing` is how "the sign landed on the clicked face" is proven.
+     */
+    expectProperties?: Record<string, string | number | boolean>;
+    /**
+     * Block-entity assertions against `block.nbt`, as a subset (nested objects are
+     * matched recursively; arrays must match element-for-element). A block with no
+     * block entity FAILS this assertion rather than passing vacuously.
+     */
+    expectNbt?: Record<string, unknown>;
+  };
+}
+
+/**
+ * An item-identity assertion. `type`/`count` alone are NOT identity — a modded
+ * item is a vanilla material plus data components — so `components` compares the
+ * agent's canonical component view **exactly** and `componentsHash` compares the
+ * digest. Use `componentsInclude` for the looser "carries at least this" check.
+ */
+export interface ItemExpectation {
+  type?: string;
+  count?: number;
+  displayName?: string;
+  /** EXACT deep equality against the item's whole component map. */
+  components?: Record<string, unknown>;
+  /** Subset match: every listed key/path must be present and equal. */
+  componentsInclude?: Record<string, unknown>;
+  /** Exact digest match — the cheapest "this item only equals itself" assertion. */
+  componentsHash?: string;
+  /** Assert the slot is empty. Mutually exclusive with the other keys. */
+  empty?: boolean;
+}
+
+/**
+ * Time verbs: the assert-*until* twins of `getBlock` / `assertPluginState`. Same
+ * assertions, same capability, wrapped in the runner's retry loop — so a state a
+ * SUT writes a few ticks later is testable without a sleep in the test and without
+ * any waiting logic inside the agent (Prime Directive 2).
+ */
+export interface WaitForBlockStep {
+  waitForBlock: {
+    world?: string;
+    x: number;
+    y: number;
+    z: number;
+    requires?: RequiredCapabilities;
+    /** At least one of these three is REQUIRED — a wait with no condition is not a test. */
+    expect?: string;
+    expectProperties?: Record<string, string | number | boolean>;
+    expectNbt?: Record<string, unknown>;
+    /** Total budget. Default 10000ms. */
+    timeoutMs?: number;
+    /** Re-read cadence. Default 250ms. */
+    intervalMs?: number;
+  };
+}
+
+export interface WaitForPluginStateStep {
+  waitForPluginState: {
+    requires?: RequiredCapabilities;
+    plugin?: string;
+    query: string;
+    args?: Record<string, unknown>;
+    /** REQUIRED — without a predicate there is no verdict to wait for. */
+    expect?: unknown;
+    timeoutMs?: number;
+    intervalMs?: number;
+  };
+}
+
+export interface GetContainerStep {
+  getContainer: {
+    world?: string;
+    x: number;
+    y: number;
+    z: number;
+    includeEmpty?: boolean;
+    requires?: RequiredCapabilities;
+    /** Expected container block id, e.g. `minecraft:chest`. */
+    expect?: string;
+    /** Expected number of OCCUPIED slots. */
+    expectCount?: number;
+    /** Per-slot assertions, keyed by slot index. */
+    expectSlots?: Record<string, ItemExpectation>;
+  };
+}
+
+export interface GetItemStep {
+  getItem: {
+    world?: string;
+    x: number;
+    y: number;
+    z: number;
+    slot: number;
+    requires?: RequiredCapabilities;
+    expect?: ItemExpectation;
   };
 }
 
@@ -165,7 +317,16 @@ export type Step =
   | TypeStep
   | PressStep
   | ScreenshotStep
+  | UseBlockStep
+  | AttackBlockStep
+  | SetHeldItemStep
+  | LookStep
+  | MoveStep
   | GetBlockStep
+  | WaitForBlockStep
+  | WaitForPluginStateStep
+  | GetContainerStep
+  | GetItemStep
   | GetEntitiesStep
   | AssertPluginStateStep
   | FixtureStep
@@ -185,7 +346,16 @@ export const STEP_VERBS = [
   "type",
   "press",
   "screenshot",
+  "useBlock",
+  "attackBlock",
+  "setHeldItem",
+  "look",
+  "move",
   "getBlock",
+  "waitForBlock",
+  "waitForPluginState",
+  "getContainer",
+  "getItem",
   "getEntities",
   "assertPluginState",
   "fixture",

@@ -1,0 +1,39 @@
+# NEGATIVE CONTROL for component-exact item identity (paired with
+# truth-vocabulary.mctest.yml).
+#
+# Slot 1 holds a PLAIN diamond sword — same material, same count as the named,
+# enchanted one in slot 0. The test asserts slot 1 carries slot 0's components. It MUST
+# go red. This is the "a modded item only equals itself" property: if identity were
+# `type` + `count`, this run would be green and every Cobblemon/ChestShop/ItemsAdder
+# item in the fleet would compare equal to a plain vanilla one.
+name: truth-item-identity-plain-is-not-named-must-fail
+requires:
+  command: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 2 -60 0 minecraft:chest replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+  - command: "item replace block 2 -60 0 container.1 with minecraft:diamond_sword 1"
+  - waitForChat: { contains: "with [Diamond Sword]", timeoutMs: 10000 }
+  # A plain sword satisfies the type and count …
+  - getItem:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      slot: 1
+      expect:
+        type: minecraft:diamond_sword
+        count: 1
+  # … but must NOT satisfy the named sword's components.
+  - getItem:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      slot: 1
+      expect:
+        componentsInclude:
+          enchants: { DAMAGE_ALL: 5 }

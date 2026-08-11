@@ -1,0 +1,71 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: truth.getItem",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "truth.getItem",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId",
+        "x",
+        "y",
+        "z",
+        "slot"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "world": {
+          "type": "string"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "z": {
+          "type": "integer"
+        },
+        "slot": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

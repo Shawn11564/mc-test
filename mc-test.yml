@@ -4,13 +4,13 @@
 #                   (aggregates one JUnit + prints the (test × target) skip matrix)
 #
 # This is the M5 fan-out (ROADMAP §6.2/§6.3): the SAME authored test runs across the
-# whole matrix and each cell is GREEN or HONESTLY SKIPPED. Only the Paper/headless
-# rows are runnable in this repo's offline CI (M2/M3); the inprocess (rendered-client)
-# rows and their loader agents (client-fabric/forge/neoforge + server-fabric) are
-# ACCEPTANCE-ONLY (need a rendered client under a display + the Loom/Forge/NeoForge
-# agent jars). The pixel/OCR driver (driver: pixel) is the universal LAST RESORT,
-# selected only when no structural driver fits. See mc-test.example.yml for the
-# fuller multi-loader matrix.
+# whole matrix and each cell is GREEN or HONESTLY SKIPPED. The Paper/headless rows are
+# runnable in this repo's fast per-PR CI; the inprocess (rendered-client) and driver:
+# server rows need a rendered client under a display / the Loom/Forge/NeoForge agent
+# jars, so they run in the nightly/dispatch E2E lane (.github/workflows/e2e.yml) —
+# real boots, not stubs, gated off the fast path by cost not by honesty. The pixel/OCR
+# driver (driver: pixel) is the universal LAST RESORT, selected only when no structural
+# driver fits. See mc-test.example.yml for the same shape with fuller inline comments.
 version: 1
 
 provision:
@@ -156,6 +156,43 @@ targets:
       - { path: ./examples/regions/mod-forge/build/libs/openregions-forge.jar, as: regions.jar }
     display: xvfb
     agents: [ client-forge, server-bukkit ]
+    world: { ref: regions-world }
+
+  # RENDERED CLIENT on a MODDED SERVER (phase 2). Every other `driver: inprocess` row above
+  # boots a PAPER server (`server: { paper }`) — fine for a client-side-only mod, but it means
+  # a SUT that is one mod loaded on BOTH sides (ChestShop's shape: the server half owns the
+  # state, the client half owns the GUI) had no row to copy. This row is that shape: a real
+  # rendered Fabric CLIENT against a real Fabric SERVER, so a test can drive the client GUI
+  # (clientScreens, sign typing) AND assert authoritative state through the server-mod truth
+  # agent in the same run.
+  #
+  # There is NO `server:` key, so the loader decides and the MODDED path provisions a Fabric
+  # dedicated server (F5). The two sides get DIFFERENT mod sets, which is exactly why
+  # `clientMods` exists:
+  #   - `mods:`       → the server's mods/ (the SUT + Fabric API; the server-fabric truth
+  #                     agent is added by `agents:`)
+  #   - `clientMods:` → the launched client's mods/ (the SUT + Fabric API; the client-fabric
+  #                     agent is injected by the in-process driver)
+  # Needs a GL-capable host (Xvfb/Mesa in CI, `display: desktop` on a windowed runner) plus the
+  # Loom-built agent + SUT jars; without them the row HONEST-SKIPS rather than faking a green.
+  - id: fabric-server-1.21-client
+    loader: fabric
+    mc: "1.21.1"
+    loaderVersion: "0.19.3" # Fabric loader for the SERVER (client loader comes from the launcher)
+    driver: inprocess # rendered client — the only driver that sees client Screens
+    mods:
+      # Server side: the OpenRegions SUT + Fabric API (the server-fabric agent needs it).
+      - { path: ./examples/regions/mod-fabric/build/libs/openregions-fabric.jar, as: regions.jar }
+      - { modrinth: { project: fabric-api, loader: fabric, gameVersion: "1.21.1" }, as: fabric-api.jar }
+    clientMods:
+      # Client side: the same SUT + Fabric API, resolved for the launched client.
+      - { path: ./examples/regions/mod-fabric/build/libs/openregions-fabric.jar, as: regions.jar }
+      - { modrinth: { project: fabric-api, loader: fabric, gameVersion: "1.21.1" }, as: fabric-api.jar }
+    display: xvfb
+    # BOTH halves: the client agent renders/clicks/types in the client, the server-mod agent
+    # answers truth/fixtures on the server. (server-bukkit would be wrong here — this is a
+    # Fabric server, not Paper.)
+    agents: [ client-fabric, server-fabric ]
     world: { ref: regions-world }
 
   # ───────────────────────────── F5: MODDED SERVERS ─────────────────────────────

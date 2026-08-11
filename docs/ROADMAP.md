@@ -191,7 +191,8 @@ Capabilities are a flat string-keyed map of booleans (with a few enum/string val
 | `clientScreens` | bool | Can read/operate **client-rendered mod Screens/widgets** (the client-mod path). |
 | `screenshot` | bool | Can capture pixels. |
 | `rendering` | bool | A real GPU/framebuffer client is present (implies `screenshot`). |
-| `worldTruth` | bool | Can read authoritative server world/block/entity state. |
+| `worldInteraction` | bool | Can act on the world **as the player** (use/attack a block face, hold an item, look, move). |
+| `worldTruth` | bool | Can read authoritative server state: blocks (type, blockstate properties, block-entity data), entities, and container contents (with component-exact item identity). |
 | `pluginState` | bool | Can assert on plugin internal state. |
 | `fixtures` | bool | Can apply/reset fixtures. |
 | `fakePlayers` | bool | Can spawn/despawn fake players. |
@@ -407,11 +408,26 @@ test("regions-open-testregion")
 | `type` | `screen.typeText` | `typeText` |
 | `press` | `screen.pressKey` | `pressKey` |
 | `screenshot` | `screen.screenshot` | `screenshot` |
-| `getBlock` | `truth.getWorldBlock` | `worldTruth` |
+| `useBlock` | `world.useBlock` | `worldInteraction` |
+| `attackBlock` | `world.attackBlock` | `worldInteraction` |
+| `setHeldItem` | `world.setHeldItem` | `worldInteraction` |
+| `look` | `world.look` | `worldInteraction` |
+| `move` | `world.move` | `worldInteraction` |
+| `getBlock` | `truth.getWorldBlock` (+ `expect` / `expectProperties` / `expectNbt` assertions) | `worldTruth` |
+| `waitForBlock` | `truth.getWorldBlock`, polled by `SelectorWaits` until the assertions hold | `worldTruth` |
+| `waitForPluginState` | `truth.assertPluginState`, polled until `matched` | `pluginState` |
+| `getContainer` | `truth.getContainer` | `worldTruth` |
+| `getItem` | `truth.getItem` | `worldTruth` |
 | `getEntities` | `truth.getEntities` | `worldTruth` |
 | `assertPluginState` | `truth.assertPluginState` | `pluginState` |
 | `fixture` | `fixture.set` / `fixture.reset` | `fixtures` |
 | `spawnFakePlayer` | `player.spawnFake` | `fakePlayers` |
+
+The **time verbs** (`waitForBlock` / `waitForPluginState`) are the same wrapper applied to a truth
+read: they share their assert-once twin's probe verbatim (so the two can never judge the same world
+differently) and retry an `UnsatisfiedError` until the budget expires, then rethrow the LAST mismatch
+so a timeout names what never became true. A wait with no condition is rejected rather than passing
+vacuously, and a malformed one (no `expect`) fails immediately instead of burning the budget.
 
 The `SelectorWaits` engine wraps **every** selector-bearing step in a poll loop
 (`intervalMs` default 250, `timeoutMs` default 5000) so that `ELEMENT_NOT_FOUND` is retried by the
@@ -1166,9 +1182,9 @@ source of truth for the wire contract), which this roadmap defers to — are:
 - **Agent primitive verbs (SDK form):** `listElements`, `clickElement`, `getScreen`, `typeText`,
   `pressKey`, `screenshot`, `getWorldBlock`, `getEntities`, `setFixture`, `spawnFakePlayer`,
   `assertPluginState`.
-- **Capability keys** (the 13 canonical matchable booleans): `chat`, `command`, `containerGui`,
-  `clientScreens`, `screenshot`, `rendering`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`,
-  `typeText`, `pressKey`, `testIdTags`. **Advisory descriptors** (carried in the capability set but
+- **Capability keys** (the 14 canonical matchable booleans): `chat`, `command`, `containerGui`,
+  `clientScreens`, `screenshot`, `rendering`, `worldInteraction`, `worldTruth`, `pluginState`,
+  `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`. **Advisory descriptors** (carried in the capability set but
   NOT capability keys — never matched): `loader`, `mcVersionRange` (target descriptors) and `brittle`
   (a quality descriptor advertised by the `pixelOcr` driver; surfaced by the runner as a report note).
 - **Selector keys:** `label`, `text`, `textContains`, `loreContains`, `itemType`, `role`, `index`,
@@ -1178,8 +1194,9 @@ source of truth for the wire contract), which this roadmap defers to — are:
   `WORLD_NOT_READY`, `FIXTURE_FAILED`, `ASSERT_FAILED`, `PROTOCOL_VERSION_UNSUPPORTED`,
   `NO_COMPATIBLE_DRIVER`.
 - **Step verbs (authoring):** `join`, `leave`, `chat`, `command`, `waitForChat`, `assertChat`,
-  `waitForScreen`, `listElements`, `click`, `type`, `press`, `screenshot`, `getBlock`, `getEntities`,
-  `assertPluginState`, `fixture`, `spawnFakePlayer`.
+  `waitForScreen`, `listElements`, `click`, `type`, `press`, `screenshot`, `useBlock`, `attackBlock`,
+  `setHeldItem`, `look`, `move`, `getBlock`, `waitForBlock`, `getContainer`, `getItem`,
+  `getEntities`, `assertPluginState`, `waitForPluginState`, `fixture`, `spawnFakePlayer`.
 - **`mc-test.yml` fields:** `defaults`, `targets`, `id`, `loader`, `mc`, `driver`, `via`, `plugins`,
   `mods`, `agents`, `display`, `worldSnapshot`, `online-mode`, `world`; `driver ∈ {headless,
   inprocess, pixel}`; `display ∈ {xvfb, desktop}`; `loader ∈ {spigot, paper, folia, fabric, forge,

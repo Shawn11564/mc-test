@@ -386,7 +386,8 @@ The canonical capability-key set is exactly these flat keys:
 | `clientScreens` | `screen.get`, `screen.listElements`, `screen.clickElement`, `screen.waitForScreen`, `screen.close` over **client-rendered Screens/widgets** | **clientMod only** |
 | `screenshot` | `screen.screenshot` | clientMod, pixelOcr |
 | `rendering` | a live render surface exists (precondition for `screenshot`; pixel/OCR resolution) | clientMod, pixelOcr |
-| `worldTruth` | `truth.getWorldBlock`, `truth.getEntities` | serverPlugin, serverMod, headlessBot (via server agent) |
+| `worldInteraction` | `world.useBlock`, `world.attackBlock`, `world.setHeldItem`, `world.look`, `world.move` — acting on the world AS the player | headlessBot, clientMod |
+| `worldTruth` | `truth.getWorldBlock`, `truth.getEntities`, `truth.getContainer`, `truth.getItem` | serverPlugin, serverMod, headlessBot (via server agent) |
 | `pluginState` | `truth.assertPluginState` | serverPlugin, serverMod |
 | `fixtures` | `fixture.reset`, `fixture.set` | serverPlugin, serverMod |
 | `fakePlayers` | `player.spawnFake`, `player.despawnFake` | serverPlugin (Carpet), serverMod |
@@ -399,13 +400,13 @@ Three **advisory descriptors** accompany the capability set in negotiation; they
 - `mcVersionRange` (string) — target descriptor: the Minecraft version range the agent serves.
 - `brittle` (boolean, optional) — **quality descriptor**: a self-declared warning that this driver resolves selectors by fragile means (OCR/template + OS input) rather than structural inspection, so results are flakier. Advertised by the `pixelOcr` driver (`brittle: true`). It is purely advisory: the runner **reads it solely to surface a report note** (a loud console warning + a JUnit `<property name="brittle" value="true"/>`) when a brittle driver is selected; it is **never** matched, required, or denied.
 
-> **Non-normative extension capabilities.** Some agents expose extra surfaces that are **not** part of the canonical set above and **not** part of the canonical method catalog (§13): world join/leave gating, click, item-use, movement, player-state reads, log reads, and screen-change streams (driving the extension methods `useItem`, `move`, `getWindow`, `getPlayerState`, `getLogs`, `subscribe`/`unsubscribe`). These are agent extensions; CAPABILITIES.md may register them, but they do not bump the canonical wire vocabulary. Clicking and waiting on screens are gated by `containerGui`/`clientScreens`; joining/leaving a world is available to any world-capable agent.
+> **Non-normative extension capabilities.** Some agents expose extra surfaces that are **not** part of the canonical set above and **not** part of the canonical method catalog (§13): world join/leave gating, click, player-state reads, log reads, and screen-change streams (driving the extension methods `useItem`, `getWindow`, `getPlayerState`, `getLogs`, `subscribe`/`unsubscribe`). *(The pre-1.0 `move` extension has been superseded by the canonical `world.move` under `worldInteraction`; the older `useItem` sketch remains an extension — the canonical world-facing subset it described is now `world.useBlock`/`world.setHeldItem`.)* These are agent extensions; CAPABILITIES.md may register them, but they do not bump the canonical wire vocabulary. Clicking and waiting on screens are gated by `containerGui`/`clientScreens`; joining/leaving a world is available to any world-capable agent.
 
 ### 6.2 Capability bundles (informative)
 
 Drivers typically advertise these bundles; the runner may request them by listing the member keys:
 
-- **headlessBot** → `command, chat, containerGui, typeText, testIdTags` (+ `worldTruth` when paired with a server agent over the same matrix target).
+- **headlessBot** → `command, chat, containerGui, typeText, worldInteraction, testIdTags` (+ `worldTruth` when paired with a server agent over the same matrix target).
 - **clientMod** → everything in headlessBot **plus** `clientScreens, pressKey, screenshot, rendering`.
 - **serverPlugin / serverMod** → `worldTruth, pluginState, fixtures, fakePlayers, chat, testIdTags` (no client UI).
 - **pixelOcr** → `chat, command, containerGui, clientScreens, screenshot, rendering, typeText, pressKey` (selectors resolved by OCR/template; last resort). It additionally advertises the advisory `brittle: true` quality descriptor (§6.1) — not a capability key, so it never affects matching, only the runner's report note.
@@ -420,6 +421,7 @@ When granting a capability, the agent MAY attach a value object under `capabilit
 | `clientScreens` | `widgetTree` | `true` if the agent can return a hierarchical widget tree (vs. flat list). |
 | `worldTruth` | `radiusLimit` | max block radius per `truth.getEntities`/scan. |
 | `screenshot` | `formats` | array, e.g. `["png"]`; `maxWidth`/`maxHeight`. |
+| `worldInteraction` | `reach` | max interaction distance in blocks the agent will honor. |
 | `fakePlayers` | `backend` | `"carpet"` \| `"native"`. |
 | any | `version` | integer sub-feature version for that capability surface. |
 
@@ -586,6 +588,30 @@ Types text into the currently focused text input (anvil rename, sign, book, sear
 | `clear` | no | If `true`, clears existing content first. |
 | `submit` | no | If `true`, presses Enter after typing. |
 Result `{ "ok": true, "screenChanged": false }`.
+If `selector` resolves to (or, when absent, focus is on) a widget that is not an actual text-input
+widget — e.g. a sign-edit screen with no `TextFieldWidget`/`EditBox` — the agent MUST fail the call with
+`-32000 ELEMENT_NOT_FOUND` rather than reporting `ok: true` for a no-op type (a prior false-green; the
+step must never report success while silently swallowing the text).
+
+##### Screens that own their editing (the sign editor)
+
+Some screens expose **no text-input widget at all** and drive their own editing — the vanilla **sign editor** runs a `SelectionManager` straight from `Screen#charTyped`. An agent MUST NOT report `ok` for a type that went nowhere (that false green is what the honest `ELEMENT_NOT_FOUND` exists to prevent), so it MAY fall back to replaying the characters on the screen itself, subject to two rules:
+
+- the fallback is attempted **only when no `selector` was given** — a selector names one element, and typing somewhere else answers a different question;
+- the verdict MUST come from whether the screen actually **consumed** the characters (`charTyped`'s own boolean). A screen that ignores text is still `-32000 ELEMENT_NOT_FOUND`.
+
+The result reports which path ran, so a run can never hide that a sign was typed through the fallback rather than a real field:
+
+```json
+{ "ok": true, "screenChanged": false, "typedVia": "screenCharTyped" }
+```
+
+| `typedVia` | Meaning |
+|---|---|
+| `textField` | A real `TextFieldWidget`/`EditBox` consumed the text. |
+| `screenCharTyped` | The screen-level fallback consumed it (no text widget exists). |
+
+Absent `typedVia` means the agent predates the field — clients MUST tolerate that (§10).
 
 #### `screen.close`  *(cap `containerGui` for container GUIs; `clientScreens` for client screens)*
 Closes the currently open screen/GUI (the semantic equivalent of pressing Escape), returning to the world/HUD.
@@ -593,6 +619,60 @@ Closes the currently open screen/GUI (the semantic equivalent of pressing Escape
 { "method": "screen.close", "params": { "sessionId": "s_7f3c1a" } }
 ```
 Result `{ "ok": true, "screenChanged": true }`. If no screen is open, the agent returns success with `screenChanged:false`.
+
+#### `world.useBlock`  *(cap `worldInteraction`)*
+Right-clicks one face of one block **as the player**. This is the world-facing counterpart of `screen.clickElement`: the same "one observable action, nothing more" contract, addressed by block position + face rather than by selector (a block in the world has no semantic label to select on — the *position* is the address, which is why coordinates are legal here and never in the UI verbs).
+
+```json
+{ "method": "world.useBlock", "params": { "sessionId": "s_7f3c1a", "pos": { "x": 2, "y": -60, "z": 0 }, "face": "north", "hand": "main", "sneak": true } }
+```
+| Param | Req? | Meaning |
+|---|---|---|
+| `pos` | yes | Integer block coordinates of the block being clicked (**not** the neighbour a placement would land in). |
+| `face` | no | `north` \| `south` \| `east` \| `west` \| `up` \| `down`. Default `up`. |
+| `hand` | no | `"main"` (default) \| `"off"`. |
+| `sneak` | no | Hold sneak across the interaction. Sneaking **suppresses the block's own use behavior** (a chest does not open), which is what makes a held item place against the clicked face — the canonical placement-test shape. |
+| `cursor` | no | Where on the face the cursor lands, in face-local `0..1` coordinates. Default: the face centre. |
+
+Result `{ "ok": true, "screenChanged": false, "block": { "type": "minecraft:chest" }, "face": "north", "sneak": true, "held": { "type": "minecraft:oak_sign" } }`. `block` is the clicked block as the agent saw it at click time; `screenChanged` reports whether a GUI opened as a side effect. An unloaded/absent position is `-32004 WORLD_NOT_READY` — never a silent success.
+
+#### `world.attackBlock`  *(cap `worldInteraction`)*
+Left-clicks one face of one block. Default is a single **punch** (start-digging then abort — the event a protection/anti-grief SUT reacts to); `breakBlock: true` digs to completion.
+```json
+{ "method": "world.attackBlock", "params": { "sessionId": "s_7f3c1a", "pos": { "x": 2, "y": -60, "z": 0 }, "face": "up", "breakBlock": true } }
+```
+Result `{ "ok": true, "block": { "type": "minecraft:chest" }, "face": "up", "broken": true }`. Note that in creative mode a punch breaks the block instantly — vanilla behavior, not an agent liberty; a test that needs the distinction must control the game mode.
+
+#### `world.setHeldItem`  *(cap `worldInteraction`)*
+Selects what the player holds, by item id or by hotbar slot.
+```json
+{ "method": "world.setHeldItem", "params": { "sessionId": "s_7f3c1a", "item": "minecraft:oak_sign", "hand": "main" } }
+```
+| Param | Meaning |
+|---|---|
+| `item` | Namespaced item id to resolve from the player's inventory. |
+| `slot` | Hotbar index `0`–`8` to select directly (instead of `item`). |
+| `hand` | `"main"` (default) \| `"off"`. |
+Result `{ "ok": true, "held": { "type": "minecraft:oak_sign", "count": 16, "slot": 0 } }`. `held.type` is `null` for an empty hand — an explicit "nothing", never an omitted field. Requesting an `item` the inventory does not contain is `-32000 ELEMENT_NOT_FOUND`: leaving the hand silently empty would turn every downstream placement assertion into a false green.
+
+#### `world.look`  *(cap `worldInteraction`)*
+Aims the player, by explicit angles or at a world-space point.
+```json
+{ "method": "world.look", "params": { "sessionId": "s_7f3c1a", "at": { "x": 2.5, "y": -59.5, "z": 0.5 }, "force": true } }
+```
+`yaw`/`pitch` are degrees; `at` is a world-space point; `force` snaps instead of rotating over several ticks. Result `{ "ok": true, "yaw": -90.0, "pitch": 0.0, "position": { … } }`.
+
+#### `world.move`  *(cap `worldInteraction`)*
+Primitive movement only: hold/release the vanilla control axes, optionally for a bounded duration. **Pathfinding is not part of the primitive** — it is the runner's or driver's concern, exactly as retries and assertions are.
+```json
+{ "method": "world.move", "params": { "sessionId": "s_7f3c1a", "controls": { "forward": true, "sprint": true }, "durationMs": 400 } }
+```
+| Param | Meaning |
+|---|---|
+| `controls` | Any of `forward`, `back`, `left`, `right`, `jump`, `sprint`, `sneak` → boolean. Omitted keys are left untouched. |
+| `durationMs` | Hold, then release exactly the controls THIS call switched on (never another call's). |
+| `stop` | Release every control state (overrides `controls`). |
+Result `{ "ok": true, "position": { … }, "held": ["forward"] }` — `held` is what is still held when the call returns.
 
 #### `useItem`  *(extension method — non-canon; gated by an agent `input.item` extension capability)*
 Uses/activates an item or interacts with the world/block in front of the player (right-click semantics). Selector chooses the **hotbar/inventory item** to hold first when given.
@@ -606,8 +686,8 @@ Uses/activates an item or interacts with the world/block in front of the player 
 | `hand` | `"main"` (default) \| `"off"`. |
 Result `{ "ok": true, "screenChanged": true }` (e.g., a clock item that opens a menu).
 
-#### `move`  *(extension method — non-canon; gated by an agent `input.move` extension capability)*
-Moves/positions the player. Primitive movement only; pathfinding is the runner/driver's concern.
+#### `move`  *(extension method — **superseded** by the canonical `world.move` above; kept only for pre-1.0 agents that still expose it)*
+Moves/positions the player. New agents MUST implement `world.move` (cap `worldInteraction`) instead; this richer `mode`-based sketch was never canon and its `walkTo` pathfinding belongs in the runner, not the agent.
 ```json
 { "method": "move", "params": { "sessionId": "s_7f3c1a", "mode": "lookAt", "target": { "x": 10, "y": 64, "z": -3 } } }
 ```
@@ -741,14 +821,25 @@ Result:
 {
   "ok": true,
   "block": {
-    "type": "minecraft:oak_sign",
-    "properties": { "rotation": "8" },
-    "nbtJson": "{\"Text1\":\"{\\\"text\\\":\\\"TestRegion\\\"}\"}",
+    "type": "minecraft:oak_wall_sign",
+    "properties": { "facing": "east", "waterlogged": "false" },
+    "nbt": { "front_text": { "messages": ["ChestShop", "64 B 1:2", "", ""], "has_glowing_text": false }, "is_waxed": false },
+    "nbtJson": "{\"front_text\":{\"has_glowing_text\":false,\"messages\":[\"ChestShop\",\"64 B 1:2\",\"\",\"\"]},\"is_waxed\":false}",
     "biome": "minecraft:plains"
   }
 }
 ```
 `world` defaults to the player's current world. Out-of-range/unloaded → error `-32004 WORLD_NOT_READY` (with `data.reason`).
+
+| Result field | Meaning |
+|---|---|
+| `type` | Lowercase `namespace:path` block id. |
+| `properties` | The **blockstate** properties as strings (`facing`, `waterlogged`, `rotation`, …). This is how "the sign landed on the clicked face" is proven — the block *type* is the same whichever face was clicked. |
+| `nbt` | The **block entity's** data, pre-parsed. Keys use vanilla NBT names wherever the agent's API exposes the value (`front_text.messages`, `CustomName`, `Lock`, `Items`). **Absent** means this block has no block entity *or* the agent cannot read it — never "the block entity is empty"; an agent that can look but finds nothing returns `{}`. Agent-derived, non-vanilla keys MUST be namespaced (`mc-test:persistentDataKeys`) so a reader can tell them apart. |
+| `nbtJson` | The same document as a canonical JSON string (sorted keys), for agents/clients that prefer the string form. |
+| `biome` | Biome id at the position. |
+
+> **Not a byte-exact NBT dump.** The Bukkit agent may not touch NMS (that is what keeps it version-agnostic), and no Bukkit API exposes raw block-entity NBT, so `nbt` is an **API-derived** document that borrows vanilla's key names. Treat a missing key as "not visible to this agent", which is why the runner's `expectNbt` step assertion **fails** rather than passes when there is no block entity at all.
 
 #### `truth.getEntities`  *(cap `worldTruth`)*
 Lists entities near a point (server truth).
@@ -767,6 +858,41 @@ Result:
 }
 ```
 `radius` MUST be ≤ the granted `worldTruth.radiusLimit`; exceeding it → `-32602 invalidParams`.
+
+#### `truth.getContainer`  *(cap `worldTruth`)*
+Reads a container block's whole inventory as server truth.
+```json
+{ "method": "truth.getContainer", "params": { "sessionId": "s_srv_01", "world": "world", "x": 2, "y": -60, "z": 0, "includeEmpty": false } }
+```
+Result:
+```json
+{ "ok": true, "container": { "type": "minecraft:chest", "title": "Shop Stock", "size": 27, "itemCount": 2,
+  "slots": [ { "type": "minecraft:diamond_sword", "count": 1, "slot": 0, "displayName": "Excalibur",
+               "components": { "display-name": "Excalibur", "enchants": { "DAMAGE_ALL": 5 } },
+               "componentsHash": "sha256:cb7c322c4ce6…" } ] } }
+```
+`includeEmpty` adds empty slots as `minecraft:air`/`count:0` entries; by default only occupied slots are listed (`itemCount` always counts the occupied ones). A block that is **not** a container → `-32602 invalidParams` naming what is actually there: returning an empty slot list would read as "the chest is empty", a different and false claim.
+
+#### `truth.getItem`  *(cap `worldTruth`)*
+Reads **one** slot of a container block.
+```json
+{ "method": "truth.getItem", "params": { "sessionId": "s_srv_01", "x": 2, "y": -60, "z": 0, "slot": 0 } }
+```
+Result `{ "ok": true, "slot": 0, "item": { … } }`, or `{ "ok": true, "slot": 5, "item": null }` for an empty slot — an explicit `null`, never an omitted field. A slot outside the inventory → `-32602 invalidParams`.
+
+##### The `ItemStack` shape — and why `type` is not identity
+
+| Field | Meaning |
+|---|---|
+| `type` | Lowercase `namespace:path` item id. |
+| `count` | Stack size. |
+| `slot` | Slot index this stack was read from. |
+| `displayName` / `displayNameRaw` | Color-stripped and untouched display name. |
+| `lore` | Color-stripped lore lines. |
+| `components` | The stack's **data components**, canonicalized by the agent. **Absent** = the agent cannot see components at all; `{}` = it looked and the stack genuinely has none. |
+| `componentsHash` | `sha256:<hex>` digest over the canonical form of `type` + `components`. |
+
+A modded or plugin item — a Cobblemon Poké Ball, a ChestShop sign item, an ItemsAdder block — **is a vanilla material plus components**. A test that compared `type` (and even `count`) alone would call it equal to a plain vanilla stack, so **item identity is `type` + `componentsHash`**. Agents MUST make the digest stable across reads (canonical rendering: object keys sorted, no insignificant whitespace, integral numbers without a trailing `.0`) or every comparison becomes flaky. The `components` map is the agent's *canonical view*, shaped by the API it has: the Bukkit agent uses Bukkit's own key names (`display-name`, `enchants`, `custom-model-data`, `PublicBukkitValues`), so e.g. sharpness appears as `DAMAGE_ALL`. Tests assert exact equality (`components`), a subset (`componentsInclude`), or just the digest.
 
 #### `getPlayerState`  *(extension method — non-canon; gated by an agent `player.state` extension capability)*
 Snapshot of the (agent's) player or, for the server agent, a named player.
@@ -1264,8 +1390,9 @@ These notes keep both reference implementations honest against the same contract
 | `screen.pressKey`/`screen.screenshot` | ➖ | ✅ | ➖ | ✅ |
 | `screen.clickElement`/`screen.listElements`/`screen.get` | ✅ (container) | ✅ (container+clientScreen) | ➖ | ✅ (OCR) |
 | `getWindow` | ✅ | ✅ | ➖ | ➖ |
-| `screen.typeText`/`useItem`/`move` | ✅ | ✅ | ➖ | ✅ (screen.typeText/click) |
-| `truth.getWorldBlock`/`truth.getEntities`/`getPlayerState`/`getLogs` | via server session | ✅ (client log) | ✅ | ➖ |
+| `screen.typeText` | ✅ | ✅ | ➖ | ✅ |
+| `world.useBlock`/`world.attackBlock`/`world.setHeldItem`/`world.look`/`world.move` | ✅ | ✅ | ➖ | ➖ (sees only pixels) |
+| `truth.getWorldBlock`/`truth.getEntities`/`truth.getContainer`/`truth.getItem`/`getPlayerState`/`getLogs` | via server session | ✅ (client log) | ✅ | ➖ |
 | `fixture.reset`/`fixture.set`/`player.spawnFake`/`truth.assertPluginState` | ➖ | ➖ | ✅ | ➖ |
 | `subscribe`/`unsubscribe` (chat/log/screen) | chat(+screen) | chat/log/screen | chat/log | ➖ |
 
@@ -1276,7 +1403,7 @@ These notes keep both reference implementations honest against the same contract
 ## 13. Quick reference — method and event index
 
 **Methods (requests) — canonical catalog:**
-`session.create`, `session.describe`, `session.close`, `session.ping`, `world.join`, `world.leave`, `world.sendChat`, `world.runCommand`, `world.waitForChat`, `screen.get`, `screen.listElements`, `screen.clickElement`, `screen.typeText`, `screen.pressKey`, `screen.screenshot`, `screen.waitForScreen`, `screen.close`, `truth.getWorldBlock`, `truth.getEntities`, `truth.assertPluginState`, `fixture.set`, `fixture.reset`, `player.spawnFake`, `player.despawnFake`.
+`session.create`, `session.describe`, `session.close`, `session.ping`, `world.join`, `world.leave`, `world.sendChat`, `world.runCommand`, `world.waitForChat`, `screen.get`, `screen.listElements`, `screen.clickElement`, `screen.typeText`, `screen.pressKey`, `screen.screenshot`, `screen.waitForScreen`, `screen.close`, `world.useBlock`, `world.attackBlock`, `world.setHeldItem`, `world.look`, `world.move`, `truth.getWorldBlock`, `truth.getEntities`, `truth.getContainer`, `truth.getItem`, `truth.assertPluginState`, `fixture.set`, `fixture.reset`, `player.spawnFake`, `player.despawnFake`.
 
 *(Non-canon agent extensions documented above but outside the canonical catalog: `useItem`, `move`, `getWindow`, `getPlayerState`, `getLogs`, `subscribe`, `unsubscribe`.)*
 
@@ -1284,7 +1411,7 @@ These notes keep both reference implementations honest against the same contract
 
 **Streams (extension `subscribe` `stream` values):** `chat`, `log`, `screenChanged`.
 
-**Capability keys (flat, canonical):** `chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`. Advisory descriptors (NOT capability keys; never matched): `loader` (enum) and `mcVersionRange` (string) — target descriptors; `brittle` (boolean, advertised by `pixelOcr`) — quality descriptor surfaced by the runner as a report note (§6.1).
+**Capability keys (flat, canonical):** `chat`, `command`, `containerGui`, `clientScreens`, `screenshot`, `rendering`, `worldInteraction`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`, `testIdTags`. Advisory descriptors (NOT capability keys; never matched): `loader` (enum) and `mcVersionRange` (string) — target descriptors; `brittle` (boolean, advertised by `pixelOcr`) — quality descriptor surfaced by the runner as a report note (§6.1).
 
 **Selector keys (shape only; grammar in `SELECTORS.md`):** `label`, `text`, `textContains`, `loreContains`, `itemType`, `role`, `index`, `nth`, `within`, `testId`. Role enum: `button` | `slot` | `label` | `input` | `tab` | `list` | `listItem`.
 

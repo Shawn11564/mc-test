@@ -138,11 +138,34 @@ public final class ScreenHandlers {
         String text = optString(params, "text");
         boolean clear = optBoolean(params, "clear", false);
         boolean submit = optBoolean(params, "submit", false);
-        bridge.typeText(elementId, text != null ? text : "", clear, submit);
+        String typedVia = "textField";
+        boolean typed = bridge.typeText(elementId, text != null ? text : "", clear, submit);
+        if (!typed && selector == null) {
+            // No text-input widget anywhere on this screen. Some screens own their editing and
+            // expose none — the vanilla SIGN EDITOR is the canonical case (it drives a
+            // SelectionManager straight from Screen#charTyped). Replay the characters on the
+            // screen itself; the bridge reports charTyped's own boolean, so a screen that
+            // IGNORES text still falls through to ELEMENT_NOT_FOUND below and the plan-A
+            // guarantee ("a no-op type is never ok:true") is preserved.
+            //
+            // Only attempted with NO selector: when the author named a specific element that
+            // turned out not to be a text input, typing somewhere else would answer a different
+            // question than the one asked.
+            typed = bridge.typeIntoScreen(text != null ? text : "", clear, submit);
+            typedVia = "screenCharTyped";
+        }
+        if (!typed) {
+            // No focused field (no selector) or the resolved element isn't a text-input widget, and
+            // the screen did not consume characters either — must never silently report ok:true.
+            throw McTestException.elementNotFound(selector);
+        }
 
         JsonObject result = new JsonObject();
         result.addProperty("ok", true);
         result.addProperty("screenChanged", false);
+        // Surface WHICH path typed, so a report can never hide that a sign was typed through the
+        // screen-level fallback rather than a real text field.
+        result.addProperty("typedVia", typedVia);
         return result;
     }
 

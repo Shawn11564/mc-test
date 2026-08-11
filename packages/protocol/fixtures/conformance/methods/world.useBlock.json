@@ -1,0 +1,30 @@
+{
+  "method": "world.useBlock",
+  "description": "Right-click a block face as the player. Sneaking suppresses the block's own use behavior, so a held item places against the clicked face (the canonical placement shape).",
+  "request": { "jsonrpc": "2.0", "id": 30, "method": "world.useBlock", "params": { "sessionId": "s_ui_01", "pos": { "x": 2, "y": -60, "z": 0 }, "face": "north", "hand": "main", "sneak": true } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "result": {
+          "ok": true,
+          "screenChanged": false,
+          "block": { "type": "minecraft:chest", "properties": { "facing": "north" } },
+          "face": "north",
+          "sneak": true,
+          "held": { "type": "minecraft:oak_sign", "count": 16, "slot": 0 }
+        }
+      }
+    },
+    {
+      "name": "chunk-not-loaded",
+      "envelope": { "jsonrpc": "2.0", "id": 30, "error": { "code": -32004, "message": "No block at 2,-60,0 (chunk not loaded)", "data": { "reason": "WORLD_NOT_READY", "retryable": true } } }
+    },
+    {
+      "name": "not-supported",
+      "envelope": { "jsonrpc": "2.0", "id": 30, "error": { "code": -32002, "message": "world.useBlock requires the worldInteraction capability", "data": { "reason": "METHOD_NOT_SUPPORTED", "retryable": false, "unmet": ["worldInteraction"] } } }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: world.move",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "world.move",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "controls": {
+          "additionalProperties": false,
+          "description": "Primitive movement control states.",
+          "type": "object",
+          "properties": {
+            "forward": {
+              "type": "boolean"
+            },
+            "back": {
+              "type": "boolean"
+            },
+            "left": {
+              "type": "boolean"
+            },
+            "right": {
+              "type": "boolean"
+            },
+            "jump": {
+              "type": "boolean"
+            },
+            "sprint": {
+              "type": "boolean"
+            },
+            "sneak": {
+              "type": "boolean"
+            }
+          }
+        },
+        "durationMs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stop": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

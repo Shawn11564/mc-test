@@ -76,6 +76,13 @@
             "nbtJson": {
               "type": "string"
             },
+            "nbt": {
+              "description": "Free-form by-name JSON object.",
+              "type": "object",
+              "patternProperties": {
+                "^(.*)$": {}
+              }
+            },
             "biome": {
               "type": "string"
             }

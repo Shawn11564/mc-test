@@ -1,0 +1,26 @@
+# NEGATIVE CONTROL for the time verbs (paired with time-verbs.mctest.yml).
+#
+# Identical setup — sand dropped 20 blocks above the landing spot — but it asserts with
+# `getBlock` (assert ONCE) instead of `waitForBlock` (assert UNTIL). The sand is still
+# in flight when the read happens, so this MUST go red.
+#
+# Without this control the positive run proves nothing about waiting: a `waitForBlock`
+# that simply returned the first read would be green there too. This is the test that
+# says the retry loop is load-bearing.
+name: time-verbs-assert-once-races-must-fail
+requires:
+  command: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 4 -60 0 minecraft:air replace"
+  - command: "setblock 4 -40 0 minecraft:sand replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+  # No wait: the sand has ~1s of falling left, so the landing spot is still air.
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 4
+      y: -60
+      z: 0
+      expect: minecraft:sand

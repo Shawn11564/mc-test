@@ -82,6 +82,8 @@ public final class McTestAgentPlugin extends JavaPlugin {
                 .setLogSink(logSink)
                 .register("truth.getWorldBlock", "worldTruth", worldTruth::getWorldBlock)
                 .register("truth.getEntities", "worldTruth", worldTruth::getEntities)
+                .register("truth.getContainer", "worldTruth", worldTruth::getContainer)
+                .register("truth.getItem", "worldTruth", worldTruth::getItem)
                 .register("truth.assertPluginState", "pluginState", stateProbe::assertPluginState)
                 .register("fixture.set", "fixtures", fixtures::set)
                 .register("fixture.reset", "fixtures", fixtures::reset);

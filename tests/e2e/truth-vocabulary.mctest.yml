@@ -1,0 +1,102 @@
+# Phase-2 truth-vocabulary acceptance, on a REAL server.
+#
+# Two things are proven here that `getBlock: expect` alone never could:
+#   1. WHERE the sign landed — the sign is placed by sneak-clicking the chest's EAST
+#      face (the phase-2 world-interaction verbs), and `expectProperties: {facing: east}`
+#      asserts the resulting blockstate. The block TYPE is identical whichever face you
+#      click, so only the property assertion can tell right from wrong.
+#   2. WHAT is in the chest — two diamond swords of the same material and count, one
+#      carrying custom components. `components` compares EXACTLY, which is what makes
+#      "a modded item only equals itself" true.
+#
+# Needs `ops: [Tester]` (the bot runs /setblock, /give, /item, /data as the joined
+# player) and the server-bukkit truth agent (`agents: [server-bukkit]`) — without it
+# every truth step honestly SKIPS with unmet=[worldTruth].
+name: truth-vocabulary-sign-and-components
+requires:
+  command: true
+  worldInteraction: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 3 -60 0 minecraft:air replace"
+  - command: "setblock 2 -60 0 minecraft:chest replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+  - command: "give @s minecraft:oak_sign 1"
+  - waitForChat: { contains: "Gave 1", timeoutMs: 10000 }
+
+  # --- place the sign on the EAST face, then prove it went THERE ----------------
+  - look: { at: { x: 2.5, y: -59.5, z: 0.5 }, force: true }
+  - setHeldItem: minecraft:oak_sign
+  - useBlock: { pos: { x: 2, y: -60, z: 0 }, face: east, sneak: true }
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 3
+      y: -60
+      z: 0
+      expect: minecraft:oak_wall_sign
+      expectProperties: { facing: east }
+
+  # --- block-entity NBT: give the sign text, then read it back ------------------
+  - command: 'data merge block 3 -60 0 {front_text:{messages:[''{"text":"ChestShop"}'',''{"text":"64 B 1:2"}'',''{"text":""}'',''{"text":""}'']}}'
+  - waitForChat: { contains: "Modified block data", timeoutMs: 10000 }
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 3
+      y: -60
+      z: 0
+      expectNbt:
+        front_text:
+          messages: ["ChestShop", "64 B 1:2", "", ""]
+
+  # --- container truth with component-exact item identity -----------------------
+  # Slot 0: a NAMED, enchanted diamond sword. Slot 1: a plain one of the same material.
+  - command: 'item replace block 2 -60 0 container.0 with minecraft:diamond_sword{display:{Name:''{"text":"Excalibur","italic":false}''},Enchantments:[{id:"minecraft:sharpness",lvl:5}]} 1'
+  - waitForChat: { contains: "Replaced a slot", timeoutMs: 10000 }
+  - command: "item replace block 2 -60 0 container.1 with minecraft:diamond_sword 1"
+  # Match the SECOND replacement specifically: "Replaced a slot" alone would re-match the
+  # first command's line from the chat buffer and let the step pass before slot 1 exists.
+  - waitForChat: { contains: "with [Diamond Sword]", timeoutMs: 10000 }
+
+  - getContainer:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      expect: minecraft:chest
+      expectCount: 2
+  - getItem:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      slot: 0
+      expect:
+        type: minecraft:diamond_sword
+        count: 1
+        displayName: Excalibur
+        # NB: the component map uses BUKKIT's key names (the agent reports what its API
+        # exposes, not a re-spelled vanilla NBT), so sharpness is `DAMAGE_ALL` here.
+        componentsInclude:
+          enchants: { DAMAGE_ALL: 5 }
+  # The control: the SAME material and count in slot 1 must NOT carry those components.
+  # `components: {}` is an EXACT assertion — a plain sword has no component data at all,
+  # so this step goes red the moment the two stacks stop being distinguishable.
+  - getItem:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      slot: 1
+      expect:
+        type: minecraft:diamond_sword
+        count: 1
+        components: {}
+  - getItem:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      slot: 5
+      expect: { empty: true }

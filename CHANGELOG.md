@@ -10,6 +10,143 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-08-08 — Time verbs, sign-editor typing, and a rendered-client-on-modded-server row
+- **New time verbs `waitForBlock` / `waitForPluginState`.** Real SUTs write state *after* the action
+  that triggered it (a scheduled task, a packet round-trip), which left tests choosing between
+  asserting immediately and flaking, or sleeping and hoping. These reuse the `click` retry wrapper
+  verbatim — the waiting stays in the runner, the agent keeps answering instantaneously — and share
+  their assert-once twin's probe, so `getBlock` and `waitForBlock` can never judge the same world
+  differently. On timeout the LAST real mismatch is rethrown, so a failure says what never became
+  true rather than "timed out"; a wait with no condition is rejected instead of passing on the first
+  read; and a malformed `waitForPluginState` (no `expect`) fails immediately rather than burning the
+  budget on a question with no verdict.
+- **Sign-editor typing (the `charTyped` fallback).** The vanilla sign editor has **no**
+  `TextFieldWidget`/`EditBox` — it drives a `SelectionManager` straight from `Screen#charTyped` — so
+  after the plan-A false-green fix every sign-typing step was (correctly) `ELEMENT_NOT_FOUND`. The
+  client agents now fall back to replaying the characters on the screen itself, with the honesty
+  intact: the verdict comes from `charTyped`'s own boolean, so a screen that *ignores* text is still
+  `ELEMENT_NOT_FOUND`; the fallback is only tried when no `selector` was given (a selector names one
+  element); and the new `screen.typeText` result field **`typedVia`** (`textField` |
+  `screenCharTyped`) means a report can never hide which path ran. The policy lives in
+  `/agents/core` (unit-tested with a fake bridge); only the mapped `charTyped` call is per loader.
+- **New `signEditor` fixture** on the Bukkit agent (`Player#openSign`): the server opens a real sign
+  editor on a real client. This is what makes the above testable end to end — the rendered client
+  advertises no `worldInteraction` yet, and the vanilla protocol lets the server do it.
+- **A rendered-client-on-MODDED-SERVER matrix row** (`fabric-server-1.21-client`). Every earlier
+  `driver: inprocess` row boots a Paper server, which is right for a client-side-only mod but left a
+  SUT that is one mod on BOTH sides (a shop's shape: server owns the state, client owns the GUI) with
+  no row to copy. Fixing it needed a real gap closed: the client's mod list silently **dropped**
+  `modrinth:` entries (they have no local `path`), so a client could come up missing a dependency the
+  SUT needs to load. New target key **`clientMods`** states the client's set explicitly, and every
+  entry is resolved.
+- **Fixed a rendered-client process leak** found while proving the above: the launched client JVM
+  re-execs, so the pid the driver holds exits while the real client keeps running. Teardown believed
+  Node's `exitCode` and skipped every escalation, leaving a client alive that kept the extracted
+  GLFW/LWJGL natives mapped — the next rendered run then failed `EBUSY … glfw.dll`, which reads as a
+  flaky lane rather than a leak. Teardown now checks liveness from the OS, escalates
+  SIGTERM → SIGKILL → tree-kill, and always finishes with a precise sweep by the client's own
+  per-instance game dir; survivors are surfaced, never swallowed.
+- **Proven on real boots:** a rendered Fabric 1.21.1 client types onto a real sign editor via the
+  fallback and `waitForBlock` confirms the typed line in the block entity through server truth; on
+  Paper, `waitForBlock` catches falling sand while the assert-once `getBlock` on the same state
+  provably races (the negative control that makes the wait meaningful). Harness
+  `tests/e2e/run-time-verbs.mjs` (5/5), wired into both e2e lanes.
+
+### 2026-08-08 — Truth vocabulary: assert WHERE a block ended up and WHAT an item actually is
+- **`expectProperties` on `getBlock`** — subset assertions against the authoritative **blockstate**
+  (`{ facing: east }`). The block *type* is `oak_wall_sign` whichever face you clicked, so until now a
+  placement test could not tell right from wrong; the properties already crossed the wire and nothing
+  read them. A property the block does not have is a FAILURE, never a vacuous pass.
+- **Block-entity data is finally populated.** `block.nbtJson` has been in the schema since M1 and was
+  never filled; the Bukkit agent now emits both it and a pre-parsed `block.nbt` twin, read through
+  `BlockState` (`Sign` front/back text, `Container` name/lock/items, `Skull`, `CreatureSpawner`,
+  `Lectern`, plus plugin PDC keys under a namespaced `mc-test:` key). It is an **API-derived**
+  document using vanilla NBT names — Bukkit exposes no raw NBT and the agent may not touch NMS — so an
+  absent key means "not visible to this agent". Accordingly `expectNbt` FAILS on a block with no block
+  entity rather than passing on nothing.
+- **New `truth.getContainer` / `truth.getItem` (cap `worldTruth`) + the `getContainer`/`getItem` step
+  verbs**, with **component-exact item identity**. `type` + `count` is not an identity: a Cobblemon
+  Poké Ball, a ChestShop sign item and an ItemsAdder block are all vanilla materials plus data
+  components, so comparing materials would call them equal to plain stacks. Every stack now carries a
+  canonical `components` map (Bukkit's `ItemMeta#serialize()`, recursively normalized) and a
+  `componentsHash` digest over `type` + components. Assertions come in three strengths — `components`
+  (exact whole-map), `componentsInclude` (subset), `componentsHash` (digest) — plus `empty: true`.
+  An empty slot is an explicit `item: null`, and a non-container block is `invalidParams`, never an
+  empty container.
+- **Honest about what the agent cannot see:** `components` absent means "this agent cannot read
+  components" (distinct from `{}` = "it looked, there are none"), and a component assertion against
+  such an agent FAILS. The digest is canonical (sorted keys, no whitespace, integral numbers without
+  `.0`) so the same item hashes identically across reads instead of flaking.
+- **Proven on a real Paper 1.20.4 boot** (`tests/e2e/truth-vocabulary.mctest.yml`, harness
+  `tests/e2e/run-truth-vocabulary.mjs`, wired into the e2e lane): a sign sneak-placed on a chest's EAST
+  face asserts `facing=east`, its `/data merge`-set text asserts through `expectNbt`, and two diamond
+  swords of the same material and count in the same chest are told apart by their components. Two
+  **negative controls** back it: the same sign on the NORTH face fails the facing assertion, and the
+  plain sword fails the enchanted one's component check while still satisfying `type` + `count`.
+
+### 2026-08-08 — World-interaction verbs: a test can now ACT on the world, not just on GUIs
+- **New capability `worldInteraction`** (the 14th canonical matchable boolean, `PROTOCOL.md` §6.1) and
+  five new canonical MCTP methods under it: **`world.useBlock`**, **`world.attackBlock`**,
+  **`world.setHeldItem`**, **`world.look`**, **`world.move`**. Until now every verb went through a GUI,
+  chat, or a truth read; the gameplay half of a plugin — placing, breaking, clicking blocks — had no
+  vocabulary at all. `worldInteraction` (ACT as the player) is deliberately separate from `worldTruth`
+  (READ authoritative state): in the canonical flow the bot places the sign and the *server agent*
+  confirms where it landed, so neither half can rubber-stamp the other.
+- **Authoring verbs `useBlock` / `attackBlock` / `setHeldItem` / `look` / `move`** in both surfaces
+  (YAML + fluent), each gated on `worldInteraction` for per-step honest skips. Blocks are addressed by
+  position + face — the one place coordinates are legal, since a block in the world has no label to
+  select on; UI verbs remain selector-only.
+- **The headless (Mineflayer) driver implements all five** and now advertises
+  `chat, command, containerGui, typeText, pressKey, worldInteraction`. `sneak: true` genuinely holds
+  sneak across the interaction (and long enough for the server to see the pose), which is what makes a
+  held item place against the clicked face instead of opening the block.
+- **Honest failure, not silent no-ops:** `world.setHeldItem` for an item the inventory does not contain
+  is `ELEMENT_NOT_FOUND` (a quietly empty hand would turn every downstream placement assertion green),
+  and an unloaded position is `WORLD_NOT_READY`. The **pixel/OCR stub advertises no `worldInteraction`**,
+  so a scenario pinned to `driver: pixel` is skipped `NO_COMPATIBLE_DRIVER unmet=[worldInteraction]`
+  before anything is booted.
+- **Proven on a real Paper 1.20.4 boot** (`tests/e2e/world-interaction.mctest.yml`, harness
+  `tests/e2e/run-world-interaction.mjs`, wired into the e2e lane): a bot sneak-clicks a chest's north
+  face holding an oak sign, and the sign lands on that face — confirmed twice over, by the server's own
+  `/execute if block` and by an authoritative MCTP `truth.getWorldBlock` when the Bukkit agent is
+  co-selected. A **negative control** runs the identical scenario without `sneak` and asserts nothing is
+  placed, so the positive run cannot be green by accident.
+
+### 2026-08-05 — Nightly CI audit + failure notification; `doctor` becomes a real preflight
+- **Audited the nightly E2E lane (45 runs, 2026-06-23 → 2026-08-04) and found a masked flake.** By
+  workflow conclusion the nightly was 43/45 green; by *per-job* conclusion it was **35/45**. The
+  `fabric-rendered-client` lane carries `continue-on-error: true`, which reports `success` to the
+  `needs` context even when the job fails — so **8 real rendered-client failures were invisible**
+  (2026-06-23/24/26/27, 07-02/05/10/11, 08-03). Every one is the same failure: the rendered harness'
+  flake budget reporting `NONDETERMINISTIC`, with a `screenshot-failure-step7-click.png` artifact —
+  a GUI-timing flake on the click step, ~18% of nights. The two runs that were red outright were
+  transient upstream infra, not rot: a `repo.papermc.io` checksum mismatch on `Java-WebSocket-1.5.7`
+  (2026-06-28) and an `ECONNRESET` in `download-artifact` (2026-07-30).
+- **Added a `notify` job so a nightly failure can no longer pass unnoticed.** It reads the run's
+  per-job conclusions from the API rather than `needs.*.result` — precisely because the latter is
+  blind to `continue-on-error` lanes — and opens one tracking issue labelled `nightly-e2e`, comments
+  on it for each subsequent failure, and **closes it automatically** when a run comes back fully
+  green. It deliberately does not fail the workflow: keeping the fragile GL lane non-blocking is an
+  intentional choice, so the fix is visibility, not a new gate. README gained CI + nightly badges
+  with a note about that gap.
+- **Fixed real version rot:** four of the five E2E lanes (and the CI lane) pinned `node-version: '20'`
+  while `mineflayer`/`minecraft-protocol` declare `engines.node: ">=22"` — an `EBADENGINE` warning on
+  every install and an unsupported runtime under the headless driver. All lanes and the root
+  `engines.node` are now `22`; the docs' stated prerequisite moved from "Node.js 18+" to "Node.js 22+".
+- **`mc-test doctor` is now a dependency preflight, and `mc-test run` performs it before booting.**
+  New `packages/runner/src/doctor/Preflight.ts` derives what a session needs **from the selected
+  targets** rather than a hardcoded list — a matrix with no `driver: inprocess` row is never asked for
+  a display, and an agent jar nobody names is never demanded. It checks the JDK, free disk (thresholds
+  scale for rendered/modded rows), the agent jars the targets name, Gradle (only when something still
+  has to be built), and, for rendered rows, a local display **or** the pinned `mc-test/rendered:21`
+  Docker image. `doctor` exits non-zero with a concrete fix for each unmet dependency (`--target`
+  narrows the preflight, `--strict` also fails on warnings).
+- **The preflight keeps honest skips honest.** Checks are split into blocking (no JDK, a full disk, an
+  unparseable matrix — nothing truthful could come of the run) and non-blocking (an unbuilt agent jar,
+  no display — these already degrade to a `skipped` with a reason). `run` aborts only on the former and
+  merely warns on the latter, so capability negotiation still does its job; `--strict-preflight` refuses
+  a degraded session outright and `--no-preflight` opts out.
+
 ### 2026-06-22 — mc-test publishes its OWN report.html (dogfoods the consumer publish model)
 - The E2E workflow (`.github/workflows/e2e.yml`) now publishes mc-test's own self-test report the same
   way the reusable consumer workflow (`mc-test-ci.yml`) does for downstream projects. A new

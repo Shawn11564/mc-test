@@ -11,7 +11,15 @@
  */
 import { describeSelector, type Selector, type CapabilityKey, type StepVerb } from "@mc-test/protocol";
 import { Session } from "./Session.js";
-import { withSelectorWaits } from "./SelectorWaits.js";
+import { withSelectorWaits, UnsatisfiedError } from "./SelectorWaits.js";
+import {
+  describeItem,
+  matchItem,
+  matchProperties,
+  matchSubset,
+  type ItemExpectation,
+  type TruthItem,
+} from "./TruthMatch.js";
 import { captureScreenshot, type ScreenshotArtifact } from "../report/screenshots.js";
 
 /**
@@ -44,7 +52,21 @@ export const VERB_CAPABILITY: Record<StepVerb, StepCapReq> = {
   type: "typeText",
   press: "pressKey",
   screenshot: "screenshot",
+  // World interaction: acting on the world AS the player. A driver that can only
+  // read/observe (server-truth agent, pixel stub) does not advertise it, so these
+  // steps honestly SKIP there rather than pretending to click.
+  useBlock: "worldInteraction",
+  attackBlock: "worldInteraction",
+  setHeldItem: "worldInteraction",
+  look: "worldInteraction",
+  move: "worldInteraction",
   getBlock: "worldTruth",
+  // Time verbs: the SAME capability as their assert-once twins — a wait is a
+  // repeated read, so it can never be available where the read is not.
+  waitForBlock: "worldTruth",
+  waitForPluginState: "pluginState",
+  getContainer: "worldTruth",
+  getItem: "worldTruth",
   getEntities: "worldTruth",
   assertPluginState: "pluginState",
   fixture: "fixtures",
@@ -144,6 +166,56 @@ interface PluginStateResult {
   value?: unknown;
   matched?: boolean | null;
 }
+interface TypeTextResult {
+  typedVia?: "textField" | "screenCharTyped";
+}
+interface ContainerResult {
+  container?: {
+    type?: string;
+    title?: string;
+    size?: number;
+    itemCount?: number;
+    slots?: TruthItem[];
+  };
+}
+interface ItemResult {
+  slot?: number;
+  item?: TruthItem | null;
+}
+interface UseBlockResult {
+  block?: { type?: string };
+}
+interface AttackBlockResult {
+  block?: { type?: string };
+  broken?: boolean;
+}
+interface SetHeldItemResult {
+  held?: { type?: string | null };
+}
+interface LookResult {
+  yaw?: number;
+  pitch?: number;
+}
+interface MoveResult {
+  position?: { x: number; y: number; z: number };
+  held?: string[];
+}
+
+/** Coerce an authored `pos` into integer block coordinates (or fail loudly). */
+function blockPos(raw: unknown, verb: string): { x: number; y: number; z: number } {
+  const p = asObject(raw);
+  const x = Number(p["x"]);
+  const y = Number(p["y"]);
+  const z = Number(p["z"]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    throw new Error(`${verb} requires pos: { x, y, z } (got ${JSON.stringify(raw)})`);
+  }
+  return { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+}
+
+const describePos = (p: { x: number; y: number; z: number }): string => `${p.x},${p.y},${p.z}`;
+
+const round1 = (n: number | undefined): string => (typeof n === "number" ? n.toFixed(1) : "?");
 
 /** The `expect` predicate operators (PROTOCOL.md §7.5). */
 const PREDICATE_KEYS = new Set(["equals", "notEquals", "contains", "gt", "gte", "lt", "lte", "exists"]);
@@ -161,6 +233,98 @@ function toExpect(raw: unknown): Record<string, unknown> {
     }
   }
   return { equals: raw };
+}
+
+/** Builds the error a probe throws: a hard failure, or a "not yet" the wait loop retries. */
+type ProbeFailure = (message: string) => Error;
+
+/**
+ * One authoritative block read + every assertion the author attached
+ * (`expect` / `expectProperties` / `expectNbt`). Shared verbatim by `getBlock`
+ * (assert once → `Error`) and `waitForBlock` (assert until → `UnsatisfiedError`),
+ * so the two verbs can never drift into judging the same world differently.
+ */
+async function probeBlock(session: Session, a: Record<string, unknown>, fail: ProbeFailure): Promise<string> {
+  const result = await session.call<{
+    block?: { type?: string; properties?: Record<string, unknown>; nbt?: Record<string, unknown> };
+  }>("truth.getWorldBlock", {
+    world: a["world"],
+    x: a["x"],
+    y: a["y"],
+    z: a["z"],
+  });
+  const got = result.block?.type ?? null;
+  const where = `${a["x"]},${a["y"]},${a["z"]}`;
+  const notes: string[] = [];
+  // With `expect`, this is a real world-state assertion: FAIL unless the agent's authoritative
+  // block read matches (case-insensitive — agents emit lowercase `namespace:path`). Without it,
+  // it stays a bare read that still exercises the full server-side block-read path (and fails on
+  // any agent error, e.g. WORLD_NOT_READY / an unresolved mapping).
+  if (a["expect"] !== undefined) {
+    const want = String(a["expect"]);
+    if (got === null || got.toLowerCase() !== want.toLowerCase()) {
+      throw fail(`block assertion failed at ${where}: expected ${want}, got ${got ?? "?"}`);
+    }
+    notes.push(`= ${got} (expected ${want})`);
+  }
+  // Blockstate properties (`facing`, `waterlogged`, …): a SUBSET match against the
+  // agent's authoritative `properties`. This is how "the sign landed on the clicked
+  // face" is proven — the type alone cannot distinguish north from east.
+  if (a["expectProperties"] !== undefined) {
+    const want = asObject(a["expectProperties"]);
+    const problem = matchProperties(want, result.block?.properties);
+    if (problem) {
+      throw fail(`block property assertion failed at ${where} (${got ?? "?"}): ${problem}`);
+    }
+    notes.push(`properties ${Object.entries(want).map(([k, v]) => `${k}=${String(v)}`).join(" ")} ✓`);
+  }
+  // Block-entity data (sign text, container custom name, …). An `expectNbt` against a
+  // block with NO block entity FAILS: passing vacuously there would green-light every
+  // "the sign says X" assertion on a block that is not even a sign.
+  if (a["expectNbt"] !== undefined) {
+    const want = asObject(a["expectNbt"]);
+    if (result.block?.nbt === undefined) {
+      throw fail(
+        `block-entity assertion failed at ${where} (${got ?? "?"}): the agent reported no block entity ` +
+          `(this block has none, or the agent cannot read it)`,
+      );
+    }
+    const problem = matchSubset(want, result.block.nbt);
+    if (problem) {
+      throw fail(`block-entity assertion failed at ${where} (${got ?? "?"}): ${problem}`);
+    }
+    notes.push(`nbt ${Object.keys(want).join(",")} ✓`);
+  }
+  if (notes.length) return `block ${where} ${notes.join(", ")}`;
+  return `block: ${got ?? "?"}`;
+}
+
+/**
+ * One authoritative plugin-state query + its verdict. Shared by `assertPluginState`
+ * (assert once) and `waitForPluginState` (assert until).
+ */
+async function probePluginState(
+  session: Session,
+  a: Record<string, unknown>,
+  fail: ProbeFailure,
+): Promise<string> {
+  // `expect` is REQUIRED to produce a verdict: without it the agent returns `matched:null`
+  // and the step would pass regardless of the actual state (a false green). Fail loudly instead.
+  // This is a MALFORMED TEST, not a "not yet" — so it is always a hard Error, never retried.
+  if (a["expect"] === undefined) {
+    throw new Error(`pluginState '${String(a["query"] ?? "")}' requires 'expect' to produce a verdict`);
+  }
+  const result = await session.call<PluginStateResult>("truth.assertPluginState", {
+    ...(a["plugin"] ? { plugin: a["plugin"] } : {}),
+    query: String(a["query"] ?? ""),
+    ...(a["args"] ? { args: a["args"] } : {}),
+    expect: toExpect(a["expect"]),
+  });
+  // Pass only on an explicit positive verdict; `matched` false/null/absent is a failure.
+  if (result.matched !== true) {
+    throw fail(`pluginState assertion failed: ${String(a["query"])} = ${JSON.stringify(result.value)}`);
+  }
+  return `pluginState ${String(a["query"])} = ${JSON.stringify(result.value)}`;
 }
 
 /**
@@ -241,13 +405,17 @@ export async function executeStep(
       return `clicked ${describeSelector(selector)} (via ${result.resolved?.via ?? "?"})`;
     }
     case "type": {
-      await session.call("screen.typeText", {
+      const result = await session.call<TypeTextResult>("screen.typeText", {
         text: String(a["text"] ?? ""),
         ...(a["selector"] ? { selector: a["selector"] } : {}),
         ...(a["clear"] !== undefined ? { clear: a["clear"] } : {}),
         ...(a["submit"] !== undefined ? { submit: a["submit"] } : {}),
       });
-      return "typed text";
+      // Surface HOW the text went in. `screenCharTyped` means the agent fell back to
+      // replaying characters on the screen itself (the sign editor has no text widget) —
+      // a report must never hide that distinction, and older agents that report nothing
+      // simply say "typed text" as before.
+      return result.typedVia ? `typed text (via ${result.typedVia})` : "typed text";
     }
     case "press": {
       await session.call("screen.pressKey", { key: String(a["key"] ?? "") });
@@ -286,51 +454,170 @@ export async function executeStep(
         : "";
       return `screenshot → ${artifact.path}${diffNote}`;
     }
+    case "useBlock": {
+      const pos = blockPos(a["pos"], "useBlock");
+      const face = String(a["face"] ?? "up");
+      const result = await session.call<UseBlockResult>("world.useBlock", {
+        pos,
+        face,
+        ...(a["hand"] ? { hand: a["hand"] } : {}),
+        ...(a["sneak"] !== undefined ? { sneak: a["sneak"] === true } : {}),
+        ...(a["cursor"] ? { cursor: a["cursor"] } : {}),
+      });
+      const sneaking = a["sneak"] === true ? "sneak-" : "";
+      return `${sneaking}used ${result.block?.type ?? "block"} at ${describePos(pos)} face ${face}`;
+    }
+    case "attackBlock": {
+      const pos = blockPos(a["pos"], "attackBlock");
+      const face = String(a["face"] ?? "up");
+      const result = await session.call<AttackBlockResult>("world.attackBlock", {
+        pos,
+        face,
+        ...(a["breakBlock"] !== undefined ? { breakBlock: a["breakBlock"] === true } : {}),
+      });
+      return `attacked ${result.block?.type ?? "block"} at ${describePos(pos)} face ${face}${
+        result.broken ? " (broken)" : ""
+      }`;
+    }
+    case "setHeldItem": {
+      // String shorthand: `setHeldItem: minecraft:oak_sign`.
+      const params =
+        typeof step.args === "string"
+          ? { item: step.args }
+          : {
+              ...(a["item"] !== undefined ? { item: String(a["item"]) } : {}),
+              ...(typeof a["slot"] === "number" ? { slot: a["slot"] } : {}),
+              ...(a["hand"] ? { hand: a["hand"] } : {}),
+            };
+      const result = await session.call<SetHeldItemResult>("world.setHeldItem", params);
+      return `holding ${result.held?.type ?? "nothing"}`;
+    }
+    case "look": {
+      const result = await session.call<LookResult>("world.look", {
+        ...(typeof a["yaw"] === "number" ? { yaw: a["yaw"] } : {}),
+        ...(typeof a["pitch"] === "number" ? { pitch: a["pitch"] } : {}),
+        ...(a["at"] ? { at: a["at"] } : {}),
+        ...(a["force"] !== undefined ? { force: a["force"] === true } : {}),
+      });
+      return `looking yaw=${round1(result.yaw)} pitch=${round1(result.pitch)}`;
+    }
+    case "move": {
+      const result = await session.call<MoveResult>("world.move", {
+        ...(a["controls"] ? { controls: a["controls"] } : {}),
+        ...(typeof a["durationMs"] === "number" ? { durationMs: a["durationMs"] } : {}),
+        ...(a["stop"] !== undefined ? { stop: a["stop"] === true } : {}),
+      });
+      const held = result.held?.length ? ` (holding ${result.held.join(",")})` : "";
+      const p = result.position;
+      return `moved${p ? ` → ${round1(p.x)},${round1(p.y)},${round1(p.z)}` : ""}${held}`;
+    }
     case "getBlock": {
-      const result = await session.call<{ block?: { type?: string } }>("truth.getWorldBlock", {
-        world: a["world"],
+      // Assert ONCE: any mismatch is a failure right now.
+      return probeBlock(session, a, (message) => new Error(message));
+    }
+    case "waitForBlock": {
+      // Assert UNTIL: the exact same probe, wrapped in the exact same retry loop the
+      // `click` verb uses. A mismatch becomes an UnsatisfiedError, which the wrapper
+      // retries until the budget expires — then rethrows it, so a timeout still says
+      // WHAT never became true instead of a bare deadline message. This is what makes
+      // a deferred state (a plugin writing a block a tick or three later) testable
+      // without sleeps in the test and without waiting logic inside the agent.
+      const timeoutMs = (a["timeoutMs"] as number | undefined) ?? 10000;
+      const intervalMs = (a["intervalMs"] as number | undefined) ?? 250;
+      if (a["expect"] === undefined && a["expectProperties"] === undefined && a["expectNbt"] === undefined) {
+        // A wait with nothing to wait FOR would return on the first read and read as
+        // coverage; demand a condition rather than pass vacuously.
+        throw new Error(
+          "waitForBlock requires at least one of 'expect', 'expectProperties' or 'expectNbt' to have something to wait for",
+        );
+      }
+      const detail = await withSelectorWaits(
+        () => probeBlock(session, a, (message) => new UnsatisfiedError(message)),
+        { timeoutMs, intervalMs, retryUnsatisfied: true },
+      );
+      return `${detail} (within ${timeoutMs}ms)`;
+    }
+    case "waitForPluginState": {
+      const timeoutMs = (a["timeoutMs"] as number | undefined) ?? 10000;
+      const intervalMs = (a["intervalMs"] as number | undefined) ?? 250;
+      const detail = await withSelectorWaits(
+        () => probePluginState(session, a, (message) => new UnsatisfiedError(message)),
+        { timeoutMs, intervalMs, retryUnsatisfied: true },
+      );
+      return `${detail} (within ${timeoutMs}ms)`;
+    }
+    case "getContainer": {
+      const result = await session.call<ContainerResult>("truth.getContainer", {
+        ...(a["world"] ? { world: a["world"] } : {}),
         x: a["x"],
         y: a["y"],
         z: a["z"],
+        ...(a["includeEmpty"] !== undefined ? { includeEmpty: a["includeEmpty"] === true } : {}),
       });
-      const got = result.block?.type ?? null;
-      // With `expect`, this is a real world-state assertion: FAIL unless the agent's authoritative
-      // block read matches (case-insensitive — agents emit lowercase `namespace:path`). Without it,
-      // it stays a bare read that still exercises the full server-side block-read path (and fails on
-      // any agent error, e.g. WORLD_NOT_READY / an unresolved mapping).
+      const where = `${a["x"]},${a["y"]},${a["z"]}`;
+      const container = result.container;
+      if (!container) throw new Error(`no container reported at ${where}`);
       if (a["expect"] !== undefined) {
         const want = String(a["expect"]);
-        if (got === null || got.toLowerCase() !== want.toLowerCase()) {
+        if ((container.type ?? "").toLowerCase() !== want.toLowerCase()) {
           throw new Error(
-            `block assertion failed at ${a["x"]},${a["y"]},${a["z"]}: expected ${want}, got ${got ?? "?"}`,
+            `container assertion failed at ${where}: expected ${want}, got ${container.type ?? "?"}`,
           );
         }
-        return `block ${a["x"]},${a["y"]},${a["z"]} = ${got} (expected ${want})`;
       }
-      return `block: ${got ?? "?"}`;
+      if (a["expectCount"] !== undefined) {
+        const want = Number(a["expectCount"]);
+        if (container.itemCount !== want) {
+          throw new Error(
+            `container assertion failed at ${where}: expected ${want} occupied slot(s), got ${container.itemCount ?? 0}` +
+              ` [${(container.slots ?? []).map(describeItem).join(" | ")}]`,
+          );
+        }
+      }
+      const expectSlots = a["expectSlots"] !== undefined ? asObject(a["expectSlots"]) : undefined;
+      if (expectSlots) {
+        for (const [slotKey, rawExpect] of Object.entries(expectSlots)) {
+          const slot = Number(slotKey);
+          const item = (container.slots ?? []).find((s) => s.slot === slot) ?? null;
+          const problem = matchItem(rawExpect as ItemExpectation, item);
+          if (problem) {
+            throw new Error(`container slot ${slot} at ${where}: ${problem}`);
+          }
+        }
+      }
+      const asserted = [
+        ...(a["expect"] !== undefined ? [`type=${container.type}`] : []),
+        ...(a["expectCount"] !== undefined ? [`count=${container.itemCount}`] : []),
+        ...(expectSlots ? [`slots ${Object.keys(expectSlots).join(",")} ✓`] : []),
+      ];
+      return `container ${container.type ?? "?"} at ${where}: ${container.itemCount ?? 0}/${container.size ?? 0} occupied` +
+        (asserted.length ? ` — ${asserted.join(", ")}` : "");
+    }
+    case "getItem": {
+      const slot = Number(a["slot"]);
+      if (!Number.isFinite(slot)) throw new Error("getItem requires a numeric 'slot'");
+      const result = await session.call<ItemResult>("truth.getItem", {
+        ...(a["world"] ? { world: a["world"] } : {}),
+        x: a["x"],
+        y: a["y"],
+        z: a["z"],
+        slot,
+      });
+      const where = `${a["x"]},${a["y"]},${a["z"]}`;
+      const item = result.item ?? null;
+      if (a["expect"] !== undefined) {
+        const problem = matchItem(asObject(a["expect"]) as ItemExpectation, item);
+        if (problem) throw new Error(`item assertion failed at ${where} slot ${slot}: ${problem}`);
+        return `item ${where}[${slot}] = ${describeItem(item)} ✓`;
+      }
+      return `item ${where}[${slot}] = ${describeItem(item)}`;
     }
     case "getEntities": {
       const result = await session.call<{ count?: number }>("truth.getEntities", a);
       return `${result.count ?? 0} entit(ies)`;
     }
-    case "assertPluginState": {
-      // `expect` is REQUIRED to produce a verdict: without it the agent returns `matched:null`
-      // and the step would pass regardless of the actual state (a false green). Fail loudly instead.
-      if (a["expect"] === undefined) {
-        throw new Error(`assertPluginState '${String(a["query"] ?? "")}' requires 'expect' to produce a verdict`);
-      }
-      const result = await session.call<PluginStateResult>("truth.assertPluginState", {
-        ...(a["plugin"] ? { plugin: a["plugin"] } : {}),
-        query: String(a["query"] ?? ""),
-        ...(a["args"] ? { args: a["args"] } : {}),
-        expect: toExpect(a["expect"]),
-      });
-      // Pass only on an explicit positive verdict; `matched` false/null/absent is a failure.
-      if (result.matched !== true) {
-        throw new Error(`pluginState assertion failed: ${String(a["query"])} = ${JSON.stringify(result.value)}`);
-      }
-      return `pluginState ${String(a["query"])} = ${JSON.stringify(result.value)}`;
-    }
+    case "assertPluginState":
+      return probePluginState(session, a, (message) => new Error(message));
     case "fixture": {
       const reset = a["reset"] === true;
       const method = reset ? "fixture.reset" : "fixture.set";

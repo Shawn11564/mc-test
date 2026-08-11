@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://mc-test.dev/schema/results.schema.json",
+  "title": "mc-test results.json",
+  "description": "Structured, typed run report written beside the JUnit XML (docs/CI.md; spec commandcenter/40-testing-loop.md §6). One object per `mc-test run` invocation: run-level totals + one entry per case. A 'case' here is one (test x target) cell — the matrix engine (spec §4) will later expand `config` with per-dimension values; until then `config` carries the target identity only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["declared", "executed", "passed", "failed", "errored", "skipped", "coverage_model", "target", "cases"],
+  "properties": {
+    "declared": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total cases declared for this run (before any skip). Equals `executed` until the matrix engine (spec §4) can declare cases it never runs."
+    },
+    "executed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Cases actually run (steps executed) — includes passed/failed/errored, excludes cases that never started."
+    },
+    "passed": { "type": "integer", "minimum": 0 },
+    "failed": { "type": "integer", "minimum": 0 },
+    "errored": { "type": "integer", "minimum": 0 },
+    "skipped": { "type": "integer", "minimum": 0 },
+    "coverage_model": {
+      "type": "string",
+      "description": "How `declared` was computed. 'flat': one case per (test x target), no matrix dimensions (pre-matrix-engine). Later values: 'full' | 'pairwise' (spec §4)."
+    },
+    "target": {
+      "type": "string",
+      "description": "Comma-joined target id(s) this run covered."
+    },
+    "sha": {
+      "type": "string",
+      "description": "Git commit of the project under test (cwd at invocation time), best-effort. Absent when cwd is not a git checkout or git is unavailable."
+    },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/case" }
+    }
+  },
+  "definitions": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "config", "status", "ms", "evidence"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable case id: '<test name>@<target id>'."
+        },
+        "config": {
+          "type": "object",
+          "description": "The case's configuration. Pre-matrix-engine this is the target identity (target/loader/mc/driver); the matrix engine (spec §4) will add per-dimension bound values here."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail", "error", "skip"]
+        },
+        "ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "failed_step": {
+          "type": "string",
+          "description": "`<index>:<verb>` of the step that failed, when status is fail|error."
+        },
+        "expected": {
+          "type": "string"
+        },
+        "actual": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Artifact paths (screenshots, server logs) attached to this case, always present (possibly empty)."
+        },
+        "skip_reason": {
+          "type": "string",
+          "description": "'<REASON_CODE> — <message>' when status is skip."
+        },
+        "invariant_ref": {
+          "type": "string",
+          "description": "Reference to the ratified invariant this case judges (spec §5). Not yet populated — no invariant DSL exists before the matrix engine (spec §9 phase 2)."
+        }
+      }
+    }
+  }
+}

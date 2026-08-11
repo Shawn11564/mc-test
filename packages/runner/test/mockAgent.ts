@@ -5,6 +5,7 @@
  * Minecraft boot (ROADMAP §7.2). Configurable for negative controls.
  */
 import { WebSocketServer, type WebSocket } from "ws";
+import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
 export interface MockAgentOptions {
@@ -17,9 +18,81 @@ export interface MockAgentOptions {
   /** How many entry-click attempts return ELEMENT_NOT_FOUND before the list "populates"
    *  — exercises runner-side SelectorWaits retries. */
   listAppearAfter?: number;
+  /**
+   * Seed the toy world model the `world.*` interaction verbs act on, as
+   * `"x,y,z" → "minecraft:<id>"`. Lets a test assert the CONSEQUENCE of a
+   * sneak-click (a sign landing on the clicked face) without a Minecraft boot.
+   */
+  blocks?: Record<string, string>;
+  /** Items the mock player's inventory holds, e.g. `["minecraft:oak_sign"]`. */
+  inventory?: string[];
+  /**
+   * Blockstate properties per position (`"x,y,z"` -> `{ facing: "east" }`), so a test can assert
+   * `expectProperties` without a Minecraft boot.
+   */
+  blockProperties?: Record<string, Record<string, string>>;
+  /** Block-entity documents per position (`"x,y,z"` -> the `nbt` object `truth.getWorldBlock` returns). */
+  blockEntities?: Record<string, Record<string, unknown>>;
+  /** Container contents per position (`"x,y,z"` -> slot index -> item). */
+  containers?: Record<string, Record<string, MockItem>>;
+  /** Seed plugin-state query values (`"regions.exists"` -> value) for assert/waitForPluginState. */
+  pluginState?: Record<string, unknown>;
+}
+
+/** One item in the mock's toy container model (mirrors the wire `ItemStack`). */
+export interface MockItem {
+  type: string;
+  count?: number;
+  displayName?: string;
+  components?: Record<string, unknown>;
 }
 
 const DEFAULT_CAPS = ["chat", "command", "containerGui", "typeText", "pressKey"];
+
+/** Outward normal of each block face — the mock's placement geometry. */
+const FACE_VECTORS: Record<string, { x: number; y: number; z: number }> = {
+  up: { x: 0, y: 1, z: 0 },
+  down: { x: 0, y: -1, z: 0 },
+  north: { x: 0, y: 0, z: -1 },
+  south: { x: 0, y: 0, z: 1 },
+  west: { x: -1, y: 0, z: 0 },
+  east: { x: 1, y: 0, z: 0 },
+};
+
+const posKey = (p: { x: number; y: number; z: number }): string => `${p.x},${p.y},${p.z}`;
+
+/** Canonical JSON (sorted keys) — the mock hashes exactly as a real agent does. */
+function canonical(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/** A stable digest over type + components — item identity, exactly like the JVM agent's. */
+function itemHash(type: string, components: Record<string, unknown>): string {
+  return `sha256:${createHash("sha256")
+    .update(canonical({ type, components }))
+    .digest("hex")}`;
+}
+
+/** Render a mock item in the wire `ItemStack` shape. */
+function describeMockItem(item: MockItem, slot: number): Record<string, unknown> {
+  const components = item.components ?? {};
+  return {
+    type: item.type,
+    count: item.count ?? 1,
+    slot,
+    ...(item.displayName ? { displayName: item.displayName } : {}),
+    components,
+    componentsHash: itemHash(item.type, components),
+  };
+}
 /** Regions the enriched list shows by default (mirrors the plugin's seeded set). */
 const DEFAULT_ENTRIES = ["TestRegion", "Spawn", "Market"];
 /** The deterministic region the "Create" button adds (mirrors the plugin). */
@@ -42,11 +115,30 @@ export class MockAgent {
   private chat: string[] = [];
   private active: string | null = null;
 
+  // Toy world/player model for the `world.*` interaction verbs.
+  private readonly blocks: Map<string, string>;
+  private readonly blockProperties: Map<string, Record<string, string>>;
+  private readonly blockEntities: Map<string, Record<string, unknown>>;
+  private readonly containers: Map<string, Record<string, MockItem>>;
+  private readonly pluginState: Map<string, unknown>;
+  private readonly inventory: string[];
+  private held: string | null = null;
+  private heldSlot = 0;
+  private yaw = 0;
+  private pitch = 0;
+  private controls: string[] = [];
+
   constructor(opts: MockAgentOptions = {}) {
     this.caps = opts.capabilities ?? DEFAULT_CAPS;
     this.regionsLabel = opts.regionsButtonLabel ?? "Regions";
     this.entries = opts.listEntries ?? [...DEFAULT_ENTRIES];
     this.listReveals = opts.listAppearAfter ?? 0;
+    this.blocks = new Map(Object.entries(opts.blocks ?? {}));
+    this.blockProperties = new Map(Object.entries(opts.blockProperties ?? {}));
+    this.blockEntities = new Map(Object.entries(opts.blockEntities ?? {}));
+    this.containers = new Map(Object.entries(opts.containers ?? {}));
+    this.pluginState = new Map(Object.entries(opts.pluginState ?? {}));
+    this.inventory = [...(opts.inventory ?? [])];
   }
 
   start(): Promise<{ url: string }> {
@@ -71,6 +163,21 @@ export class MockAgent {
     const wss = this.wss;
     this.wss = null;
     if (wss) await new Promise<void>((r) => wss.close(() => r()));
+  }
+
+  /**
+   * Change a block MID-RUN. This is how a test models DEFERRED state — a plugin's
+   * scheduled task writing a block a few ticks after the click that triggered it —
+   * which is exactly what `waitForBlock` exists for and what an assert-once read flakes on.
+   */
+  setBlock(pos: { x: number; y: number; z: number }, type: string, properties?: Record<string, string>): void {
+    this.blocks.set(posKey(pos), type);
+    if (properties) this.blockProperties.set(posKey(pos), properties);
+  }
+
+  /** Set a plugin-state value mid-run (the `waitForPluginState` counterpart of `setBlock`). */
+  setPluginState(query: string, value: unknown): void {
+    this.pluginState.set(query, value);
   }
 
   private elements(): { label: string; slot: number }[] {
@@ -160,6 +267,171 @@ export class MockAgent {
         const line = this.chat.find((l) => !filter?.contains || l.includes(filter.contains));
         if (!line) this.err(-32003, "TIMEOUT", "no chat");
         return { ok: true, chat: { text: line, sender: "server", channel: "system" } };
+      }
+      // --- world interaction (cap `worldInteraction`) -------------------------
+      case "world.useBlock": {
+        const pos = params["pos"] as { x: number; y: number; z: number };
+        const face = String(params["face"] ?? "up");
+        const type = this.blocks.get(posKey(pos));
+        if (!type) this.err(-32004, "WORLD_NOT_READY", `no block at ${posKey(pos)}`);
+        const fv = FACE_VECTORS[face];
+        if (!fv) this.err(-32602, "invalidParams", `unknown face '${face}'`);
+        if (params["sneak"] === true && this.held) {
+          // Sneaking suppresses the block's own use behavior, so the held item
+          // places against the CLICKED face — the shape placement tests assert.
+          const dest = { x: pos.x + fv!.x, y: pos.y + fv!.y, z: pos.z + fv!.z };
+          if ((this.blocks.get(posKey(dest)) ?? "minecraft:air") === "minecraft:air") {
+            this.blocks.set(posKey(dest), this.held);
+            this.chat.push(`Placed ${this.held} at ${posKey(dest)}`);
+          } else {
+            this.chat.push("face is blocked");
+          }
+          return { ok: true, screenChanged: false, block: { type }, face, sneak: true, held: { type: this.held } };
+        }
+        // Non-sneaking click on a container opens its GUI.
+        const opens = type!.endsWith("chest") || type!.endsWith("barrel");
+        return {
+          ok: true,
+          screenChanged: opens,
+          block: { type },
+          face,
+          sneak: params["sneak"] === true,
+          held: { type: this.held },
+        };
+      }
+      case "world.attackBlock": {
+        const pos = params["pos"] as { x: number; y: number; z: number };
+        const face = String(params["face"] ?? "up");
+        const type = this.blocks.get(posKey(pos));
+        if (!type) this.err(-32004, "WORLD_NOT_READY", `no block at ${posKey(pos)}`);
+        const broken = params["breakBlock"] === true;
+        if (broken) this.blocks.delete(posKey(pos));
+        this.chat.push(`Attacked ${type} at ${posKey(pos)}`);
+        return { ok: true, block: { type }, face, broken };
+      }
+      case "world.setHeldItem": {
+        if (typeof params["slot"] === "number") {
+          this.heldSlot = params["slot"] as number;
+          this.held = this.inventory[this.heldSlot] ?? null;
+          return { ok: true, held: { type: this.held, slot: this.heldSlot } };
+        }
+        const want = String(params["item"] ?? "").replace(/^minecraft:/, "");
+        const idx = this.inventory.findIndex((i) => i.replace(/^minecraft:/, "") === want);
+        if (idx === -1) {
+          this.err(-32000, "ELEMENT_NOT_FOUND", `no inventory stack matches '${String(params["item"])}'`);
+        }
+        this.heldSlot = idx;
+        this.held = this.inventory[idx]!;
+        return { ok: true, held: { type: this.held, count: 1, slot: idx } };
+      }
+      case "world.look": {
+        if (typeof params["yaw"] === "number") this.yaw = params["yaw"] as number;
+        if (typeof params["pitch"] === "number") this.pitch = params["pitch"] as number;
+        if (params["at"]) {
+          // Deterministic stand-in: aiming at a point simply records it as faced.
+          this.pitch = 0;
+        }
+        return { ok: true, yaw: this.yaw, pitch: this.pitch, position: { x: 0, y: 64, z: 0 } };
+      }
+      case "world.move": {
+        if (params["stop"] === true) {
+          this.controls = [];
+          return { ok: true, held: [], position: { x: 0, y: 64, z: 0 }, warnings: ["all control states released"] };
+        }
+        const controls = (params["controls"] as Record<string, boolean> | undefined) ?? {};
+        const on = Object.keys(controls).filter((k) => controls[k] === true);
+        this.controls = params["durationMs"] !== undefined ? [] : on;
+        return { ok: true, held: [...this.controls], position: { x: 0, y: 64, z: 0 } };
+      }
+      case "truth.getWorldBlock": {
+        const key = posKey({
+          x: Number(params["x"]),
+          y: Number(params["y"]),
+          z: Number(params["z"]),
+        });
+        const props = this.blockProperties.get(key);
+        // A block-entity document is present ONLY where one was seeded — a container's
+        // contents surface through it exactly as the real agent renders them.
+        let nbt = this.blockEntities.get(key);
+        const container = this.containers.get(key);
+        if (container) {
+          const items = Object.entries(container)
+            .map(([slot, item]) => ({
+              Slot: Number(slot),
+              id: item.type,
+              count: item.count ?? 1,
+              components: item.components ?? {},
+            }))
+            .sort((a, b) => a.Slot - b.Slot);
+          nbt = { ...(nbt ?? {}), Items: items };
+        }
+        return {
+          ok: true,
+          block: {
+            type: this.blocks.get(key) ?? "minecraft:air",
+            ...(props ? { properties: props } : {}),
+            ...(nbt ? { nbt, nbtJson: canonical(nbt) } : {}),
+          },
+        };
+      }
+      case "truth.assertPluginState": {
+        const query = String(params["query"] ?? "");
+        const value = this.pluginState.has(query) ? this.pluginState.get(query) : null;
+        const expect = (params["expect"] as Record<string, unknown> | undefined) ?? {};
+        let matched: boolean | null = null;
+        if ("equals" in expect) matched = JSON.stringify(value) === JSON.stringify(expect["equals"]);
+        else if ("notEquals" in expect) matched = JSON.stringify(value) !== JSON.stringify(expect["notEquals"]);
+        else if ("exists" in expect) matched = (value !== null && value !== undefined) === (expect["exists"] === true);
+        return { ok: true, query, value, matched, valueJson: JSON.stringify(value) };
+      }
+      case "truth.getContainer": {
+        const key = posKey({
+          x: Number(params["x"]),
+          y: Number(params["y"]),
+          z: Number(params["z"]),
+        });
+        const contents = this.containers.get(key);
+        if (!contents) {
+          this.err(-32602, "invalidParams", `Block at ${key} is ${this.blocks.get(key) ?? "minecraft:air"}, not a container`);
+        }
+        const size = 27;
+        const slots: Record<string, unknown>[] = [];
+        for (let slot = 0; slot < size; slot++) {
+          const item = contents![String(slot)];
+          if (!item) {
+            if (params["includeEmpty"] === true) {
+              slots.push({ type: "minecraft:air", count: 0, slot });
+            }
+            continue;
+          }
+          slots.push(describeMockItem(item, slot));
+        }
+        return {
+          ok: true,
+          container: {
+            type: this.blocks.get(key) ?? "minecraft:chest",
+            size,
+            itemCount: Object.keys(contents!).length,
+            slots,
+          },
+        };
+      }
+      case "truth.getItem": {
+        const key = posKey({
+          x: Number(params["x"]),
+          y: Number(params["y"]),
+          z: Number(params["z"]),
+        });
+        const contents = this.containers.get(key);
+        if (!contents) {
+          this.err(-32602, "invalidParams", `Block at ${key} is not a container`);
+        }
+        const slot = Number(params["slot"]);
+        if (!Number.isInteger(slot) || slot < 0 || slot >= 27) {
+          this.err(-32602, "invalidParams", `slot ${slot} out of range for a 27-slot inventory`);
+        }
+        const item = contents![String(slot)];
+        return { ok: true, slot, item: item ? describeMockItem(item, slot) : null };
       }
       case "screen.waitForScreen": {
         const match = params["match"] as { title?: string } | undefined;

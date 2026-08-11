@@ -1,0 +1,32 @@
+# NEGATIVE CONTROL for `expectProperties` (paired with truth-vocabulary.mctest.yml).
+#
+# Everything is identical except the face clicked: the sign is placed on the chest's
+# NORTH face, and the test still asserts `facing: east`. It MUST go red. Without this
+# the positive run proves nothing — a matcher that ignored `facing` entirely, or an
+# agent that never populated `properties`, would be green either way (the block TYPE
+# is `oak_wall_sign` whichever face you click).
+name: truth-vocabulary-wrong-facing-must-fail
+requires:
+  command: true
+  worldInteraction: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 2 -60 -1 minecraft:air replace"
+  - command: "setblock 2 -60 0 minecraft:chest replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+  - command: "give @s minecraft:oak_sign 1"
+  - waitForChat: { contains: "Gave 1", timeoutMs: 10000 }
+  - look: { at: { x: 2.5, y: -59.5, z: 0.5 }, force: true }
+  - setHeldItem: minecraft:oak_sign
+  # NORTH face — so the sign at 2,-60,-1 faces NORTH, not east.
+  - useBlock: { pos: { x: 2, y: -60, z: 0 }, face: north, sneak: true }
+  # The block type still matches; only the property assertion can catch the difference.
+  - getBlock:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: -1
+      expect: minecraft:oak_wall_sign
+      expectProperties: { facing: east }

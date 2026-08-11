@@ -1,0 +1,38 @@
+# NEGATIVE CONTROL for client-sign-typing.mctest.yml.
+#
+# Identical, except it expects the WRONG line on the sign. It MUST go red. Without
+# this the positive run proves little: if the charTyped fallback silently typed
+# nothing (or the block-entity read reported an empty document), the sign would hold
+# ["", "", "", ""] and any weaker assertion would still be green.
+#
+# This also pins the block-entity array semantics: an NBT list is ORDERED data, so a
+# subset match must compare element-for-element rather than "contains".
+name: client-sign-typing-wrong-text-must-fail
+requires:
+  command: true
+  clientScreens: true
+steps:
+  - join: { host: 127.0.0.1, username: Tester }
+  - command: "gamemode creative"
+  - command: "tp @s 0.5 -60.0 0.5"
+  - command: "setblock 2 -60 0 minecraft:oak_sign[rotation=8] replace"
+  - waitForChat: { contains: "Changed the block", timeoutMs: 10000 }
+  - fixture:
+      requires: { fixtures: true }
+      name: signEditor
+      args: { x: 2, y: -60, z: 0, player: Tester }
+  - waitForScreen: { kind: clientScreen, timeoutMs: 10000 }
+  - type: { text: "ChestShop", clear: true }
+  - press: { key: escape }
+  # The sign really says "ChestShop" — asserting anything else must fail, and the
+  # failure must name the offending line, not just "timed out".
+  - waitForBlock:
+      requires: { worldTruth: true }
+      x: 2
+      y: -60
+      z: 0
+      expectNbt:
+        front_text:
+          messages: ["NotWhatWasTyped", "", "", ""]
+      timeoutMs: 2000
+      intervalMs: 250

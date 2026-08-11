@@ -107,9 +107,9 @@ describe("resolveSelector", () => {
 });
 
 describe("advertised capabilities", () => {
-  it("advertises exactly chat/command/containerGui/typeText/pressKey", () => {
+  it("advertises exactly chat/command/containerGui/typeText/pressKey/worldInteraction", () => {
     expect([...HEADLESS_CAPABILITY_KEYS].sort()).toEqual(
-      ["chat", "command", "containerGui", "pressKey", "typeText"].sort(),
+      ["chat", "command", "containerGui", "pressKey", "typeText", "worldInteraction"].sort(),
     );
     for (const denied of ["screenshot", "clientScreens", "worldTruth", "pluginState", "fixtures"]) {
       expect(HEADLESS_CAPABILITY_KEYS).not.toContain(denied);
@@ -163,12 +163,12 @@ describe("MCTP conformance (no boot)", () => {
     expect(url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/mctp$/);
   });
 
-  it("session.describe returns a schema-valid result advertising the 5 caps", async () => {
+  it("session.describe returns a schema-valid result advertising the 6 caps", async () => {
     const res = await rpc("session.describe");
     const v = validate(RESULT_SCHEMAS["session.describe"], { jsonrpc: "2.0", id: res.id, result: res.result });
     expect(v.ok, JSON.stringify(v.errors)).toBe(true);
     expect((res.result as { capabilities: string[] }).capabilities.sort()).toEqual(
-      ["chat", "command", "containerGui", "pressKey", "typeText"].sort(),
+      ["chat", "command", "containerGui", "pressKey", "typeText", "worldInteraction"].sort(),
     );
   });
 

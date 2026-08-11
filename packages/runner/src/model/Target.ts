@@ -14,12 +14,6 @@ export interface PaperRef {
   build?: number | "latest";
 }
 
-/** A `mojang:` source ref → Mojang version manifest. */
-export interface MojangRef {
-  version?: string;
-  artifact?: "server" | "client";
-}
-
 /** A `spigot:` source ref → built from source with Spigot BuildTools (legacy plugin-capable jars). */
 export interface SpigotRef {
   /**
@@ -41,22 +35,24 @@ export interface ModrinthRef {
   gameVersion?: string;
 }
 
-/** How to obtain one artifact (exactly one resolver). */
+/**
+ * How to obtain one artifact (exactly one resolver). `path`/`url`/`modrinth` are
+ * resolved by `provision/sources.ts::resolveArtifact`; `paper`/`spigot` are resolved
+ * inline by the Paper provisioner (server sources only — never plugins/mods).
+ */
 export interface Source {
-  ref?: string;
   path?: string;
   url?: string;
   paper?: PaperRef;
-  mojang?: MojangRef;
   spigot?: SpigotRef;
   modrinth?: ModrinthRef;
   sha256?: string;
   as?: string;
 }
 
-/** A named/inline world snapshot. */
+/** A named/inline world snapshot. Only `snapshot.path` is read (a local, pre-built world dir). */
 export interface WorldDef {
-  snapshot?: Source;
+  snapshot?: { path?: string };
   levelName?: string;
 }
 
@@ -147,6 +143,18 @@ export interface MatrixTarget {
    */
   mods?: Source[];
   /**
+   * SUT mods for the RENDERED CLIENT only, when the client and the server need
+   * different sets. Needed by the rendered-client-on-MODDED-SERVER shape: `mods` goes
+   * into the modded server's `mods/`, and this goes into the launched client's — which
+   * matters because the two sides genuinely differ (a server needs the server-truth
+   * agent and server-only deps; a client needs client-only ones), and because a
+   * `modrinth:` entry has no local `path` until it is resolved.
+   *
+   * Omitted → the client gets the `path:`-based entries of `mods` (the M4 behavior:
+   * one list, both sides, which is right for a client-side-only SUT on a Paper server).
+   */
+  clientMods?: Source[];
+  /**
    * Display backend for a rendered client (M4 `driver: inprocess`): `xvfb` for
    * headless Linux CI (Mesa/llvmpipe), `desktop` for a native runner. Omitted →
    * the driver auto-selects by platform (`desktop` on win32/darwin, `xvfb` on
@@ -179,6 +187,7 @@ export interface MatrixTarget {
    * join username here. Omitted → no ops.json is written (M2 behavior).
    */
   ops?: string[];
+  /** Boot timeout in seconds (server provisioning only). Omitted → provisioner default (240s Paper / 300s modded). */
   timeoutSec?: number;
   "online-mode"?: boolean;
 }

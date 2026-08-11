@@ -1,0 +1,48 @@
+{
+  "method": "truth.getContainer",
+  "description": "Read a container block's contents as server truth. Item identity is type + componentsHash, never type alone — a modded item is a vanilla material plus data components.",
+  "request": { "jsonrpc": "2.0", "id": 40, "method": "truth.getContainer", "params": { "sessionId": "s_srv_01", "world": "world", "x": 2, "y": -60, "z": 0 } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 40,
+        "result": {
+          "ok": true,
+          "container": {
+            "type": "minecraft:chest",
+            "title": "Shop Stock",
+            "size": 27,
+            "itemCount": 2,
+            "slots": [
+              {
+                "type": "minecraft:diamond_sword",
+                "count": 1,
+                "slot": 0,
+                "displayName": "Excalibur",
+                "components": { "display": { "Name": "Excalibur" }, "enchantments": { "minecraft:sharpness": 5 } },
+                "componentsHash": "sha256:6f1c2a0b9d3e4f5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c"
+              },
+              {
+                "type": "minecraft:diamond_sword",
+                "count": 1,
+                "slot": 1,
+                "components": {},
+                "componentsHash": "sha256:aa11bb22cc33dd44ee55ff6677889900112233445566778899aabbccddeeff00"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "not-a-container",
+      "envelope": { "jsonrpc": "2.0", "id": 40, "error": { "code": -32602, "message": "Block at 2,-60,0 is minecraft:stone, not a container", "data": { "reason": "invalidParams", "retryable": false } } }
+    },
+    {
+      "name": "chunk-not-loaded",
+      "envelope": { "jsonrpc": "2.0", "id": 40, "error": { "code": -32004, "message": "Chunk not loaded at 2,0", "data": { "reason": "WORLD_NOT_READY", "retryable": true } } }
+    }
+  ]
+}

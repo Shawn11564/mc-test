@@ -4,17 +4,39 @@ This walks you from a clean checkout to a **real Paper server booting and runnin
 canonical regions test** — then to writing a test for *your own* plugin. Everything here is
 the actual, verified flow.
 
-> **Status (v1.0):** the **Paper/Spigot plugin** path is real and CI-gated. Rendered-client
-> **mod** GUIs and the full multi-loader matrix are v2 (those targets honestly *skip*). See
-> [`V1_PLAN.md`](./V1_PLAN.md).
+> **Status (v1.0):** the **Paper/Spigot plugin** path is real and CI-gated on every PR.
+>
+> **v2 — also real:** rendered-client mod GUIs on **Fabric, Forge, and NeoForge** (a real
+> client under Xvfb + Mesa) and the cost-1 `server` driver's server-truth boots on real
+> dedicated **Fabric/Forge/NeoForge** servers (asserting `mod.loaded` against a genuine
+> Modrinth-fetched mod, not a fixture) both work — see the nightly/dispatch
+> `.github/workflows/e2e.yml` lanes (`fabric-rendered-client`, `multi-loader-matrix`,
+> `modded-server`). They run off the fast per-PR path because they need a GL-capable display
+> and/or heavier per-loader toolchains; a target that can't get one **honestly skips** rather
+> than reporting a false pass. See [`V1_PLAN.md`](./V1_PLAN.md) for the v1.0 scope history.
 
 ## 1. Prerequisites
 
-- **Node.js 18+** (the runner/engine).
+- **Node.js 22+** (the runner/engine — `mineflayer`, the headless driver's engine, requires it).
 - **JDK 17+** (21 recommended) — to boot the Minecraft server. Check: `java -version`.
 - **Maven** — only to build the bundled example plugin (`mvn -version`).
 - **Network** — to download the Paper server jar (cached after first use).
-- Run `npx mc-test doctor` any time to check these.
+
+Run **`npx mc-test doctor`** to check all of this before a session. It preflights only what your
+matrix actually needs — the JDK, free disk, the agent jars your targets name, Gradle (only when
+something still has to be built), and a display or the pinned `mc-test/rendered:21` Docker image
+for `driver: inprocess` rows — and **exits non-zero with a fix for every unmet dependency**:
+
+```bash
+npx mc-test doctor                       # preflight the whole matrix
+npx mc-test doctor --target paper-1.20.4 # just the rows you intend to run
+npx mc-test doctor --strict              # also fail on warnings
+```
+
+`mc-test run` runs the same preflight automatically before booting anything. It aborts only on
+failures that make a truthful result impossible (no JDK, a full disk); an unbuilt agent jar or a
+missing display is left to become an **honest skip**. Use `--strict-preflight` to refuse a degraded
+session outright, or `--no-preflight` to opt out.
 
 ## 2. Build the framework
 
