@@ -13,9 +13,13 @@ name: regions-open-each
 # The report carries one case per region (`regions-open-each[region=Spawn]@paper-1.20.4`) with
 # the expected/actual the invariant produced.
 requires:
+  # Only what the DRIVER must satisfy. `pluginState` is deliberately NOT here: it is answered by the
+  # co-selected server agent (agents: [server-bukkit]), which joins the capability union only AFTER a
+  # driver is chosen — asking for it up front would make every driver ineligible and skip the whole
+  # test. The invariant's pluginState clause is gated per step instead, so on a target without an
+  # agent the case honestly skips (INVARIANT_NOT_EVALUATED) rather than passing on chat alone.
   command: true
   containerGui: true
-  pluginState: true # the oracle asserts REAL server state, not just chat (agents: [server-bukkit])
 target: ${matrix} # filled by the mc-test.yml row selected with --target
 matrix:
   region:

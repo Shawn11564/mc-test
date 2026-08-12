@@ -199,14 +199,6 @@ describe("regions E2E against the mock agent", () => {
  * a feature — and because this is the shape the fleet is meant to copy.
  */
 describe("the committed regions matrix check", () => {
-  /** A driver that can also answer plugin-state, i.e. a target with `agents: [server-bukkit]`. */
-  const truthfulDescriptor = (url: string): DriverDescriptor => ({
-    id: "headless",
-    kind: "headlessBot",
-    cost: 2,
-    advertised: { ...HEADLESS_CAPS, pluginState: true },
-    create: async () => ({ url, stop: async () => {} }),
-  });
   const AGENT_CAPS = ["chat", "command", "containerGui", "typeText", "pressKey", "pluginState"];
 
   async function runAllCases(opts: MockAgentOptions = {}): Promise<TestResult[]> {
@@ -214,8 +206,13 @@ describe("the committed regions matrix check", () => {
     const url = await startAgent({ capabilities: AGENT_CAPS, ...opts });
     const runner = new Runner(new DriverRegistry());
     const results: TestResult[] = [];
+    // Model the real target shape: the headless DRIVER advertises no pluginState;
+    // the co-selected server agent does, and joins the capability union. (Asking
+    // for pluginState in the test's own `requires:` would instead make every
+    // driver ineligible — the trap the committed file documents.)
+    const serverAgent = { url, advertised: { pluginState: true }, kind: "serverPlugin" };
     for (const matrixCase of expandMatrix(test)) {
-      const result = await runner.runTest(matrixCase.test, truthfulDescriptor(url), url, EXEC, META);
+      const result = await runner.runTest(matrixCase.test, mockDescriptor(url), url, EXEC, META, [serverAgent]);
       result.matrixCase = {
         id: matrixCase.id,
         config: matrixCase.config,
@@ -234,14 +231,13 @@ describe("the committed regions matrix check", () => {
     expect(declaredCaseCount(test)).toBe(3);
     // The file we ship must not trip our own §5.3 lints.
     expect(lintMatrix(test, cases)).toEqual([]);
-    // Each case's oracle is bound to ITS region — one invariant, three expectations.
+    // Each case's oracle is bound to ITS region — one invariant, three expectations
+    // (the branch's `because:` rides on the first clause, not after every one).
+    const because = " (loading a region announces it and makes it the active region in real server state)";
     expect(cases.map((c) => c.test.steps.filter((s) => s.invariant).map((s) => s.invariant!.expected))).toEqual([
-      ['chat contains "Region loaded: TestRegion" (loading a region announces it and makes it the active region in real server state)',
-       'pluginState regions.active = TestRegion (loading a region announces it and makes it the active region in real server state)'],
-      ['chat contains "Region loaded: Spawn" (loading a region announces it and makes it the active region in real server state)',
-       'pluginState regions.active = Spawn (loading a region announces it and makes it the active region in real server state)'],
-      ['chat contains "Region loaded: Market" (loading a region announces it and makes it the active region in real server state)',
-       'pluginState regions.active = Market (loading a region announces it and makes it the active region in real server state)'],
+      [`chat contains "Region loaded: TestRegion"${because}`, "pluginState regions.active = TestRegion"],
+      [`chat contains "Region loaded: Spawn"${because}`, "pluginState regions.active = Spawn"],
+      [`chat contains "Region loaded: Market"${because}`, "pluginState regions.active = Market"],
     ]);
   });
 

@@ -484,7 +484,7 @@ export function compileInvariantSteps(
   const anchors = test.anchors ?? {};
   const steps: NormalizedStep[] = [];
   for (const { branch, ref, exception } of selected) {
-    for (const clause of branch.clauses) {
+    for (const [i, clause] of branch.clauses.entries()) {
       const at = `${ref}.${clause.kind}`;
       const spec = substituteBindings(clause.spec, values) as Record<string, unknown>;
       const compiled = compileClause(clause.kind, spec, anchors, at);
@@ -494,7 +494,9 @@ export function compileInvariantSteps(
         args: compiled.args,
         invariant: {
           ref,
-          expected: branch.because ? `${compiled.expected} (${branch.because})` : compiled.expected,
+          // The rationale belongs to the BRANCH, so it is carried once (on its
+          // first clause) rather than repeated after every ANDed expectation.
+          expected: branch.because && i === 0 ? `${compiled.expected} (${branch.because})` : compiled.expected,
           ...(exception ? { exception } : {}),
         },
       });
