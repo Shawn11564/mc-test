@@ -8,6 +8,7 @@ import { parse } from "yaml";
 import { STEP_VERBS, type RequiredCapabilities, type StepVerb } from "@mc-test/protocol";
 import type { NormalizedStep, NormalizedTest } from "../model/Step.js";
 import type { MatrixCoverage, MatrixDefinition } from "../engine/MatrixExpansion.js";
+import { parseAnchors, parseExcept, parseExpect } from "../engine/Invariants.js";
 
 const STEP_VERB_SET = new Set<string>(STEP_VERBS);
 
@@ -56,7 +57,26 @@ export function parseStepDocument(doc: unknown, sourceName: string): NormalizedT
   const rawSteps = d["steps"];
   if (!Array.isArray(rawSteps)) throw new Error(`${sourceName}: 'steps' must be a list`);
   const steps = rawSteps.map((s, i) => normalizeStep(s, i, sourceName));
-  return { name, requires, ...(optional ? { optional } : {}), ...(matrix ? { matrix } : {}), ...(coverage ? { coverage } : {}), steps };
+  // The §4–§5 invariant: one oracle for every generated case, plus the named
+  // positions its clauses refer to. Validated eagerly so a malformed expectation
+  // fails at load time rather than passing vacuously mid-matrix.
+  const anchors = parseAnchors(d["anchors"], sourceName);
+  const expect = parseExpect(d["expect"], sourceName);
+  const except = parseExcept(d["except"], sourceName);
+  if (except.length && !expect.length) {
+    throw new Error(`${sourceName}: 'except' overrides an 'expect' invariant, but none is declared`);
+  }
+  return {
+    name,
+    requires,
+    ...(optional ? { optional } : {}),
+    ...(matrix ? { matrix } : {}),
+    ...(coverage ? { coverage } : {}),
+    ...(expect.length ? { expect } : {}),
+    ...(except.length ? { except } : {}),
+    ...(Object.keys(anchors).length ? { anchors } : {}),
+    steps,
+  };
 }
 
 /** Load and parse a `*.mctest.yml` step file. */

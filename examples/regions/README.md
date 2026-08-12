@@ -32,16 +32,24 @@ The Fabric mod additionally exposes `TestIdHolder` testIds; the Forge/NeoForge m
 zero mc-test coupling**, driven purely through the real UI — a nice demonstration that the framework can
 drive a SUT that knows nothing about it.
 
-## The two test files (one flow per surface)
+## The test files (one flow per surface, plus the matrix)
 
 | File | Surface | Requires | Selects by |
 |------|---------|----------|------------|
 | [`regions.mctest.yml`](regions.mctest.yml) | server chest GUI (headless) | `containerGui` | `label` |
 | [`regions.clientgui.mctest.yml`](regions.clientgui.mctest.yml) | real client `Screen` (rendered) | `clientScreens`, `chat` | `label` + `role:input` |
+| [`regions.matrix.mctest.yml`](regions.matrix.mctest.yml) | the same chest GUI, **every** region | `containerGui`, `pluginState` | `label` (`$region`) |
 
 [`regions.fluent.test.ts`](regions.fluent.test.ts) authors the headless test in the fluent API and asserts
 it compiles to the **identical** `NormalizedTest` as the YAML. The client-GUI test selects by visible
 label + the input's role, so the **single** file runs unchanged across Fabric/Forge/NeoForge.
+
+The **matrix** file is the §4/§5 shape (see [`docs/AUTHORING.md`](../../docs/AUTHORING.md#matrices-and-invariants-matrix--expect)):
+one dimension (`region`) and ONE invariant that is a function of it — `chat contains "Region loaded:
+$region"` **and** `regions.active == $region` — so all three regions are judged by the same rule
+instead of by three copy-pasted assertions. Its negative control lives in
+`packages/runner/test/e2e.test.ts`: a SUT that announces every region but only ever *activates* Spawn
+goes red on exactly the other two cases, which a single-region test cannot see.
 
 ## Two kinds of "truth" (why a green means real state)
 
@@ -66,6 +74,7 @@ test honestly **SKIPS** (`unmet:[clientScreens]`), never a false green.
 # headless plugin path (runs anywhere with Java + network):
 mvn -B -f examples/regions/plugin/pom.xml package        # → regions-plugin.jar
 npx mc-test run examples/regions/regions.mctest.yml --target paper-1.20.4
+npx mc-test run examples/regions/regions.matrix.mctest.yml --target paper-1.20.4   # 3 cases, one invariant
 
 # rendered client paths (need a display + the loader toolchains — acceptance-only):
 gradle -p agents :core:publishToMavenLocal               # the TestIdHolder marker (Fabric only)

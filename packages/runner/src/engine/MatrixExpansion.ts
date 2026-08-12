@@ -6,6 +6,8 @@
  * CLI a small, testable unit to schedule (and later group by environment).
  */
 import type { NormalizedStep, NormalizedTest } from "../model/Step.js";
+import { stringify, substituteBindings as substitute } from "./Substitute.js";
+import { compileInvariantSteps } from "./Invariants.js";
 
 export type MatrixCoverage = "full" | "pairwise";
 
@@ -50,13 +52,6 @@ interface DimensionOptions {
   name: string;
   bind?: MatrixBinding;
   options: Option[];
-}
-
-function stringify(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
 }
 
 function optionsFor(name: string, dimension: MatrixDimension): DimensionOptions {
@@ -117,21 +112,6 @@ function pairwiseCombinations(dimensions: DimensionOptions[]): Option[][] {
   return selected;
 }
 
-function substitute(value: unknown, bindings: Record<string, unknown>): unknown {
-  if (typeof value === "string") {
-    const exact = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(value);
-    if (exact) return exact[1]! in bindings ? bindings[exact[1]!] : value;
-    return value.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (token, name: string) =>
-      name in bindings ? stringify(bindings[name]) : token,
-    );
-  }
-  if (Array.isArray(value)) return value.map((entry) => substitute(entry, bindings));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, substitute(entry, bindings)]));
-  }
-  return value;
-}
-
 function materializeSteps(
   steps: NormalizedStep[],
   dimensions: DimensionOptions[],
@@ -162,6 +142,39 @@ function materializeSteps(
   ];
 }
 
+/**
+ * How many cases the test DECLARES — the full cross-product, whatever coverage
+ * model runs. This is the denominator of completeness (spec §7): under
+ * `coverage: pairwise` the executed subset is smaller, and a report that pinned
+ * `declared` to what it ran would silently claim 100%.
+ */
+export function declaredCaseCount(test: NormalizedTest): number {
+  const definition = test.matrix;
+  if (!definition || Object.keys(definition).length === 0) return 1;
+  return Object.entries(definition).reduce(
+    (total, [name, dimension]) => total * optionsFor(name, dimension).options.length,
+    1,
+  );
+}
+
+/**
+ * Every case the matrix DECLARES (the full cross-product), identity only — no
+ * steps compiled. The §5.3 lints use it to tell a branch that judges nothing
+ * apart from one whose cases a pairwise subset simply didn't generate.
+ */
+export function declaredCases(
+  test: NormalizedTest,
+): Array<{ id: string; config: Record<string, unknown>; values: Record<string, unknown> }> {
+  const definition = test.matrix;
+  if (!definition || Object.keys(definition).length === 0) return [];
+  const dimensions = Object.entries(definition).map(([name, dimension]) => optionsFor(name, dimension));
+  return fullCombinations(dimensions).map((combination) => ({
+    id: dimensions.map((dimension, i) => `${dimension.name}=${combination[i]!.label}`).join(","),
+    config: Object.fromEntries(dimensions.map((dimension, i) => [dimension.name, combination[i]!.label])),
+    values: Object.fromEntries(dimensions.map((dimension, i) => [dimension.name, combination[i]!.value])),
+  }));
+}
+
 /** Expand a parameterized test into its declared full or pairwise cases. */
 export function expandMatrix(test: NormalizedTest): MatrixCase[] {
   const definition = test.matrix;
@@ -190,7 +203,13 @@ export function expandMatrix(test: NormalizedTest): MatrixCase[] {
       setup,
       test: {
         ...test,
-        steps: materializeSteps(test.steps, dimensions, values),
+        // Actions first, then the ORACLE: the `expect:` branches this case
+        // selects, compiled to truth steps (spec §4–§5). One invariant, written
+        // once, resolved per case — never a per-case hand-written assertion.
+        steps: [
+          ...materializeSteps(test.steps, dimensions, values),
+          ...compileInvariantSteps(test, config, values, id),
+        ],
         matrixCase: { id, config, coverage, environmentKey: environment.join(","), setup },
       },
     };

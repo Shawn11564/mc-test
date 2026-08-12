@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 import {
   Runner,
   DriverRegistry,
+  buildResultsReport,
+  declaredCaseCount,
+  expandMatrix,
+  lintMatrix,
   loadSteps,
   renderJUnit,
   test as authorTest,
@@ -19,6 +23,7 @@ import {
 import { MockAgent, type MockAgentOptions } from "./mockAgent.js";
 
 const yamlPath = fileURLToPath(new URL("../../../examples/regions/regions.mctest.yml", import.meta.url));
+const matrixYamlPath = fileURLToPath(new URL("../../../examples/regions/regions.matrix.mctest.yml", import.meta.url));
 
 const HEADLESS_CAPS = {
   chat: true,
@@ -185,5 +190,90 @@ describe("regions E2E against the mock agent", () => {
     expect(selection.descriptor).toBeUndefined();
     expect(selection.skip?.reason).toBe("NO_COMPATIBLE_DRIVER");
     expect(selection.skip?.unmet).toContain("clientScreens");
+  });
+});
+
+/**
+ * The committed matrix check (`examples/regions/regions.matrix.mctest.yml`) run
+ * end to end. It exists because a matrix engine with no consumer is a claim, not
+ * a feature — and because this is the shape the fleet is meant to copy.
+ */
+describe("the committed regions matrix check", () => {
+  /** A driver that can also answer plugin-state, i.e. a target with `agents: [server-bukkit]`. */
+  const truthfulDescriptor = (url: string): DriverDescriptor => ({
+    id: "headless",
+    kind: "headlessBot",
+    cost: 2,
+    advertised: { ...HEADLESS_CAPS, pluginState: true },
+    create: async () => ({ url, stop: async () => {} }),
+  });
+  const AGENT_CAPS = ["chat", "command", "containerGui", "typeText", "pressKey", "pluginState"];
+
+  async function runAllCases(opts: MockAgentOptions = {}): Promise<TestResult[]> {
+    const test = loadSteps(matrixYamlPath);
+    const url = await startAgent({ capabilities: AGENT_CAPS, ...opts });
+    const runner = new Runner(new DriverRegistry());
+    const results: TestResult[] = [];
+    for (const matrixCase of expandMatrix(test)) {
+      const result = await runner.runTest(matrixCase.test, truthfulDescriptor(url), url, EXEC, META);
+      result.matrixCase = {
+        id: matrixCase.id,
+        config: matrixCase.config,
+        coverage: matrixCase.coverage,
+        environmentKey: matrixCase.environmentKey,
+      };
+      results.push(result);
+    }
+    return results;
+  }
+
+  it("expands to one case per region and lints clean", () => {
+    const test = loadSteps(matrixYamlPath);
+    const cases = expandMatrix(test);
+    expect(cases.map((c) => c.id)).toEqual(["region=TestRegion", "region=Spawn", "region=Market"]);
+    expect(declaredCaseCount(test)).toBe(3);
+    // The file we ship must not trip our own §5.3 lints.
+    expect(lintMatrix(test, cases)).toEqual([]);
+    // Each case's oracle is bound to ITS region — one invariant, three expectations.
+    expect(cases.map((c) => c.test.steps.filter((s) => s.invariant).map((s) => s.invariant!.expected))).toEqual([
+      ['chat contains "Region loaded: TestRegion" (loading a region announces it and makes it the active region in real server state)',
+       'pluginState regions.active = TestRegion (loading a region announces it and makes it the active region in real server state)'],
+      ['chat contains "Region loaded: Spawn" (loading a region announces it and makes it the active region in real server state)',
+       'pluginState regions.active = Spawn (loading a region announces it and makes it the active region in real server state)'],
+      ['chat contains "Region loaded: Market" (loading a region announces it and makes it the active region in real server state)',
+       'pluginState regions.active = Market (loading a region announces it and makes it the active region in real server state)'],
+    ]);
+  });
+
+  it("runs green against a healthy SUT, with every case judged by the same invariant", async () => {
+    const results = await runAllCases();
+
+    expect(results.map((r) => r.outcome)).toEqual(["passed", "passed", "passed"]);
+    const report = buildResultsReport(results, "mock-paper", undefined, { declared: 3 });
+    expect(report).toMatchObject({ declared: 3, executed: 3, passed: 3, coverage_model: "full" });
+    expect(report.cases.map((c) => c.id)).toEqual([
+      "regions-open-each[region=TestRegion]@mock-paper",
+      "regions-open-each[region=Spawn]@mock-paper",
+      "regions-open-each[region=Market]@mock-paper",
+    ]);
+    expect(report.cases.every((c) => c.invariant_ref === "regions-open-each#expect[0]")).toBe(true);
+    expect(report.cases[2]!.actual).toContain("regions.active = \"Market\"");
+  });
+
+  it("MUTATION negative control: a SUT that only ever activates Spawn goes red on the other two", async () => {
+    // The bug a single-region test cannot see: the click's CHAT is right for every
+    // region, but the real state never follows. Seeding `regions.active` overrides
+    // the mock's own model, so it answers "Spawn" whichever entry was clicked.
+    const results = await runAllCases({ pluginState: { "regions.active": "Spawn" } });
+
+    expect(results.map((r) => r.outcome)).toEqual(["failed", "passed", "failed"]);
+    expect(results[0]!.failure!.type).toBe("INVARIANT_FAILED");
+    const report = buildResultsReport(results, "mock-paper", undefined, { declared: 3 });
+    expect(report.cases.map((c) => c.status)).toEqual(["fail", "pass", "fail"]);
+    expect(report.failed).toBe(2);
+    expect(report.cases[0]!.expected).toContain("pluginState regions.active = TestRegion");
+    expect(report.cases[0]!.actual).toContain('regions.active = "Spawn"');
+    // The chat half still passed — which is exactly why chat alone is not an oracle.
+    expect(report.cases[0]!.actual).toContain("Region loaded: TestRegion");
   });
 });

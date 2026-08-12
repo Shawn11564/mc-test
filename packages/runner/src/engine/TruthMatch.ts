@@ -37,6 +37,30 @@ function scalarEq(expected: unknown, actual: unknown): boolean {
 }
 
 /**
+ * Match an authored block-type expectation against the agent's authoritative
+ * read. Ids are compared case-insensitively with the `minecraft:` namespace
+ * OPTIONAL (`stone` == `minecraft:stone`; a modded `mymod:stone` still differs),
+ * and `*`/`?` globs are honoured — which is what lets ONE invariant say
+ * `is: "*_sign"` across every wood type rather than six per-case assertions.
+ *
+ * Used by both `getBlock` and `waitForBlock` (via `probeBlock`), so an assert-once
+ * and an assert-until read can never judge the same block differently.
+ */
+export function matchBlockType(expected: string, actual: string | null | undefined): boolean {
+  if (actual === null || actual === undefined) return false;
+  const strip = (id: string): string => id.trim().toLowerCase().replace(/^minecraft:/, "");
+  const want = expected.trim().toLowerCase();
+  const got = actual.trim().toLowerCase();
+  if (/[*?]/.test(want)) {
+    const pattern = new RegExp(
+      `^${want.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`,
+    );
+    return pattern.test(got) || pattern.test(strip(got));
+  }
+  return strip(want) === strip(got);
+}
+
+/**
  * Subset-match blockstate properties. Every listed key must be present AND equal;
  * unlisted properties are ignored. Returns a mismatch description or `null`.
  */

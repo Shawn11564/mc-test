@@ -26,7 +26,9 @@ import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
 import { Runner, type ProvisionHandle, type TargetMeta, type AgentConn } from "./engine/Runner.js";
 import { runMatrix, resolveConcurrency } from "./engine/runMatrix.js";
-import { expandMatrix } from "./engine/MatrixExpansion.js";
+import { declaredCaseCount, expandMatrix } from "./engine/MatrixExpansion.js";
+import { applyInvariants } from "./engine/Invariants.js";
+import { lintMatrix, renderLints } from "./engine/MatrixLints.js";
 import { needsDeferredViaBridge, HEADLESS_NATIVE_MC_RANGE } from "./engine/viaPreflight.js";
 import { defaultRegistry, type DriverLaunchContext } from "./drivers/DriverRegistry.js";
 import { findFreePort, type AgentSpec, type ModLoad } from "./provision/serverCommon.js";
@@ -811,6 +813,18 @@ async function cmdRun(args: Args): Promise<number> {
   // wrong-driver skips. Requires an equal count of stepfiles and targets.
   const pair = args.flags["pair"] === "true";
   let jobs: { target: MatrixTarget; test: ReturnType<typeof loadSteps> }[];
+  // Expand + LINT once per stepfile, before anything boots (spec §5.3): a branch
+  // nothing selects and a dimension nothing asserts on are static properties of
+  // the file, so an author hears about them in a second rather than after a
+  // matrix of boots that "passed".
+  const expanded = tests.map((test) => ({ test, cases: expandMatrix(test) }));
+  const lints = expanded.flatMap(({ test, cases }) => lintMatrix(test, cases));
+  if (lints.length) console.warn(`${renderLints(lints)}\n`);
+  // The DECLARED universe (spec §4/§7): the full cross-product a parameterized
+  // test declares, whatever coverage model actually runs. Under `coverage:
+  // pairwise` this is larger than the executed subset, and results.json says so
+  // rather than pinning completeness at a flattering 100%.
+  let declared = 0;
   if (pair) {
     if (tests.length !== targets.length) {
       console.error(
@@ -818,11 +832,18 @@ async function cmdRun(args: Args): Promise<number> {
       );
       return 2;
     }
-    jobs = targets.map((target, i) => ({ target, test: tests[i]! }));
+    jobs = targets.map((target, i) => {
+      declared += declaredCaseCount(tests[i]!);
+      return { target, test: applyInvariants(tests[i]!) };
+    });
   } else {
-    jobs = targets.flatMap((target) => tests.flatMap((test) => {
-      const cases = expandMatrix(test);
-      return (cases.length ? cases : [{ test }]).map(({ test: concrete }) => ({ target, test: concrete }));
+    jobs = targets.flatMap((target) => expanded.flatMap(({ test, cases }) => {
+      declared += declaredCaseCount(test);
+      // Expansion already compiled each case's `expect:` oracle; a test with no
+      // `matrix:` still gets its invariant, judged as a single declared case.
+      return cases.length
+        ? cases.map(({ test: concrete }) => ({ target, test: concrete }))
+        : [{ target, test: applyInvariants(test) }];
     }));
   }
   const concurrency = resolveConcurrency(args.flags["concurrency"], jobs.length);
@@ -854,7 +875,7 @@ async function cmdRun(args: Args): Promise<number> {
   writeJUnit(junitPath, results);
   const resultsJsonPath = join(outDir, "results.json");
   const targetIds = [...new Set(targets.map((t) => t.id))].join(",");
-  writeResults(resultsJsonPath, results, targetIds, currentSha());
+  writeResults(resultsJsonPath, results, targetIds, currentSha(), { declared, lints });
   const htmlPath = join(outDir, "report.html");
   writeHtml(htmlPath, results);
   let artifactCount = 0;

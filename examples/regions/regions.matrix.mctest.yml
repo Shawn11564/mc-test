@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=../../packages/protocol/schema/mctest-stepfile.schema.json
+name: regions-open-each
+# The §4 MATRIX + §5 INVARIANT on the canonical SUT (spec commandcenter/40-testing-loop.md).
+#
+# regions.mctest.yml opens ONE region and asserts one hard-coded chat line + one hard-coded
+# state value. That is the shape that hides bugs: it proves the menu works for "Spawn", and
+# says nothing about the other entries. This file instead declares the DIMENSION (which region
+# the tester opens) and ONE oracle that is a FUNCTION of it — so every entry is judged by the
+# same rule, and no case can be quietly given its own softer assertion.
+#
+# Run it exactly like any other step file:
+#   npx mc-test run examples/regions/regions.matrix.mctest.yml --target paper-1.20.4
+# The report carries one case per region (`regions-open-each[region=Spawn]@paper-1.20.4`) with
+# the expected/actual the invariant produced.
+requires:
+  command: true
+  containerGui: true
+  pluginState: true # the oracle asserts REAL server state, not just chat (agents: [server-bukkit])
+target: ${matrix} # filled by the mc-test.yml row selected with --target
+matrix:
+  region:
+    # Every entry the seeded regions list shows. Add one here and it is tested — no new file,
+    # no copy-pasted assertions.
+    values: [TestRegion, Spawn, Market]
+coverage: full # 3 cases; `pairwise` only pays off from 3 dimensions up
+steps:
+  - join: { username: Tester }
+  - command: "or" # opens the server-driven "OpenRegions" chest menu
+  - waitForScreen: { titleContains: "OpenRegions" }
+  - click: { label: "Regions" } # → the regions list (click retries until it is up)
+  - click: "$region" # ← the dimension: load THIS case's region
+expect:
+  - because: loading a region announces it and makes it the active region in real server state
+    # Both clauses are functions of the case config: one oracle, three cases.
+    chat: { contains: "Region loaded: $region" }
+    pluginState: { plugin: "OpenRegions", query: "regions.active", is: "$region" }
+    # NOTE what is NOT here: no `when:` (the rule holds for every region) and no `except:`
+    # override. An exception would be flagged in results.json precisely because it is where a
+    # per-case excuse — the circular oracle — sneaks back in (spec §4-§5).

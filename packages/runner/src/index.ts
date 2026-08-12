@@ -45,17 +45,58 @@ export {
   canonicalJson,
   deepEqual,
   describeItem,
+  matchBlockType,
   matchItem,
   matchProperties,
   matchSubset,
   type TruthItem,
 } from "./engine/TruthMatch.js";
 export { loadSteps, parseStepDocument } from "./config/loadSteps.js";
-export { expandMatrix, type MatrixCase, type MatrixCoverage, type MatrixDefinition, type MatrixBinding } from "./engine/MatrixExpansion.js";
+export {
+  expandMatrix,
+  declaredCaseCount,
+  declaredCases,
+  type MatrixCase,
+  type MatrixCoverage,
+  type MatrixDefinition,
+  type MatrixBinding,
+} from "./engine/MatrixExpansion.js";
+export { stringify, substituteBindings } from "./engine/Substitute.js";
+export {
+  applyInvariants,
+  compileInvariantSteps,
+  parseAnchors,
+  parseExcept,
+  parseExpect,
+  resolvePos,
+  selectBranches,
+  whenMatches,
+  CLAUSE_KINDS,
+  INVARIANT_STEP_BASE,
+  type ClauseKind,
+  type ExceptEntry,
+  type ExpectBranch,
+  type ExpectClause,
+  type InvariantAnnotation,
+  type SelectedBranch,
+  type Vec3,
+} from "./engine/Invariants.js";
 export { loadMatrix, parseMatrix, findTarget, resolveWorld, collectUnknownKeys } from "./config/loadMatrix.js";
 export { renderJUnit, writeJUnit } from "./report/JUnitReporter.js";
 export { buildResultsReport, toResultCase, writeResults } from "./report/ResultsReporter.js";
-export type { ResultsReport, ResultCase, CaseStatus } from "./report/ResultsReporter.js";
+export type {
+  ResultsReport,
+  ResultsReportOptions,
+  ResultCase,
+  ResultLint,
+  CaseStatus,
+} from "./report/ResultsReporter.js";
+export {
+  lintMatrix,
+  renderLints,
+  type MatrixLint,
+  type MatrixLintRule,
+} from "./engine/MatrixLints.js";
 export {
   buildSkipMatrix,
   renderSkipMatrix,
@@ -105,4 +146,12 @@ export { parseLoadedMods, modLoadResult, type ModLoad } from "./provision/server
 export { resolveModrinth, type ModrinthRef } from "./provision/modrinth.js";
 export type { NormalizedTest, NormalizedStep } from "./model/Step.js";
 export type { MatrixFile, MatrixTarget, WorldDef, Source, ProvisionPolicy } from "./model/Target.js";
-export type { TestResult, StepResult, SuiteResult, SkipInfo, Outcome, BaselineDiffInfo } from "./model/result.js";
+export type {
+  TestResult,
+  StepResult,
+  SuiteResult,
+  SkipInfo,
+  Outcome,
+  BaselineDiffInfo,
+  InvariantVerdict,
+} from "./model/result.js";

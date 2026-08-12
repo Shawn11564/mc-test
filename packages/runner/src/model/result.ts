@@ -87,6 +87,8 @@ export interface TestResult {
   notes?: string[];
   /** Boot-log mod-load detection for a modded-server target (F5). */
   modLoad?: ModLoad;
+  /** The §4–§5 invariant verdict, when the test declared an `expect:` oracle. */
+  invariant?: InvariantVerdict;
   /** The §4 matrix case that produced this result, when applicable. */
   matrixCase?: {
     id: string;
@@ -94,6 +96,22 @@ export interface TestResult {
     coverage: "full" | "pairwise";
     environmentKey: string;
   };
+}
+
+/**
+ * The verdict of the `expect:` invariant for one case (spec §4–§6): what the
+ * oracle demanded, what the world actually reported, and which authored branch
+ * judged it. Absent on tests that declare no invariant.
+ */
+export interface InvariantVerdict {
+  /** `<test>#expect[1]` (space-joined when several branches applied). */
+  ref: string;
+  /** The branch(es) rendered against THIS case's config. */
+  expected: string;
+  /** What the truth reads actually said (or why they were never evaluated). */
+  actual: string;
+  /** Set when an `except:` override judged this case — flagged, never hidden. */
+  exception?: string;
 }
 
 /** All test results for one (suite × target). */

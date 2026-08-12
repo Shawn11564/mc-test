@@ -135,6 +135,10 @@ export class Runner {
     let outcome: Outcome = "passed";
     let failure: TestResult["failure"];
     let testSkip: SkipInfo | undefined;
+    // The `expect:` oracle's readings (spec §4–§6): one entry per compiled
+    // invariant step, carrying what it demanded and what the world answered.
+    const invariantReads: Array<{ ref: string; expected: string; actual: string; exception?: string }> = [];
+    const unevaluated: string[] = [];
     // Artifact paths produced during the run (step screenshots + on-failure
     // captures), surfaced on the result so the reporter/bundle pick them up.
     const testArtifacts: string[] = [];
@@ -237,18 +241,20 @@ export class Runner {
           const sStart = Date.now();
           const match = stepCapMatch(step.requires ?? {}, VERB_CAPABILITY[step.verb], union);
           if (!match.ok) {
+            const message = `step '${step.verb}' requires {${match.unmet.join(", ")}} not advertised by driver '${descriptor.id}' or any co-selected agent`;
             steps.push({
               index: step.index,
               verb: step.verb,
               outcome: "skipped",
               durationMs: Date.now() - sStart,
-              skip: {
-                category: "capability",
-                reason: "NO_COMPATIBLE_DRIVER",
-                unmet: match.unmet,
-                message: `step '${step.verb}' requires {${match.unmet.join(", ")}} not advertised by driver '${descriptor.id}' or any co-selected agent`,
-              },
+              skip: { category: "capability", reason: "NO_COMPATIBLE_DRIVER", unmet: match.unmet, message },
             });
+            // An UNEVALUATED invariant must never read as a pass: record the miss
+            // so the case is reported skipped below (spec §4 honest skips).
+            if (step.invariant) {
+              invariantReads.push({ ...step.invariant, actual: `not evaluated — ${message}` });
+              unevaluated.push(...match.unmet);
+            }
             continue;
           }
           const stepArtifacts: ScreenshotArtifact[] = [];
@@ -266,6 +272,7 @@ export class Runner {
                 ? { baselineDiff: stepArtifacts.find((a) => a.baseline)!.baseline }
                 : {}),
             });
+            if (step.invariant) invariantReads.push({ ...step.invariant, actual: detail });
             for (const a of stepArtifacts) testArtifacts.push(a.path);
           } catch (err) {
             const reason = err instanceof MctpRpcError ? err.reason : undefined;
@@ -291,6 +298,7 @@ export class Runner {
               error: { message: errMessage(err), ...(reason ? { reason } : {}) },
               ...(failArtifacts.length ? { artifacts: failArtifacts } : {}),
             });
+            if (step.invariant) invariantReads.push({ ...step.invariant, actual: errMessage(err) });
             for (const p of failArtifacts) testArtifacts.push(p);
             outcome = "failed";
             failure = {
@@ -298,8 +306,9 @@ export class Runner {
               // Matrix fixture reset/setup is runner mechanics rather than an
               // invariant assertion. Its failure is therefore a case `error`,
               // while authored assertion failures retain their MCTP reason and
-              // report as `fail`.
-              type: step.index < 0 ? "Error" : reason ?? "Error",
+              // report as `fail`. A broken `expect:` branch is the canonical
+              // fail — the steps ran, the EXPECTATION is what gave way (spec §4).
+              type: step.invariant ? "INVARIANT_FAILED" : step.index < 0 ? "Error" : reason ?? "Error",
             };
             break;
           }
@@ -310,6 +319,40 @@ export class Runner {
       failure = { message: errMessage(err), type: "Error" };
     } finally {
       await group.closeAll("testTeardown");
+    }
+
+    // The invariant's verdict for this case: what the oracle demanded, what the
+    // world answered, and which authored branch judged it (spec §6's per-case
+    // `expected`/`actual`/`invariant_ref`).
+    const invariant = invariantReads.length
+      ? {
+          ref: [...new Set(invariantReads.map((r) => r.ref))].join(" "),
+          expected: invariantReads.map((r) => r.expected).join(" AND "),
+          actual: invariantReads.map((r) => r.actual).join(" ; "),
+          ...(invariantReads.find((r) => r.exception)
+            ? { exception: invariantReads.find((r) => r.exception)!.exception! }
+            : {}),
+        }
+      : undefined;
+    // An invariant nothing could evaluate is a SKIP, not a pass: the actions ran,
+    // but no oracle read the world, so there is nothing to call green (spec §4).
+    if (unevaluated.length && outcome === "passed") {
+      outcome = "skipped";
+      testSkip = {
+        category: "capability",
+        reason: "INVARIANT_NOT_EVALUATED",
+        unmet: [...new Set(unevaluated)],
+        message:
+          `the expect: invariant could not be evaluated here — {${[...new Set(unevaluated)].join(", ")}} ` +
+          `is not advertised by driver '${descriptor.id}' or any co-selected agent`,
+      };
+    }
+
+    // An exception-judged case is FLAGGED wherever a human reads the run, not
+    // only in results.json: a per-case override that nobody notices is how a
+    // circular oracle survives (spec §4–§5).
+    if (invariant?.exception) {
+      notes.push(`⚠ PER-CASE EXCEPTION: this case was judged by an except: override, not the shared invariant — ${invariant.exception}`);
     }
 
     const stepsOut = renderSystemOut(steps);
@@ -324,9 +367,11 @@ export class Runner {
       steps,
       ...(failure ? { failure } : {}),
       ...(testSkip ? { skip: testSkip } : {}),
-      ...(brittle ? { brittle: true, notes } : {}),
+      ...(invariant ? { invariant } : {}),
+      ...(brittle ? { brittle: true } : {}),
+      ...(notes.length ? { notes } : {}),
       ...(testArtifacts.length ? { artifacts: testArtifacts } : {}),
-      systemOut: brittle ? `${notes.join("\n")}\n${stepsOut}` : stepsOut,
+      systemOut: notes.length ? `${notes.join("\n")}\n${stepsOut}` : stepsOut,
     };
   }
 

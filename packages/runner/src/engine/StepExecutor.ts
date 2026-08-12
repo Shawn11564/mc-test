@@ -14,6 +14,7 @@ import { Session } from "./Session.js";
 import { withSelectorWaits, UnsatisfiedError } from "./SelectorWaits.js";
 import {
   describeItem,
+  matchBlockType,
   matchItem,
   matchProperties,
   matchSubset,
@@ -257,12 +258,12 @@ async function probeBlock(session: Session, a: Record<string, unknown>, fail: Pr
   const where = `${a["x"]},${a["y"]},${a["z"]}`;
   const notes: string[] = [];
   // With `expect`, this is a real world-state assertion: FAIL unless the agent's authoritative
-  // block read matches (case-insensitive — agents emit lowercase `namespace:path`). Without it,
-  // it stays a bare read that still exercises the full server-side block-read path (and fails on
-  // any agent error, e.g. WORLD_NOT_READY / an unresolved mapping).
+  // block read matches (`matchBlockType` — case-insensitive, `minecraft:` optional, globs
+  // honoured). Without it, it stays a bare read that still exercises the full server-side
+  // block-read path (and fails on any agent error, e.g. WORLD_NOT_READY / an unresolved mapping).
   if (a["expect"] !== undefined) {
     const want = String(a["expect"]);
-    if (got === null || got.toLowerCase() !== want.toLowerCase()) {
+    if (!matchBlockType(want, got)) {
       throw fail(`block assertion failed at ${where}: expected ${want}, got ${got ?? "?"}`);
     }
     notes.push(`= ${got} (expected ${want})`);

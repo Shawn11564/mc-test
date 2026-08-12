@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://mc-test.dev/schema/results.schema.json",
   "title": "mc-test results.json",
-  "description": "Structured, typed run report written beside the JUnit XML (docs/CI.md; spec commandcenter/40-testing-loop.md §6). One object per `mc-test run` invocation: run-level totals + one entry per case. A 'case' here is one (test x target) cell — the matrix engine (spec §4) will later expand `config` with per-dimension values; until then `config` carries the target identity only.",
+  "description": "Structured, typed run report written beside the JUnit XML (docs/CI.md; spec commandcenter/40-testing-loop.md §6). One object per `mc-test run` invocation: run-level totals + one entry per case. A 'case' is one (test x target) cell, or — for a test with a `matrix:` block — one (matrix case x target) cell whose `config` carries the bound dimension values.",
   "type": "object",
   "additionalProperties": false,
   "required": ["declared", "executed", "passed", "failed", "errored", "skipped", "coverage_model", "target", "cases"],
@@ -10,12 +10,12 @@
     "declared": {
       "type": "integer",
       "minimum": 0,
-      "description": "Total cases declared for this run (before any skip). Equals `executed` until the matrix engine (spec §4) can declare cases it never runs."
+      "description": "The DECLARED UNIVERSE: total cases the run's tests declare, summed over targets. For a `matrix:` test this is the full cross-product whatever coverage model ran — under `coverage: pairwise` it is larger than `executed`, so completeness (`executed/declared`, spec §7) never flatters a partial run."
     },
     "executed": {
       "type": "integer",
       "minimum": 0,
-      "description": "Cases actually run (steps executed) — includes passed/failed/errored, excludes cases that never started."
+      "description": "Cases that actually ran (passed + failed + errored). A skip is declared-but-not-executed and counts AGAINST completeness (spec §4)."
     },
     "passed": { "type": "integer", "minimum": 0 },
     "failed": { "type": "integer", "minimum": 0 },
@@ -36,6 +36,20 @@
     "cases": {
       "type": "array",
       "items": { "$ref": "#/definitions/case" }
+    },
+    "lints": {
+      "type": "array",
+      "description": "Static findings about the run's tests (spec §5.3), computed at expansion time: 'vacuous-branch' (an expect:/except: entry whose when: selects no generated case) and 'dead-dimension' (a dimension no expectation depends on — its values are theater). Present only when something was found. Carried here, not just printed, so the coverage web can render them like skips instead of letting them inflate completeness.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule", "ref", "message"],
+        "properties": {
+          "rule": { "type": "string", "enum": ["vacuous-branch", "dead-dimension"] },
+          "ref": { "type": "string", "description": "'<test>#expect[i]' | '<test>#except[i]' | '<test>#matrix.<dimension>'." },
+          "message": { "type": "string" }
+        }
+      }
     }
   },
   "definitions": {
@@ -65,10 +79,12 @@
           "description": "`<index>:<verb>` of the step that failed, when status is fail|error."
         },
         "expected": {
-          "type": "string"
+          "type": "string",
+          "description": "What the `expect:` invariant demanded of THIS case, rendered with its config bound (spec §4-§5). Absent when the test declares no invariant."
         },
         "actual": {
-          "type": "string"
+          "type": "string",
+          "description": "What the world actually reported for those expectations — or why they were never evaluated."
         },
         "evidence": {
           "type": "array",
@@ -81,7 +97,11 @@
         },
         "invariant_ref": {
           "type": "string",
-          "description": "Reference to the ratified invariant this case judges (spec §5). Not yet populated — no invariant DSL exists before the matrix engine (spec §9 phase 2)."
+          "description": "The authored branch(es) that judged this case: '<test>#expect[i]', or '<test>#except[i].expect[j]' for a per-case override (spec §5)."
+        },
+        "exception": {
+          "type": "string",
+          "description": "Present ONLY when a per-case `except:` override replaced the shared invariant for this case, carrying its authored justification. Spec §4: exceptions are allowed but visually flagged — they are where circular oracles sneak back in."
         }
       }
     }

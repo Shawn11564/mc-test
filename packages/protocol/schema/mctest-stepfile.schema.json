@@ -27,6 +27,30 @@
       "type": "array",
       "description": "Ordered steps. Each is a single-key mapping { <verb>: <args> }.",
       "items": { "$ref": "#/$defs/step" }
+    },
+    "matrix": {
+      "type": "object",
+      "description": "Dimensions to expand into cases (spec 40 §4). Each entry: { values: [...] | { label: value }, bind: { step + param | setup | environment } }.",
+      "additionalProperties": { "$ref": "#/$defs/dimension" }
+    },
+    "coverage": {
+      "enum": ["full", "pairwise"],
+      "description": "How many of the declared cases actually run. 'full' (default) = the whole cross-product; 'pairwise' = a covering subset (results.json still reports the FULL declared universe)."
+    },
+    "anchors": {
+      "type": "object",
+      "description": "Named block positions the expect: clauses refer to, e.g. chest: { x: 0, y: 64, z: 0 } → pos: \"chest + $face\".",
+      "additionalProperties": { "$ref": "#/$defs/position" }
+    },
+    "expect": {
+      "type": "array",
+      "description": "The INVARIANT (spec 40 §4-§5): one oracle every generated case is judged against, evaluated against server truth after the steps run. Expected values may be functions of the case config ($dimension).",
+      "items": { "$ref": "#/$defs/expectBranch" }
+    },
+    "except": {
+      "type": "array",
+      "description": "Per-case overrides of the invariant. Allowed, but each needs a written reason and every affected case is FLAGGED in results.json (spec §4).",
+      "items": { "$ref": "#/$defs/exceptEntry" }
     }
   },
   "$defs": {
@@ -69,13 +93,88 @@
           "type",
           "press",
           "screenshot",
+          "useBlock",
+          "attackBlock",
+          "setHeldItem",
+          "look",
+          "move",
           "getBlock",
+          "waitForBlock",
+          "getContainer",
+          "getItem",
           "getEntities",
           "assertPluginState",
+          "waitForPluginState",
           "fixture",
           "spawnFakePlayer"
         ]
       }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["values"],
+      "properties": {
+        "values": {
+          "description": "A list of values, or a mapping of symbolic label → value (the label is what appears in results.json and in when:).",
+          "oneOf": [{ "type": "array" }, { "type": "object" }]
+        },
+        "bind": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "How the value reaches the case: a step parameter, a named setup action, or a provisioning variant (cases sharing one variant share one server boot).",
+          "properties": {
+            "step": { "type": "string", "description": "Verb whose steps receive the bound parameter." },
+            "param": { "type": "string", "description": "Parameter name set on those steps." },
+            "setup": { "type": "string", "description": "Named fixture action applied before the steps." },
+            "environment": { "type": "string", "description": "Provisioning-variant key; groups cases per boot." }
+          }
+        }
+      }
+    },
+    "position": {
+      "description": "A block position: { x, y, z }, \"x,y,z\", or an anchor expression like \"chest + $face\" (operators must be whitespace-separated; offsets are face names or \"dx,dy,dz\").",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["x", "y", "z"],
+          "additionalProperties": false,
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "z": { "type": "number" } }
+        }
+      ]
+    },
+    "expectBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One branch of the invariant: the cases it applies to (when:) and what it demands of them. A branch with no when: applies to every case; all matching branches are ANDed.",
+      "properties": {
+        "when": {
+          "type": "object",
+          "description": "Dimension → value (or list of values) this branch applies to. Matches the case's symbolic label or its concrete value."
+        },
+        "because": { "type": "string", "description": "The one-sentence rationale, carried into the report's expected text." },
+        "block": { "$ref": "#/$defs/oneOrMany" },
+        "chat": { "$ref": "#/$defs/oneOrMany" },
+        "pluginState": { "$ref": "#/$defs/oneOrMany" },
+        "container": { "$ref": "#/$defs/oneOrMany" }
+      }
+    },
+    "exceptEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "expect"],
+      "description": "A per-case override. Needs `case` (exact case id) or `when`, plus a written reason; the case is flagged in results.json.",
+      "properties": {
+        "case": { "type": "string", "description": "Exact case id, e.g. face=north,held=empty." },
+        "when": { "type": "object", "description": "Dimension → value(s), like a branch's when:." },
+        "reason": { "type": "string", "minLength": 1 },
+        "expect": { "type": "array", "items": { "$ref": "#/$defs/expectBranch" } }
+      }
+    },
+    "oneOrMany": {
+      "description": "An assertion clause, or a list of them. block: { pos, is|absent, properties, nbt, timeoutMs } · chat: { contains|matches|regex, timeoutMs } · pluginState: { plugin, query, args, is, timeoutMs } · container: { pos, is, count, slots }.",
+      "oneOf": [{ "type": "object" }, { "type": "array", "items": { "type": "object" } }]
     }
   }
 }

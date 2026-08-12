@@ -64,9 +64,18 @@ test("regions-open-testregion")
 | `type` | `{ text, selector?, clear?, submit? }` | `typeText` | |
 | `press` | `{ key }` | `pressKey` | semantic key name (`ENTER`, `ESCAPE`). |
 | `screenshot` | `{}` | `screenshot` | rendered-client drivers only. |
-| `getBlock` | `{ world?, x, y, z, expect? }` | `worldTruth` | server agent. With `expect` (a block id, e.g. `minecraft:bedrock`) the step ASSERTS the read and fails on mismatch (case-insensitive); without it, it's a bare read that still exercises the path. |
+| `useBlock` | `{ pos: {x,y,z}, face, hand?, sneak?, cursor? }` | `worldInteraction` | act on the world AS the player (`sneak: true` suppresses the block's own use behavior, so a held item places against the clicked face). |
+| `attackBlock` | `{ pos, face, breakBlock? }` | `worldInteraction` | |
+| `setHeldItem` | `"minecraft:oak_sign"` or `{ item?, slot?, hand? }` | `worldInteraction` | |
+| `look` | `{ yaw?, pitch?, at?, force? }` | `worldInteraction` | |
+| `move` | `{ controls?, durationMs?, stop? }` | `worldInteraction` | |
+| `getBlock` | `{ world?, x, y, z, expect?, expectProperties?, expectNbt? }` | `worldTruth` | server agent. With `expect` (a block id, e.g. `minecraft:bedrock`) the step ASSERTS the read and fails on mismatch — case-insensitive, the `minecraft:` namespace optional, and `*`/`?` globs allowed (`*_sign`). `expectProperties` subset-matches the blockstate (`{ facing: east }`), `expectNbt` the block entity. Without any, it's a bare read that still exercises the path. |
+| `waitForBlock` | `getBlock` args + `{ timeoutMs?, intervalMs? }` | `worldTruth` | the same probe, retried until it holds (deferred state); needs at least one expectation. |
+| `getContainer` | `{ world?, x, y, z, expect?, expectCount?, expectSlots? }` | `worldTruth` | |
+| `getItem` | `{ world?, x, y, z, slot, expect? }` | `worldTruth` | component-exact item identity. |
 | `getEntities` | `{ world?, near?, type?, radius? }` | `worldTruth` | server agent. |
 | `assertPluginState` | `{ plugin, query, args?, expect }` | `pluginState` | `expect` is REQUIRED; a bare value is `equals` (e.g. `expect: true`), or use `{ gt, gte, lt, lte, contains, equals, notEquals, exists }`. |
+| `waitForPluginState` | the same + `{ timeoutMs?, intervalMs? }` | `pluginState` | assert-until twin of the above. |
 | `fixture` | `{ name, args }` or `{ reset: true }` | `fixtures` | deterministic setup; `reset` reverts session fixtures. |
 | `spawnFakePlayer` | `{ name, at? }` | `fakePlayers` | server agent + Carpet backend (skips on plain Paper). |
 
@@ -88,6 +97,105 @@ A `click`/`listElements` selector ANDs all present keys. **Never** use a slot in
 Shorthand: `click: "Regions"` ≡ `click: { label: "Regions" }`; `click: "#save"` ≡
 `click: { testId: "save" }`.
 
+## Matrices and invariants (`matrix:` + `expect:`)
+
+Everything above writes **one** test. A `matrix:` block turns it into a family of **cases** — one
+per full combination — and an `expect:` block gives them **one shared oracle** whose expected
+values are functions of the case's config. That pairing is the point: 36 copy-pasted tests can
+each be quietly softened until they pass; one invariant cannot.
+
+The canonical live example is [`examples/regions/regions.matrix.mctest.yml`](../examples/regions/regions.matrix.mctest.yml).
+
+```yaml
+matrix:                     # each key is a DIMENSION; a case is one value from each
+  face:
+    values: [north, south, east, west, up, down]
+    bind: { step: useBlock, param: face }      # set `face:` on every useBlock step
+  held:
+    values: { empty: null, sign-item: minecraft:oak_sign }   # label: value
+    bind: { setup: give-and-hold }             # named fixture action, run before the steps
+  neighbor:
+    values: { free: null, occupied: minecraft:stone }
+coverage: full              # or `pairwise` — a covering subset of the same declared universe
+anchors:
+  chest: { x: 0, y: 64, z: 0 }                 # named positions the expectations refer to
+steps:
+  - setHeldItem: { item: "$held" }             # $dim resolves to the case's value
+  - useBlock: { pos: { x: 0, y: 64, z: 0 }, sneak: true }
+expect:
+  - when: { neighbor: free }                   # this branch judges only the matching cases
+    because: a sneak-click places the sign on the face we clicked
+    block: { pos: "chest + $face", is: "*_sign", properties: { facing: "$face" } }
+  - when: { neighbor: occupied }
+    block: { pos: "chest + $face", is: minecraft:stone }
+    chat:  { contains: "face is blocked" }
+```
+
+**Dimensions and `bind:`** — `values` is a list, or a mapping of *label → value* when the value is
+not readable on its own (`empty: null`). The label is what appears in the case id, in
+`results.json`, and in `when:`. `bind:` says how the value reaches the run:
+
+| `bind:` | Effect |
+|---------|--------|
+| `{ step: <verb>, param: <name> }` | sets that parameter on every step with that verb |
+| `{ setup: <action> }` | runs `fixture: { name: <action>, args: { <dim>: <value> } }` before the steps |
+| `{ environment: <key> }` | selects a provisioning variant; all cases sharing a variant share **one server boot** |
+
+Unbound dimensions still reach the steps and the expectations through `$dim` substitution. Every
+case is preceded by a `fixture: { reset: true }` so cases cannot leak into each other (it honestly
+skips where no fixture provider is connected).
+
+**`coverage:`** — `full` (default) runs the whole cross-product; `pairwise` runs a covering subset
+in which every *pair* of values appears at least once. `results.json` always reports the **full
+declared universe** in `declared` and only the cases that actually ran in `executed`, so a pairwise
+run — or a run with skips — can never claim 100% completeness.
+
+**`expect:` — the invariant.** An ordered list of branches. A branch's `when:` maps dimension →
+value (or list of values, meaning any-of) and matches either the symbolic label or the concrete
+value; a branch with no `when:` judges every case. **All** matching branches apply (ANDed).
+Expected values are substituted per case, so one branch expresses "the sign lands on whichever
+face we clicked" rather than six near-copies. Clause kinds:
+
+| Clause | Args | Needs | Runs as |
+|--------|------|-------|---------|
+| `block` | `{ pos, is? \| absent?, properties?, nbt?, world?, timeoutMs?, intervalMs? }` | `worldTruth` | `getBlock`, or `waitForBlock` when `timeoutMs` is given |
+| `chat` | `{ contains? \| matches? \| regex?, timeoutMs? }` | `chat` | `assertChat` (`matches` is an alias of `contains`) |
+| `pluginState` | `{ plugin?, query, args?, is, timeoutMs? }` | `pluginState` | `assertPluginState`, or `waitForPluginState` with `timeoutMs` |
+| `container` | `{ pos, is?, count?, slots?, world? }` | `worldTruth` | `getContainer` |
+
+Each clause may also be a **list** of clauses. `pos:` accepts `{x,y,z}`, `"x,y,z"`, an `anchors:`
+name, or arithmetic — `"chest + $face"`, `"chest - up"`, `"0,64,0 + 1,0,0"` (operators must be
+surrounded by spaces; offsets are face names or `dx,dy,dz`).
+
+**`except:` — per-case overrides, always flagged.** Allowed, because reality sometimes demands it,
+but never quiet: each entry needs a written `reason:`, it **replaces** the shared oracle for the
+cases it names, and every affected case carries an `exception` field in `results.json` plus a loud
+note in the report.
+
+```yaml
+except:
+  - case: "face=down,neighbor=free"     # exact case id, or `when: { … }`
+    reason: "MC-12345 — signs cannot attach to the underside; tracked upstream, not accepted"
+    expect:
+      - block: { pos: "chest + $face", absent: true }
+```
+
+**Static lints (run before anything boots).** Two ways a matrix can look like coverage and prove
+nothing; both are reported on the console and carried in `results.json` under `lints`:
+
+- **`vacuous-branch`** — an `expect:`/`except:` entry whose `when:` selects **0** generated cases
+  (a typo'd dimension, a value that no longer exists, or cases a `pairwise` subset dropped). A
+  branch nothing selects can never fail, so it judges nothing.
+- **`dead-dimension`** — a dimension no expectation depends on: not named in any `when:`, not used
+  as `$dim` in any expectation or authored assertion step. The run varies the input N ways and
+  asserts the same thing every time, so the extra cases are theater. `environment`-bound
+  dimensions are exempt (proving the *same* invariant across boots is the point).
+
+**Verdicts** are `pass` (every expectation held) · `fail` (the steps ran, an expectation broke) ·
+`error` (a step itself broke) · `skip`. An invariant the selected driver cannot evaluate — no
+`worldTruth`, no connected agent — makes the case a **skip** (`INVARIANT_NOT_EVALUATED`), never a
+pass: an oracle that never read the world has not judged anything.
+
 ## Capabilities & honest skips
 
 A test (or step) declares `requires:`; the runner runs it only if the selected driver — plus
@@ -104,7 +212,11 @@ with a Carpet backend). Put GUI assertions behind `containerGui`, server-truth b
 - **`assertPluginState` needs `expect`** — without it the step errors (a missing verdict would
   be a false green).
 - **`assertChat` is a substring/regex match** on the chat stream; it does not prove server
-  state. Pair it with `assertPluginState` to assert *real* state (the regions test does both).
+  state. Pair it with `assertPluginState` to assert *real* state (the regions test does both) —
+  a SUT can announce "Region loaded: Market" while activating something else entirely.
+- **A matrix without an `expect:` is usually theater.** If every case asserts the same hard-coded
+  thing, the dimensions changed the inputs and nothing changed the judgement; the `dead-dimension`
+  lint says so. Write the oracle as a function of the config instead.
 - **Old versions honestly skip** (`UNSUPPORTED_TARGET` / `VIA_BRIDGE_UNAVAILABLE`) in v1.0 —
   see [`ENVIRONMENTS.md`](./ENVIRONMENTS.md).
 - Author **semantic** selectors; if a label is dynamic, have your SUT stamp a `testId`.

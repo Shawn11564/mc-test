@@ -180,6 +180,21 @@ export class MockAgent {
     this.pluginState.set(query, value);
   }
 
+  /**
+   * Answer the SUT's plugin-state queries from the mock's OWN model, so an
+   * action→truth assertion (`click Spawn` ⇒ `regions.active == "Spawn"`) is
+   * proved by state the click actually changed rather than by a value the test
+   * seeded — the same shape the real Bukkit agent answers. Explicitly seeded
+   * values (`opts.pluginState`) still win, for negative controls.
+   */
+  private derivedState(query: string, args: unknown): unknown {
+    const name = (args as { name?: string } | undefined)?.name;
+    if (query === "regions.active") return this.active;
+    if (query === "regions.count") return this.entries.length;
+    if (query === "regions.exists") return this.entries.some((e) => labelEq(e, name));
+    return null;
+  }
+
   private elements(): { label: string; slot: number }[] {
     if (this.screen === "root") return [{ label: this.regionsLabel, slot: 4 }];
     if (this.screen === "list") {
@@ -376,7 +391,7 @@ export class MockAgent {
       }
       case "truth.assertPluginState": {
         const query = String(params["query"] ?? "");
-        const value = this.pluginState.has(query) ? this.pluginState.get(query) : null;
+        const value = this.pluginState.has(query) ? this.pluginState.get(query) : this.derivedState(query, params["args"]);
         const expect = (params["expect"] as Record<string, unknown> | undefined) ?? {};
         let matched: boolean | null = null;
         if ("equals" in expect) matched = JSON.stringify(value) === JSON.stringify(expect["equals"]);

@@ -29,6 +29,10 @@ run/
 mc-test-report/
 server.jar
 *.log
+# Server/client logs, including the rotated+gzipped ones a Minecraft run leaves behind
+# (12 of these were committed by accident and untracked on 2026-08-11).
+*.log.gz
+/logs/
 eula.txt
 world/
 world_nether/

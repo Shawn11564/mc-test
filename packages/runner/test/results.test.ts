@@ -102,9 +102,9 @@ describe("results.json — schema conformance", () => {
 describe("results.json — case mapping", () => {
   const report: ResultsReport = buildResultsReport(RESULTS, "irrelevant-for-this-block");
 
-  it("counts declared/executed as the total case count", () => {
+  it("counts a skip as DECLARED but not EXECUTED (a skip counts against coverage, spec §4)", () => {
     expect(report.declared).toBe(4);
-    expect(report.executed).toBe(4);
+    expect(report.executed).toBe(3);
   });
 
   it("classifies a passed test as pass", () => {
@@ -149,6 +149,48 @@ describe("results.json — file write", () => {
     expectValid(parsed);
     expect(parsed.sha).toBe("deadbeef");
     expect(parsed.cases).toHaveLength(4);
+  });
+
+  it("carries the invariant verdict + exception flag of a matrix case, and still validates", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mc-test-results-"));
+    const path = join(dir, "results.json");
+    const judged: TestResult = {
+      ...PASSED,
+      name: "placement",
+      outcome: "failed",
+      failure: { message: "step 1000 (getBlock) failed", type: "INVARIANT_FAILED" },
+      steps: [{ index: 1000, verb: "getBlock", outcome: "failed", durationMs: 5 }],
+      matrixCase: { id: "face=north,neighbor=free", config: { face: "north", neighbor: "free" }, coverage: "pairwise", environmentKey: "" },
+      invariant: {
+        ref: "placement#except[0].expect[0]",
+        expected: "block 0,64,-1 is *_sign",
+        actual: "block assertion failed at 0,64,-1: expected *_sign, got minecraft:stone",
+        exception: "except[0]: MC-12345 — tracked, not accepted",
+      },
+    };
+    // declared (8) > executed (1): a pairwise run must never claim the whole universe.
+    writeResults(path, [judged], "paper-1.21.1", "deadbeef", {
+      declared: 8,
+      lints: [{ rule: "dead-dimension", ref: "placement#matrix.held", message: "held is theater" }],
+    });
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    expectValid(parsed);
+    expect(parsed.declared).toBe(8);
+    expect(parsed.executed).toBe(1);
+    expect(parsed.coverage_model).toBe("pairwise");
+    expect(parsed.cases[0]).toMatchObject({
+      id: "placement[face=north,neighbor=free]@paper-1.21.1",
+      status: "fail",
+      failed_step: "1000:getBlock",
+      expected: "block 0,64,-1 is *_sign",
+      invariant_ref: "placement#except[0].expect[0]",
+      exception: "except[0]: MC-12345 — tracked, not accepted",
+    });
+    expect(parsed.cases[0].config).toMatchObject({ face: "north", neighbor: "free" });
+    // §5.3 lints ride along in the report, so the coverage web can render them.
+    expect(parsed.lints).toEqual([
+      { rule: "dead-dimension", ref: "placement#matrix.held", message: "held is theater" },
+    ]);
   });
 
   it("omits sha entirely rather than writing null/empty when unavailable", () => {

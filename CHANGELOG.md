@@ -10,6 +10,76 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-08-11 — The `expect:` invariant: one oracle, resolved per case
+- **`expect:` in a step file is now a real invariant** (spec 40 §4–§5), not just matrix expansion.
+  A test declares an ordered list of branches; each branch's `when:` selects the cases it judges,
+  and its expected values are **functions of the case config** (`pos: "chest + $face"`,
+  `properties: { facing: $face }`) resolved through the same `$dimension` substitution the steps
+  use. That is the whole point: one oracle, written once, judges all 36 cases — as opposed to 36
+  hand-written assertions that can be quietly reshaped to match whatever the code happened to do.
+  Clauses compile to ordinary truth steps (`block` → `getBlock`/`waitForBlock`, `chat`,
+  `pluginState`, `container`) in a high index band, so they run through the same executor, routing
+  and honest skips as everything else — no second assertion path, no assertion logic in an agent.
+- **Honesty rules baked into the parse, not left to review.** A branch that asserts nothing, an
+  unknown clause key, a `pluginState` with no expected value, an undeclared anchor — all are load-
+  time ERRORS rather than expectations that pass vacuously. Keys naming capabilities mc-test does
+  not have (`actor:`, multi-actor, phase 5) are refused **by name** instead of being dropped, since a
+  silently ignored expectation reads as coverage. And an invariant the selected driver cannot
+  evaluate turns the case into a **skip** (`INVARIANT_NOT_EVALUATED`), never a pass.
+- **`except:` per-case overrides are allowed and FLAGGED.** They require a written `reason:`, they
+  replace the shared oracle only for the cases they name, and every affected case carries an
+  `exception` field in results.json plus a loud note in the human report — exceptions are where a
+  circular oracle sneaks back in, so they are never invisible.
+- **results.json finally carries what it declared.** `expected`, `actual` and `invariant_ref`
+  (`<test>#expect[1]` / `<test>#except[0].expect[0]`) are written per case, on passes as well as
+  failures — a pass that cannot say what it proved is the same failure mode in miniature. A broken
+  expectation is now classified `fail` (the steps ran, the expectation gave way) rather than `error`.
+- **`declared` is the real declared universe.** Under `coverage: pairwise` it is the full
+  cross-product while `executed` is the subset that ran, and a **skip is declared-but-not-executed**
+  — so completeness (`executed/declared`, spec §7) can no longer report a flattering 100% for a run
+  that covered a fraction of the matrix. Verified through the CLI: a 2×2×2 pairwise run writes
+  `declared: 8, executed: 0, skipped: 4` when the target honest-skips.
+- **`getBlock`/`waitForBlock` block-type matching** gained globs and an optional `minecraft:`
+  namespace (`is: "*_sign"` matches `minecraft:oak_sign`), shared by both verbs through one matcher
+  so an assert-once and an assert-until read can never disagree.
+- **Two static lints (spec §5.3), run before anything boots.** `vacuous-branch`: an
+  `expect:`/`except:` entry whose `when:` selects zero generated cases — a typo'd dimension, a value
+  that no longer exists, or (said precisely) cases a `pairwise` subset dropped. `dead-dimension`: a
+  dimension no expectation depends on, so the run varies the input N ways and asserts the same thing
+  every time — the values are theater. `environment`-bound dimensions are exempt, since proving the
+  SAME invariant across boots is their whole purpose. Both print at expansion time and ride along in
+  `results.json` under `lints`, so a vacuous branch can render like a skip in the coverage web
+  instead of quietly inflating the completeness bar.
+- **The engine finally has a committed consumer**: `examples/regions/regions.matrix.mctest.yml` —
+  one dimension (which region the tester opens) and one invariant that is a function of it (chat
+  announces `$region` AND `regions.active == $region`). Its negative control is the point: a SUT that
+  announces every region but only ever *activates* Spawn goes red on exactly the other two cases,
+  which the single-region test next to it cannot see. `docs/AUTHORING.md` documents
+  `matrix:`/`bind:`/`coverage:`/`anchors:`/`expect:`/`except:` and the lints, and backfills the
+  world-interaction/truth/time verbs that had shipped undocumented.
+
+### 2026-08-09 — Matrix expansion: the unit of execution is a CASE
+*(backfilled 2026-08-11 — this landed without a CHANGELOG entry.)*
+- **`matrix:` in a step file expands to cases** (spec 40 §4), where a case is one complete
+  configuration — never a "node"; nodes exist only as aggregates in the visualization. Dimensions
+  take a `values` list or a `label: value` mapping (so a value like `null` still has a readable
+  name), and `bind:` says how the value reaches the run: `{ step, param }` sets a parameter on
+  every step with that verb, `{ setup }` runs a named fixture action before the steps, and
+  `{ environment }` selects a provisioning variant.
+- **Environment-variant dimensions group cases per boot.** Cases sharing a variant run under ONE
+  provisioned server and one driver launch (`Runner.runTargetCases`), each still getting its own
+  MCTP session and a `fixture: { reset: true }` preamble — case isolation without paying a server
+  boot per cell. (That reset is the fixture ledger's revert, not yet §4's world-region snapshot.)
+- **`coverage: full | pairwise`**, the pairwise subset chosen by a deterministic greedy cover so
+  every value PAIR appears at least once and reruns are reproducible.
+- **Honest at the seams:** a group whose cases select different drivers skips with
+  `MATRIX_DRIVER_MISMATCH` rather than guessing, and a fixture/setup step failing is classified as
+  a case `error` (runner mechanics broke) rather than a `fail` (an expectation broke).
+- **What it did NOT have on this date** — and what the 08-11 entry above closes: no `expect:`
+  invariant, no lints, and **no committed consumer**, so the engine could expand cases that nothing
+  judged. That gap is why `expected`/`actual`/`invariant_ref` sat unwritten in `results.json` for
+  two days.
+
 ### 2026-08-08 — Time verbs, sign-editor typing, and a rendered-client-on-modded-server row
 - **New time verbs `waitForBlock` / `waitForPluginState`.** Real SUTs write state *after* the action
   that triggered it (a scheduled task, a packet round-trip), which left tests choosing between
@@ -146,6 +216,30 @@ All notable changes to this project are recorded here. The format is based on
   no display — these already degrade to a `skipped` with a reason). `run` aborts only on the former and
   merely warns on the latter, so capability negotiation still does its job; `--strict-preflight` refuses
   a degraded session outright and `--no-preflight` opts out.
+
+### 2026-08-05 — Trust fixes: the `typeText` false-green, `results.json`, and an honest example
+*(backfilled 2026-08-11 — these landed without CHANGELOG entries.)*
+- **Killed the `typeText` false-green.** `screen.typeText` on a screen with no matching text field
+  used to report success: the client agent computed a boolean and dropped it, so every "type into
+  the sign" step was green against a screen that had swallowed the text. `ScreenHandlers.java` now
+  propagates the miss as an `ELEMENT_NOT_FOUND` step failure, with a regression test that types at a
+  screen with no text field and asserts the step FAILS. (The sign editor genuinely has no text
+  widget — the honest `charTyped` fallback that makes signs typeable came on 08-08, deliberately
+  after the false-green was closed rather than instead of closing it.)
+- **`results.json` beside the JUnit XML** (spec 40 §6): the TYPED run artifact other tools parse
+  instead of scraping XML or console text. Run-level `{ declared, executed, passed, failed, errored,
+  skipped, coverage_model, target, sha }` plus one entry per case with its config, status, duration,
+  failed step and evidence paths. Schema at `packages/runner/schema/results.schema.json`, gated by an
+  ajv conformance test over a mixed pass/fail/error/skip run. A `fail` (an expectation broke) is kept
+  distinct from an `error` (a step or the provisioning itself broke) — the distinction JUnit cannot
+  express and every downstream verdict depends on.
+- **The YAML stopped being fiction.** `mc-test.yml` parsing now WARNS on every key it does not
+  implement (`collectUnknownKeys`, dotted paths, per target/plugin/mod entry) — silently accepting a
+  key that does nothing is how a config file drifts into describing a product that does not exist.
+  `mc-test.example.yml` was rewritten so every line both parses and is implemented, and a test pins
+  it at zero unknown keys so it cannot drift again. README/GETTING_STARTED were corrected to claim
+  exactly what runs — they were *under*-selling (rendered-client GUI tests on three loaders,
+  server-truth assertions, premium-jar injection).
 
 ### 2026-06-22 — mc-test publishes its OWN report.html (dogfoods the consumer publish model)
 - The E2E workflow (`.github/workflows/e2e.yml`) now publishes mc-test's own self-test report the same
