@@ -196,6 +196,47 @@ nothing; both are reported on the console and carried in `results.json` under `l
 `worldTruth`, no connected agent — makes the case a **skip** (`INVARIANT_NOT_EVALUATED`), never a
 pass: an oracle that never read the world has not judged anything.
 
+**Watching a run live:** `--events <stdout|stderr|path>` emits the run as NDJSON
+(`run-start`/`case-start`/`step-*`/`case-end`/`run-end`) for a live consumer — see
+[`EVENTS.md`](./EVENTS.md).
+
+## Validating an invariant: the lab controls
+
+A green invariant proves nothing on its own — it might be too loose to fail, or aimed at the wrong
+thing. `mc-test validate` runs **today's check against another commit's code**, which is what turns
+an assertion into an oracle (spec §5):
+
+```bash
+# POSITIVE control — a known-good build must be green, or the invariant is too strict:
+mc-test validate tests/mctest/placement.matrix.yml --against-commit HEAD \
+        --build "./gradlew build -x test" --artifact build/libs/sut.jar --target paper-1.21.1
+
+# NEGATIVE control — a known-bad commit must go red, on exactly the bad combinations:
+mc-test validate tests/mctest/placement.matrix.yml --against-commit <mutant sha> --expect-fail \
+        --expect-cases "held=block,neighbor=occupied" ...
+```
+
+It checks the sha out in a git worktree, builds **that** commit there, and runs the check from your
+**working tree** against it — running the old commit's own tests against itself would prove nothing.
+The worktree is removed afterwards (`--keep` retains it).
+
+| Flag | Meaning |
+|------|---------|
+| `--against-commit <rev>` | the commit to judge (sha, tag, branch) |
+| `--expect-fail` | negative control: the run MUST go red. Without it, the run must be GREEN |
+| `--expect-cases "d=v,d=v"` | ...red on exactly the cases whose config matches, and no others |
+| `--repo <path>` | repo holding the commit (default: cwd) |
+| `--build "<cmd>"` | build command (default: detected — `gradlew build -x test` / `mvn package`) |
+| `--artifact <jar>` | built SUT, relative to the worktree (default: detected in `build/libs`/`target`) |
+
+Exit codes: **0** the control behaved as claimed · **1** it did not · **2** the control could not be
+set up (unknown commit, no build, no jar). A control that *demonstrates* nothing fails: a run where
+nothing executed, or a positive control with skipped cases, is `INCONCLUSIVE`, not green.
+
+Keep every mutant you write — a bug that reached a test becomes a permanent negative control. See
+[`tests/MUTANTS.md`](../tests/MUTANTS.md) for the convention (a labeled branch, one commit, the
+expected-red cases recorded) and for this repo's worked example.
+
 ## Capabilities & honest skips
 
 A test (or step) declares `requires:`; the runner runs it only if the selected driver — plus

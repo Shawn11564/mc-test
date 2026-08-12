@@ -58,6 +58,38 @@ All notable changes to this project are recorded here. The format is based on
   `matrix:`/`bind:`/`coverage:`/`anchors:`/`expect:`/`except:` and the lints, and backfills the
   world-interaction/truth/time verbs that had shipped undocumented.
 
+### 2026-08-12 — The `--events` run stream and `validate --against-commit`
+- **`--events <stdout|stderr|path>` emits the run as NDJSON** (spec §6):
+  `run-start / case-start / step-start / step-pass / step-fail / case-end / run-end`, one JSON
+  object per line, as it happens — what a live coverage view animates instead of waiting for
+  `results.json`. The shape was not invented here: Command Center has shipped a complete consumer
+  for weeks whose live trellis simply had **no producer**, so the vocabulary is its vocabulary,
+  verified by replaying a real log through CC's own parser + reducer (56/56 lines accepted, the run
+  reconstructed case-for-case). `docs/EVENTS.md` records the contract.
+- **The stream and the report cannot disagree.** `caseId` comes from the same function
+  `results.json` uses, step labels are `<index>:<verb>` (unique within a case, and the invariant's
+  own steps are numbered from 1000, so the oracle is visible in the stream), and `run-start` carries
+  the whole DECLARED universe so a trellis can draw the matrix before the first case runs. Cases
+  decided before any session opened — preflight skips, no compatible driver, a provisioning failure
+  — are swept into the log rather than left as nodes that never resolve. Emission is
+  fire-and-forget: a dead consumer can never change a verdict.
+- **`replayEvents()` rebuilds a run from its log**, kept in-repo as the stream's own conformance
+  check: the test asserts the replay matches that same run's `results.json` case-for-case,
+  step-for-step, including a red case's failed step and the oracle's expected/actual.
+- **`mc-test validate --against-commit <sha>` — the §5 lab controls.** Checks the commit out in a
+  git worktree, builds it there, and runs the check **from your working tree** against it (the
+  other direction — the old commit's own tests — proves nothing). Default is the POSITIVE control
+  (a known-good build must be green); `--expect-fail` is the NEGATIVE control, optionally narrowed
+  to exactly the bad combinations with `--expect-cases "held=block,neighbor=occupied"`. A control
+  that demonstrates nothing FAILS: nothing executed, or a positive control with skips, is
+  inconclusive rather than green; setup problems exit 2, kept distinct from a verdict of 1.
+- **Both controls proved on real code, not mocks.** Against the mainline the regions matrix check is
+  3/3 green (exit 0), and the same run with `--expect-fail` exits 1 — while against the new labeled
+  mutant `mutants/regions-active-pinned` (the GUI announces every region but activates a pinned one)
+  it goes red on exactly `region=TestRegion` and `region=Market` and stays green on `region=Spawn`.
+  That mutant is a permanent negative control, recorded in `tests/MUTANTS.md` — the failure shape a
+  chat-only or single-region test cannot see.
+
 ### 2026-08-09 — Matrix expansion: the unit of execution is a CASE
 *(backfilled 2026-08-11 — this landed without a CHANGELOG entry.)*
 - **`matrix:` in a step file expands to cases** (spec 40 §4), where a case is one complete
