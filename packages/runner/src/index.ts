@@ -97,6 +97,28 @@ export {
   type MatrixLint,
   type MatrixLintRule,
 } from "./engine/MatrixLints.js";
+export { caseIdOf, caseConfigOf } from "./report/ResultsReporter.js";
+export {
+  EventStream,
+  openEventStream,
+  parseEventLine,
+  replayEvents,
+  type McTestEvent,
+  type McTestEventType,
+  type EventSummary,
+  type EventDeclaredCase,
+  type ReplayedRun,
+} from "./report/EventStream.js";
+export {
+  runValidation,
+  decideValidation,
+  parseCaseSelector,
+  detectBuildCommand,
+  detectArtifact,
+  type ValidateOptions,
+  type ValidateDeps,
+  type ValidationVerdict,
+} from "./validate/Validate.js";
 export {
   buildSkipMatrix,
   renderSkipMatrix,

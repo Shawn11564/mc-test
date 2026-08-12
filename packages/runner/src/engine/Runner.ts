@@ -19,6 +19,8 @@ import { executeStep, VERB_CAPABILITY, type ExecContext } from "./StepExecutor.j
 import { advertisedKeys, requiredKeys, stepCapMatch } from "./CapabilityMatch.js";
 import { tryCaptureOnFailure, type ScreenshotArtifact } from "../report/screenshots.js";
 import { artifactDirFor, baselineDirFor } from "../report/Artifacts.js";
+import { caseConfigOf, caseIdOf, toResultCase } from "../report/ResultsReporter.js";
+import type { EventStream } from "../report/EventStream.js";
 
 /** A live, provisioned target (the server the bot will join). */
 export interface ProvisionHandle {
@@ -92,7 +94,16 @@ function renderSystemOut(steps: StepResult[]): string {
 }
 
 export class Runner {
-  constructor(private readonly registry: DriverRegistry) {}
+  /**
+   * `events` is the optional `--events` NDJSON stream (spec §6). The runner is
+   * where case and step boundaries are actually known, so it emits them as they
+   * happen; the CLI owns only `run-start`/`run-end`. Absent → no stream, and no
+   * behavioral difference of any kind.
+   */
+  constructor(
+    private readonly registry: DriverRegistry,
+    private readonly events?: EventStream,
+  ) {}
 
   /** Choose a driver for a test, or explain the skip. */
   selectDriver(
@@ -130,6 +141,11 @@ export class Runner {
     agents: AgentConn[] = [],
   ): Promise<TestResult> {
     const start = Date.now();
+    const caseId = caseIdOf(test.name, meta.target, test.matrixCase?.id);
+    this.events?.caseStart(
+      caseId,
+      caseConfigOf({ ...meta, driver: descriptor.id }, test.matrixCase?.config),
+    );
     const steps: StepResult[] = [];
     const group = new SessionGroup();
     let outcome: Outcome = "passed";
@@ -239,9 +255,14 @@ export class Runner {
         const union = group.unionAdvertised();
         for (const step of test.steps) {
           const sStart = Date.now();
+          // `<index>:<verb>` — the same spelling `results.json` uses for
+          // `failed_step`, and unique within a case (the stream's step key).
+          const stepLabel = `${step.index}:${step.verb}`;
+          this.events?.stepStart(caseId, stepLabel);
           const match = stepCapMatch(step.requires ?? {}, VERB_CAPABILITY[step.verb], union);
           if (!match.ok) {
             const message = `step '${step.verb}' requires {${match.unmet.join(", ")}} not advertised by driver '${descriptor.id}' or any co-selected agent`;
+            this.events?.stepEnd(caseId, stepLabel, "skip", Date.now() - sStart, { skipReason: message });
             steps.push({
               index: step.index,
               verb: step.verb,
@@ -272,6 +293,7 @@ export class Runner {
                 ? { baselineDiff: stepArtifacts.find((a) => a.baseline)!.baseline }
                 : {}),
             });
+            this.events?.stepEnd(caseId, stepLabel, "pass", Date.now() - sStart, { detail });
             if (step.invariant) invariantReads.push({ ...step.invariant, actual: detail });
             for (const a of stepArtifacts) testArtifacts.push(a.path);
           } catch (err) {
@@ -297,6 +319,13 @@ export class Runner {
               durationMs: Date.now() - sStart,
               error: { message: errMessage(err), ...(reason ? { reason } : {}) },
               ...(failArtifacts.length ? { artifacts: failArtifacts } : {}),
+            });
+            // A broken invariant reports the ORACLE's expected/actual on the wire,
+            // so a live view shows what was demanded, not just that something threw.
+            this.events?.stepEnd(caseId, stepLabel, step.index < 0 ? "error" : "fail", Date.now() - sStart, {
+              detail: errMessage(err),
+              ...(step.invariant ? { expected: step.invariant.expected, actual: errMessage(err) } : {}),
+              ...(failArtifacts.length ? { evidence: failArtifacts } : {}),
             });
             if (step.invariant) invariantReads.push({ ...step.invariant, actual: errMessage(err) });
             for (const p of failArtifacts) testArtifacts.push(p);
@@ -356,7 +385,7 @@ export class Runner {
     }
 
     const stepsOut = renderSystemOut(steps);
-    return {
+    const result: TestResult = {
       name: test.name,
       target: meta.target,
       ...(meta.loader ? { loader: meta.loader } : {}),
@@ -371,8 +400,23 @@ export class Runner {
       ...(brittle ? { brittle: true } : {}),
       ...(notes.length ? { notes } : {}),
       ...(testArtifacts.length ? { artifacts: testArtifacts } : {}),
+      // Stamp the case identity HERE, where the concrete test is in hand, so the
+      // event stream's `caseId` and the report's row can never disagree (callers
+      // re-stamp the same values for the paths that never reach this method).
+      ...(test.matrixCase
+        ? {
+            matrixCase: {
+              id: test.matrixCase.id,
+              config: test.matrixCase.config,
+              coverage: test.matrixCase.coverage,
+              environmentKey: test.matrixCase.environmentKey,
+            },
+          }
+        : {}),
       systemOut: notes.length ? `${notes.join("\n")}\n${stepsOut}` : stepsOut,
     };
+    this.events?.caseEnd(toResultCase(result));
+    return result;
   }
 
   /**

@@ -92,17 +92,35 @@ function failedStepOf(steps: StepResult[]): StepResult | undefined {
   return steps.find((s) => s.outcome === "failed");
 }
 
+/**
+ * The stable identity of a case. The `--events` stream emits exactly this id, so
+ * a live view and the final report describe the same cases — anything computing
+ * its own id would silently split one case into two.
+ */
+export function caseIdOf(name: string, target: string, matrixCaseId?: string): string {
+  return matrixCaseId ? `${name}[${matrixCaseId}]@${target}` : `${name}@${target}`;
+}
+
+/** The case's configuration: target identity + any bound matrix dimensions. */
+export function caseConfigOf(
+  meta: { target: string; loader?: string; mc?: string; driver?: string },
+  matrixConfig?: Record<string, unknown>,
+): Record<string, unknown> {
+  const config: Record<string, unknown> = { target: meta.target, ...(matrixConfig ?? {}) };
+  if (meta.loader) config["loader"] = meta.loader;
+  if (meta.mc) config["mc"] = meta.mc;
+  if (meta.driver) config["driver"] = meta.driver;
+  return config;
+}
+
 /** Build one report case from a `TestResult`. */
 export function toResultCase(r: TestResult): ResultCase {
   const status = classifyStatus(r.outcome, r.failure?.type);
   const failedStep = status === "fail" || status === "error" ? failedStepOf(r.steps) : undefined;
-  const config: Record<string, unknown> = { target: r.target, ...(r.matrixCase?.config ?? {}) };
-  if (r.loader) config["loader"] = r.loader;
-  if (r.mc) config["mc"] = r.mc;
-  if (r.driver) config["driver"] = r.driver;
+  const config = caseConfigOf(r, r.matrixCase?.config);
 
   return {
-    id: r.matrixCase ? `${r.name}[${r.matrixCase.id}]@${r.target}` : `${r.name}@${r.target}`,
+    id: caseIdOf(r.name, r.target, r.matrixCase?.id),
     config,
     status,
     ms: r.durationMs,

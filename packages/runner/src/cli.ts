@@ -19,8 +19,8 @@
 import { resolve, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, execSync } from "node:child_process";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
 import { loadSteps } from "./config/loadSteps.js";
@@ -48,7 +48,15 @@ import { resolveArtifact } from "./provision/sources.js";
 import { resolveJavaForMc, resolveJdk, requiredJavaMajor, javaMajorOf } from "./provision/jdk.js";
 import { resolveSpigotJar } from "./provision/buildtools.js";
 import { writeJUnit } from "./report/JUnitReporter.js";
-import { writeResults } from "./report/ResultsReporter.js";
+import {
+  buildResultsReport,
+  caseIdOf,
+  toResultCase,
+  writeResults,
+  type ResultsReport,
+} from "./report/ResultsReporter.js";
+import { openEventStream, type EventDeclaredCase } from "./report/EventStream.js";
+import { runValidation } from "./validate/Validate.js";
 import { writeHtml } from "./report/HtmlReporter.js";
 import { renderSkipMatrix } from "./report/SkipMatrix.js";
 import { collectArtifacts } from "./report/Artifacts.js";
@@ -651,6 +659,25 @@ async function runOneTarget(
   return result;
 }
 
+/**
+ * The case ids + configs a run intends to produce, for `run-start` (spec §6). The
+ * ids are built with the same `caseIdOf` the report uses, so a live view and
+ * `results.json` name the same cases.
+ */
+function declaredUniverse(
+  jobs: { target: MatrixTarget; test: ReturnType<typeof loadSteps> }[],
+): EventDeclaredCase[] {
+  return jobs.map(({ target, test }) => ({
+    id: caseIdOf(test.name, target.id, test.matrixCase?.id),
+    config: {
+      target: target.id,
+      ...(test.matrixCase?.config ?? {}),
+      ...(target.loader ? { loader: target.loader } : {}),
+      ...(target.mc ? { mc: target.mc } : {}),
+    },
+  }));
+}
+
 /** Run one environment-variant group under a single server/driver boot. */
 async function runTargetGroup(
   runner: Runner,
@@ -774,7 +801,10 @@ async function cmdRun(args: Args): Promise<number> {
 
   const tests = stepFiles.map((f) => loadSteps(resolve(f)));
   const outDir = resolve(args.flags["out"] ?? "mc-test-report");
-  const runner = new Runner(defaultRegistry());
+  // `--events` (bare/`stdout` → stdout, `stderr`, or a file path): the NDJSON run
+  // stream a live consumer animates (spec §6, docs/EVENTS.md).
+  const events = openEventStream(args.flags["events"]);
+  const runner = new Runner(defaultRegistry(), events);
 
   // Env policy: CLI flags win over matrix `provision`. `--keep` retains every env for
   // inspection; `--reuse` iterates against one stable, reset-between-runs dir per
@@ -860,6 +890,20 @@ async function cmdRun(args: Args): Promise<number> {
     if (group) group.tests.push(job.test);
     else groups.set(key, { target: job.target, tests: [job.test] });
   }
+  const targetIds = [...new Set(targets.map((t) => t.id))].join(",");
+  const sha = currentSha();
+  // run-start announces the DECLARED universe — every (case × target) id the run
+  // intends to produce — so a live trellis can draw the whole matrix before the
+  // first case runs, instead of growing one node at a time.
+  events?.runStart(declaredUniverse(jobs), {
+    declared,
+    coverageModel: jobs.some((job) => job.test.matrixCase?.coverage === "pairwise")
+      ? "pairwise"
+      : jobs.some((job) => job.test.matrixCase) ? "full" : "flat",
+    target: targetIds,
+    ...(sha ? { sha } : {}),
+  });
+
   const groupedResults = await runMatrix(groups.size, concurrency, (i) => {
     const group = [...groups.values()][i]!;
     return group.tests.length === 1
@@ -874,8 +918,16 @@ async function cmdRun(args: Args): Promise<number> {
   const junitPath = join(outDir, "junit", "results.xml");
   writeJUnit(junitPath, results);
   const resultsJsonPath = join(outDir, "results.json");
-  const targetIds = [...new Set(targets.map((t) => t.id))].join(",");
-  writeResults(resultsJsonPath, results, targetIds, currentSha(), { declared, lints });
+  const report = buildResultsReport(results, targetIds, sha, { declared, lints });
+  writeResults(resultsJsonPath, results, targetIds, sha, { declared, lints });
+  // Cases decided before any session opened (preflight skip, no compatible driver,
+  // a provisioning failure) never announced themselves through the runner. Emit
+  // their start/end pair now so the stream accounts for EVERY case in the report.
+  if (events) {
+    for (const result of results) events.ensureAnnounced(toResultCase(result));
+    events.runEnd(report);
+    events.close();
+  }
   const htmlPath = join(outDir, "report.html");
   writeHtml(htmlPath, results);
   let artifactCount = 0;
@@ -897,6 +949,73 @@ async function cmdRun(args: Args): Promise<number> {
   if (results.some((r) => r.outcome === "failed")) return 1;
   if (failOnSkip && results.some((r) => r.outcome === "skipped")) return 1;
   return 0;
+}
+
+/**
+ * `mc-test validate` — the §5 lab controls. Runs the CURRENT check against the
+ * code at another commit: `--expect-fail` demands the run go red (a negative
+ * control over a known-bad commit), its absence demands green (a positive
+ * control). Exits 0 only when the control behaved as claimed.
+ */
+async function cmdValidate(args: Args): Promise<number> {
+  const checkFiles = args._.slice(1);
+  const sha = args.flags["against-commit"];
+  if (checkFiles.length === 0 || !sha || sha === "true") {
+    console.error(
+      "usage: mc-test validate <check.mctest.yml> [more...] --against-commit <sha> [--expect-fail]\n" +
+        "       [--expect-cases \"dim=value,dim=value\"] [--repo <path>] [--build \"<cmd>\"] [--artifact <path>]\n" +
+        "       [--target <id>] [--matrix mc-test.yml] [--out <dir>] [--keep]",
+    );
+    return 2;
+  }
+  if (args.flags["expect-cases"] && args.flags["expect-fail"] !== "true") {
+    console.error("mc-test validate: --expect-cases only means something with --expect-fail (it names the cases that must go RED)");
+    return 2;
+  }
+
+  const outDir = resolve(args.flags["out"] ?? "mc-test-validate-report");
+  const { code } = await runValidation(
+    {
+      sha,
+      repo: resolve(args.flags["repo"] ?? "."),
+      expectFail: args.flags["expect-fail"] === "true",
+      ...(args.flags["expect-cases"] ? { expectCases: args.flags["expect-cases"] } : {}),
+      ...(args.flags["build"] && args.flags["build"] !== "true" ? { build: args.flags["build"] } : {}),
+      ...(args.flags["artifact"] && args.flags["artifact"] !== "true" ? { artifact: args.flags["artifact"] } : {}),
+      keep: args.flags["keep"] === "true",
+    },
+    {
+      build: (worktree, command) => {
+        // The command is authored by the user (or detected from their checkout);
+        // run it through the shell so `./gradlew build -x test` works verbatim.
+        execSync(command, { cwd: worktree, stdio: "inherit" });
+      },
+      runCheck: async ({ artifact }) => {
+        // The CHECK comes from the working tree, the SUT from the worktree: the
+        // whole point is judging old code by today's invariant.
+        const runArgs: Args = {
+          _: ["run", ...checkFiles],
+          flags: {
+            ...(args.flags["matrix"] ? { matrix: args.flags["matrix"] } : {}),
+            ...(args.flags["target"] ? { target: args.flags["target"] } : {}),
+            ...(args.flags["concurrency"] ? { concurrency: args.flags["concurrency"] } : {}),
+            ...(args.flags["events"] ? { events: args.flags["events"] } : {}),
+            ...(artifact ? { plugin: artifact } : {}),
+            out: outDir,
+          },
+        };
+        // `run` exits 1 on a red run — which is the EXPECTED outcome of a negative
+        // control — so the verdict comes from the report, never from its exit code.
+        await cmdRun(runArgs);
+        const reportPath = join(outDir, "results.json");
+        if (!existsSync(reportPath)) throw new Error(`the run produced no results.json at ${reportPath}`);
+        return JSON.parse(readFileSync(reportPath, "utf8")) as ResultsReport;
+      },
+      log: (message) => console.log(message),
+    },
+  );
+  if (code === 1) console.error(`\nControl did not behave as claimed — see above. Report: ${join(outDir, "results.json")}`);
+  return code;
 }
 
 function cmdList(args: Args): number {
@@ -1365,6 +1484,13 @@ commands:
         [--no-share]                    don't share libraries/cache/versions across runs
         [--no-preflight]                skip the pre-session dependency check
         [--strict-preflight]            refuse to run a degraded session (any unmet dep)
+        [--events <stdout|stderr|file>] NDJSON run events for a live consumer
+  validate <check.mctest.yml> [more...] run TODAY's check against ANOTHER COMMIT's code —
+        --against-commit <sha>          the lab controls (docs/AUTHORING.md, spec §5)
+        [--expect-fail]                 negative control: it MUST go red (default: must be green)
+        [--expect-cases "d=v,d=v"]      ...on exactly these combinations, and no others
+        [--repo <path>] [--build "<cmd>"] [--artifact <jar>] [--keep]
+        plus run's --target/--matrix/--out/--events
   list                                  list targets in the matrix [--matrix mc-test.yml]
   doctor                                preflight the deps your matrix needs — JDK, disk,
                                         agent jars, Gradle, display/Docker rendered image.
@@ -1402,6 +1528,9 @@ async function main(): Promise<void> {
     switch (command) {
       case "run":
         code = await cmdRun(args);
+        break;
+      case "validate":
+        code = await cmdValidate(args);
         break;
       case "list":
         code = cmdList(args);
