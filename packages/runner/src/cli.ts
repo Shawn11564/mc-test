@@ -755,16 +755,39 @@ async function cmdRun(args: Args): Promise<number> {
     }
   }
 
-  // --plugin <jar>: override each target's SUT plugin with a build-graph artifact
-  // (the Gradle front door passes the freshly-built jar so it is tested without
-  // hand-editing mc-test.yml). Replaces the target's `plugins` with the one jar.
+  // --plugin <jar>: override each target's SUT with a build-graph artifact (the
+  // Gradle front door passes the freshly-built jar so it is tested without
+  // hand-editing mc-test.yml; `validate --against-commit` passes the jar it built
+  // out of the worktree, which is the whole mechanism of the §5 lab controls).
+  //
+  // Where it lands depends on the target's SERVER family, exactly as provisioning
+  // decides it (cli.ts ~:396): a Bukkit server takes the jar as its only plugin; a
+  // MODDED server takes it as a mod. Overriding only `plugins` was silently wrong
+  // for a modded target — the jar went to a folder nothing reads while the target's
+  // own `mods:` path kept pointing at the working tree, so a negative control would
+  // build the mutant and then test HEAD, and report green.
+  //
+  // On a modded target the override replaces the LOCAL (`path:`) mod entries only:
+  // those are what a project builds, while `url:`/`modrinth:` entries are the
+  // dependencies the SUT needs to load at all (fabric-api and friends). Dropping
+  // those would replace "test the mutant" with "watch the loader fail".
   const pluginOverride = args.flags["plugin"] ? resolve(args.flags["plugin"]) : undefined;
   if (pluginOverride) {
     if (!existsSync(pluginOverride)) {
       console.error(`--plugin jar not found: ${pluginOverride} (build the SUT first)`);
       return 2;
     }
-    targets = targets.map((t) => ({ ...t, plugins: [{ path: pluginOverride }] }));
+    targets = targets.map((t) => {
+      if (!!t.server?.paper || loaderFamily(t.loader) === "bukkit") {
+        return { ...t, plugins: [{ path: pluginOverride }] };
+      }
+      const dependencies = (t.mods ?? []).filter((m) => !m.path);
+      const sut = (t.mods ?? []).find((m) => m.path);
+      return {
+        ...t,
+        mods: [{ path: pluginOverride, ...(sut?.as ? { as: sut.as } : {}) }, ...dependencies],
+      };
+    });
   }
 
   // ── Preflight: check the session's dependencies BEFORE booting anything ──────

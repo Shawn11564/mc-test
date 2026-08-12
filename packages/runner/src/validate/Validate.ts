@@ -153,10 +153,18 @@ export interface ValidateDeps {
 const git = (args: string[], cwd: string): string =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
-/** The build command a checkout implies, when `--build` was not given. */
+/**
+ * The build command a checkout implies, when `--build` was not given.
+ *
+ * The wrapper is named with an explicit `.\` / `./` on both platforms: cmd.exe
+ * normally searches the working directory first, but not when
+ * `NoDefaultCurrentDirectoryInExePath` is set — which Git Bash sets, and node
+ * inherits — so a bare `gradlew.bat` fails with "is not recognized" for anyone
+ * who launched the run from a Git Bash shell.
+ */
 export function detectBuildCommand(worktree: string): string | undefined {
   if (existsSync(join(worktree, "gradlew.bat")) || existsSync(join(worktree, "gradlew"))) {
-    return process.platform === "win32" ? "gradlew.bat build -x test" : "./gradlew build -x test";
+    return process.platform === "win32" ? ".\\gradlew.bat build -x test" : "./gradlew build -x test";
   }
   if (existsSync(join(worktree, "pom.xml"))) return "mvn -B -DskipTests package";
   return undefined;

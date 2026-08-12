@@ -10,6 +10,21 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-08-12 — The §5 controls actually reach a MODDED SUT
+Both found by running the ChestShop placement matrix (spec 40 §10 Plan D step 4) — the first real
+project outside the regions example to drive `validate --against-commit`.
+- **`--plugin <jar>` now overrides a modded target's `mods/`, not only a Bukkit target's `plugins/`.**
+  It only ever replaced `plugins`, which a modded server never reads — so `validate` would faithfully
+  check out a mutant, build it, and then run the check against whatever the target's own `mods:` path
+  pointed at (the working tree). A negative control could build the bad commit and report green about
+  the good one. On a modded target the override now replaces the LOCAL (`path:`) mod entries and
+  leaves `url:`/`modrinth:` ones alone, because those are the dependencies the SUT needs in order to
+  load at all — dropping fabric-api would turn "test the mutant" into "watch the loader fail".
+- **`detectBuildCommand` names the Gradle wrapper `.\gradlew.bat` / `./gradlew` on both platforms.**
+  cmd.exe searches the working directory first *unless* `NoDefaultCurrentDirectoryInExePath` is set —
+  which Git Bash sets and node inherits — so a bare `gradlew.bat` came back "is not recognized" and
+  the control exited 2 without ever building the commit under test. Pinned by a test.
+
 ### 2026-08-11 — The `expect:` invariant: one oracle, resolved per case
 - **`expect:` in a step file is now a real invariant** (spec 40 §4–§5), not just matrix expansion.
   A test declares an ordered list of branches; each branch's `when:` selects the cases it judges,

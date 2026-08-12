@@ -142,6 +142,11 @@ describe("§5 selector + build/artifact detection", () => {
     expect(detectBuildCommand(dir)).toBe("mvn -B -DskipTests package");
     writeFileSync(join(dir, "gradlew.bat"), "");
     expect(detectBuildCommand(dir)).toContain("gradlew");
+    // The wrapper must be named relative-EXPLICITLY on both platforms: cmd.exe
+    // skips the working directory when NoDefaultCurrentDirectoryInExePath is set
+    // (Git Bash sets it, and node inherits it), so a bare `gradlew.bat` comes
+    // back "is not recognized" and the control never builds the mutant at all.
+    expect(detectBuildCommand(dir)).toMatch(/^\.[\\/]gradlew/);
   });
 
   it("finds the built jar and ignores sources/javadoc/shade leftovers", () => {
