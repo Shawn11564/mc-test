@@ -1,0 +1,35 @@
+{
+  "method": "player.menu",
+  "description": "Read back the container menu an agent-owned fake player has open (spec/42): slot indices, item ids, display names and lore, as plain text. This is how a controller learns a modded GUI's layout — or skips it entirely with the clickMenuText verb, which matches the same text server-side.",
+  "request": { "jsonrpc": "2.0", "id": 30, "method": "player.menu", "params": { "sessionId": "s_srv_01", "name": "Rival" } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "result": {
+          "ok": true,
+          "handle": "fp_Rival",
+          "name": "Rival",
+          "open": true,
+          "type": "minecraft:generic_9x6",
+          "size": 90,
+          "slots": [
+            { "slot": 4, "item": "minecraft:player_head", "count": 1, "name": "Steal from Rival", "lore": ["Costs 1 token"] },
+            { "slot": 49, "item": "minecraft:barrier", "count": 1, "name": "Cancel" },
+            { "slot": 63, "item": "minecraft:diamond", "count": 3, "name": "Diamond", "playerInventory": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "noMenuOpen",
+      "envelope": { "jsonrpc": "2.0", "id": 30, "result": { "ok": true, "handle": "fp_Rival", "name": "Rival", "open": false } }
+    },
+    {
+      "name": "unknownHandle",
+      "envelope": { "jsonrpc": "2.0", "id": 30, "error": { "code": -32602, "message": "Unknown fake-player handle", "data": { "reason": "invalidParams", "retryable": false } } }
+    }
+  ]
+}

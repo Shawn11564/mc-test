@@ -20,22 +20,28 @@ plugins {
 group = "io.mctest"
 version = "0.1.0"
 
-// Pinned to one (loader × MC) build; M5 fans this out by swapping these coordinates + mappings/Names.
-val minecraftVersion = "1.21.1"
-val yarnMappings = "1.21.1+build.3"
-val loaderVersion = "0.16.5"
-val fabricApiVersion = "0.102.0+1.21.1"
+// Pinned DEFAULTS for one (loader × MC) build; M5 fans this out by swapping coordinates +
+// mappings/Names. Spec/42 Plan D makes the pins -P-overridable so a variant build
+// (`gradlew build -PmcVersion=… -PyarnMappings=… -PfabricApiVersion=…`) needs no file edit — a
+// version whose Names.java no longer compiles fails LOUDLY at build time, which is the honest
+// "port needed" signal (MappingContractTest names the exact break).
+val minecraftVersion = providers.gradleProperty("mcVersion").getOrElse("1.21.1")
+val yarnMappings = providers.gradleProperty("yarnMappings").getOrElse("1.21.1+build.3")
+val loaderVersion = providers.gradleProperty("fabricLoaderVersion").getOrElse("0.16.5")
+val fabricApiVersion = providers.gradleProperty("fabricApiVersion").getOrElse("0.102.0+1.21.1")
 
 base {
     // ENVIRONMENTS naming `agent-<variant>-<mc>.jar`; loom appends nothing extra to remapJar.
     archivesName.set("agent-server-fabric")
 }
 
-// Drop the version suffix from ALL archive tasks (jar + Loom's remapJar) so the produced jar is exactly
-// `agent-server-fabric.jar` — the name the runner's known-server-agents table resolves. project.version
-// still drives the maven coordinate + fabric.mod.json ${version}; only the output file name is pinned.
+// The archive "version" is the MINECRAFT version (spec/42 Plan D): the produced jar is
+// `agent-server-fabric-<mc>.jar`, finally matching ENVIRONMENTS.md's documented naming, so multiple
+// per-version variants can coexist in build/libs and resolvers (runner KNOWN_AGENTS, CC's actors
+// sidecar installer) pick by (loader, mcVersion). project.version still drives the maven coordinate
+// + fabric.mod.json ${version}; only the output file name carries the MC pin.
 tasks.withType<AbstractArchiveTask>().configureEach {
-    archiveVersion.set("")
+    archiveVersion.set(minecraftVersion)
 }
 
 java {

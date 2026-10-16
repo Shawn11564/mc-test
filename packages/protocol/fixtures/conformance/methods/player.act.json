@@ -1,0 +1,25 @@
+{
+  "method": "player.act",
+  "description": "Drive one portable actor verb (teleport/lookAt/chat/command/attack/interactEntity/interactBlock/clickMenuSlot/clickMenuText/give/hold/sneak/sprint/setGameMode) on a fake player this session spawned. Native backend (spec/41 tier 2).",
+  "request": { "jsonrpc": "2.0", "id": 28, "method": "player.act", "params": { "sessionId": "s_srv_01", "handle": "fp_Bot2", "verb": "chat", "args": { "message": "gl hf" } } },
+  "responses": [
+    { "name": "success", "envelope": { "jsonrpc": "2.0", "id": 28, "result": { "ok": true, "handle": "fp_Bot2", "verb": "chat", "detail": "chatted" } } },
+    {
+      "name": "clickMenuText",
+      "request": { "jsonrpc": "2.0", "id": 28, "method": "player.act", "params": { "sessionId": "s_srv_01", "name": "Rival", "verb": "clickMenuText", "args": { "text": "Steal from", "mode": "pickup" } } },
+      "envelope": { "jsonrpc": "2.0", "id": 28, "result": { "ok": true, "handle": "fp_Rival", "verb": "clickMenuText", "detail": "clicked slot 4 (Steal from Rival)" } }
+    },
+    {
+      "name": "clickMenuTextNoMatch",
+      "envelope": { "jsonrpc": "2.0", "id": 28, "error": { "code": -32000, "message": "No menu slot matching \"trade\" — the open menu has: [4] Steal from Rival, [49] Cancel", "data": { "reason": "ELEMENT_NOT_FOUND", "retryable": true, "details": { "text": "trade", "menu": "[4] Steal from Rival, [49] Cancel" } } } }
+    },
+    {
+      "name": "clickMenuTextAmbiguous",
+      "envelope": { "jsonrpc": "2.0", "id": 28, "error": { "code": -32001, "message": "\"steal\" matches 2 slots: [4] Steal from Rival, [13] Steal all — pass index (0-based) to pick one", "data": { "reason": "AMBIGUOUS_SELECTOR", "retryable": false, "details": { "text": "steal", "matches": [4, 13] } } } }
+    },
+    {
+      "name": "unknownVerb",
+      "envelope": { "jsonrpc": "2.0", "id": 28, "error": { "code": -32602, "message": "Unknown act verb", "data": { "reason": "invalidParams", "retryable": false } } }
+    }
+  ]
+}

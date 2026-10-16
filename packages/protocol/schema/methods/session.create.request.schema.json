@@ -89,6 +89,18 @@
             "type": "string"
           }
         },
+        "auth": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "token"
+          ],
+          "properties": {
+            "token": {
+              "type": "string"
+            }
+          }
+        },
         "constraints": {
           "additionalProperties": false,
           "type": "object",

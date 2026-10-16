@@ -72,6 +72,10 @@ export const VERB_CAPABILITY: Record<StepVerb, StepCapReq> = {
   assertPluginState: "pluginState",
   fixture: "fixtures",
   spawnFakePlayer: "fakePlayers",
+  // Driving an actor is the same capability as creating one: an agent that can
+  // only spawn (Carpet backend) does not register `player.act`, and the call
+  // fails loudly as METHOD_NOT_SUPPORTED rather than silently doing nothing.
+  act: "fakePlayers",
 };
 
 /** Context the executor needs from provisioning (the live server endpoint). */
@@ -626,11 +630,31 @@ export async function executeStep(
       return reset ? "fixture reset" : `fixture ${String(a["fixture"] ?? a["name"])}`;
     }
     case "spawnFakePlayer": {
+      const name = String(a["name"] ?? a["username"] ?? "Bot2");
       await session.call("player.spawnFake", {
-        name: String(a["name"] ?? a["username"] ?? "Bot2"),
+        name,
         ...(a["at"] ? { at: a["at"] } : {}),
+        ...(a["gameMode"] ? { gameMode: a["gameMode"] } : {}),
       });
-      return `spawned fake player`;
+      return `spawned fake player ${name}`;
+    }
+    case "act": {
+      // Addressed by the spawn name (the agent derives `fp_<name>`) or by the
+      // handle the spawn returned; the verb's own parameters ride in `args`.
+      const verb = String(a["verb"] ?? "");
+      if (!verb) throw new Error("act requires a verb (e.g. verb: interactEntity)");
+      const who = a["handle"] ? { handle: String(a["handle"]) } : { name: String(a["name"] ?? "") };
+      if (!("handle" in who) && !who.name) {
+        throw new Error("act requires the fake player's name (or handle)");
+      }
+      const result = await session.call<{ detail?: string }>("player.act", {
+        ...who,
+        verb,
+        ...(a["args"] ? { args: a["args"] } : {}),
+        ...(a["timeoutMs"] !== undefined ? { timeoutMs: a["timeoutMs"] } : {}),
+      });
+      const target = "handle" in who ? who.handle : who.name;
+      return `${target} ${verb}${result.detail ? ` → ${result.detail}` : ""}`;
     }
     default:
       throw new Error(`Unknown step verb: ${String(step.verb)}`);

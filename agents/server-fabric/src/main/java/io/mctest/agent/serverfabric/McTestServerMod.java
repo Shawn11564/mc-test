@@ -1,5 +1,6 @@
 package io.mctest.agent.serverfabric;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import io.mctest.agent.core.Capabilities;
 import io.mctest.agent.core.Dispatch;
@@ -16,9 +17,10 @@ import net.fabricmc.api.DedicatedServerModInitializer;
  * The mc-test server-side agent for Fabric/NeoForge dedicated servers: a thin
  * {@link DedicatedServerModInitializer} that hosts an MCTP WebSocket server and answers the
  * server-truth / fixtures / fake-player half of the protocol (PROTOCOL.md §7.3–§7.5). It mirrors the
- * <b>wiring</b> of {@code /agents/server-bukkit}'s {@code McTestAgentPlugin} (the same six advertised
- * capabilities and the same seven handler registrations), but binds Fabric server primitives instead
- * of the Bukkit API. {@code agent.kind = serverMod}.
+ * <b>wiring</b> of {@code /agents/server-bukkit}'s {@code McTestAgentPlugin}, but binds Fabric server
+ * primitives instead of the Bukkit API, and its {@code fakePlayers} backend is <b>native</b>
+ * (spec/41 tier 2: {@code player.act} verbs on a real ServerPlayerEntity, no Carpet required).
+ * {@code agent.kind = serverMod}.
  *
  * <p>All wire logic, negotiation, and error mapping live in the shared {@code io.mctest.agent.core}
  * ({@code MctpServer} + {@code Dispatch}); this class only assembles them around a loader-specific
@@ -29,7 +31,7 @@ import net.fabricmc.api.DedicatedServerModInitializer;
  * classes (pure Java over the {@link Names} façade), and the Fabric loader entrypoint API
  * ({@code net.fabricmc.api.DedicatedServerModInitializer}). Every Yarn-mapped Minecraft symbol — the
  * {@code MinecraftServer}, server-thread executor, {@code ServerWorld}, {@code BlockState}, game rules,
- * the command dispatch for Carpet fake players, and the {@code ServerLifecycleEvents} that capture the
+ * the native fake-player join/act primitives, and the {@code ServerLifecycleEvents} that capture the
  * server — is confined to {@link Names} (the CI import-scan enforces it).
  */
 public final class McTestServerMod implements DedicatedServerModInitializer {
@@ -57,8 +59,19 @@ public final class McTestServerMod implements DedicatedServerModInitializer {
         JsonObject worldTruthDetail = new JsonObject();
         worldTruthDetail.addProperty("version", 1);
         worldTruthDetail.addProperty("radiusLimit", RADIUS_LIMIT);
+        // Native backend (spec/41 tier 2): a real ServerPlayerEntity behind a discard connection —
+        // no Carpet mod required. The verbs array advertises the player.act surface; persist/list
+        // advertise the spec/42 bench-actor extensions (persistent spawns + player.list roster).
         JsonObject fakePlayersDetail = new JsonObject();
-        fakePlayersDetail.addProperty("backend", "carpet");
+        fakePlayersDetail.addProperty("backend", "native");
+        fakePlayersDetail.addProperty("persist", true);
+        fakePlayersDetail.addProperty("list", true);
+        fakePlayersDetail.addProperty("menu", true);
+        JsonArray actVerbs = new JsonArray();
+        for (String verb : FakePlayerManager.ACT_VERBS) {
+            actVerbs.add(verb);
+        }
+        fakePlayersDetail.add("verbs", actVerbs);
         Capabilities capabilities = new Capabilities()
                 .advertise("worldTruth", worldTruthDetail)
                 .advertise("pluginState")
@@ -79,13 +92,23 @@ public final class McTestServerMod implements DedicatedServerModInitializer {
                 .setCapabilities(capabilities)
                 .setTargetInfo(names.mcVersion(), "fabric", names.loaderVersion())
                 .setLogSink(logSink)
+                // spec/42: a long-lived agent on a server a human plays is a puppet socket; the
+                // launcher (CC's servers module) always sets MCTEST_AGENT_TOKEN. Unset = open
+                // (throwaway test instances, existing runner flows).
+                .setAuthToken(System.getenv("MCTEST_AGENT_TOKEN"))
                 .register("truth.getWorldBlock", "worldTruth", worldTruth::getWorldBlock)
                 .register("truth.getEntities", "worldTruth", worldTruth::getEntities)
                 .register("truth.assertPluginState", "pluginState", stateProbe::assertPluginState)
                 .register("fixture.set", "fixtures", fixtures::set)
                 .register("fixture.reset", "fixtures", fixtures::reset)
                 .register("player.spawnFake", "fakePlayers", fakePlayers::spawnFake)
-                .register("player.despawnFake", "fakePlayers", fakePlayers::despawnFake);
+                .register("player.despawnFake", "fakePlayers", fakePlayers::despawnFake)
+                .register("player.act", "fakePlayers", fakePlayers::act)
+                .register("player.list", "fakePlayers", fakePlayers::list)
+                .register("player.menu", "fakePlayers", fakePlayers::menu);
+
+        // The in-game /actor front door (spec/42 §4): same primitives, op-gated, dev sidecar only.
+        io.mctest.agent.serverfabric.mappings.ActorCommands.install(fakePlayers);
 
         // Defer MctpServer start until the dedicated server is up (so the server-thread bounce has a
         // thread to submit to), and stop it at shutdown. Names owns the mapped ServerLifecycleEvents and

@@ -25,7 +25,7 @@ describe("schema/TS drift gate", () => {
   }
 
   it("emits the expected number of files", () => {
-    // 6 top-level + 31 methods x 2 (request+result) + 4 events = 72
-    expect(SCHEMA_FILES.length).toBe(72);
+    // 6 top-level + 34 methods x 2 (request+result) + 4 events = 78
+    expect(SCHEMA_FILES.length).toBe(78);
   });
 });

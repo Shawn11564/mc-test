@@ -241,6 +241,65 @@ describe("M3 multi-connection fan-out + co-selection", () => {
     expect(stepByVerb(result, "getEntities")?.detail).toContain("1 entit");
   });
 
+  it("5a. act drives a spawned actor's verbs through the agent; an unspawned actor fails loudly", async () => {
+    const driverUrl = await startDriver();
+    const { url: agentUrl, agent } = await startServerAgent();
+    const runner = new Runner(new DriverRegistry());
+
+    const actTest: NormalizedTest = {
+      name: "actor-verbs",
+      requires: {},
+      steps: [
+        { index: 0, verb: "spawnFakePlayer", args: { name: "Rival" }, requires: { fakePlayers: true } },
+        {
+          index: 1,
+          verb: "act",
+          args: { name: "Rival", verb: "interactEntity", args: { target: "1b8419ba-47da-3467-a92b-802c73b64b23" } },
+          requires: { fakePlayers: true },
+        },
+        {
+          index: 2,
+          verb: "act",
+          args: { name: "Rival", verb: "clickMenuSlot", args: { slot: 0 } },
+          requires: { fakePlayers: true },
+        },
+      ],
+    };
+    const result = await runner.runTest(actTest, mockDescriptor(driverUrl), driverUrl, EXEC, META, [
+      agentConn(agentUrl),
+    ]);
+
+    expect(result.outcome).toBe("passed");
+    // The acts reached the AGENT (not the GUI driver), addressed by the spawn handle,
+    // in order, with the verb's own args intact.
+    expect(agent.acts.map((a) => a.verb)).toEqual(["interactEntity", "clickMenuSlot"]);
+    expect(agent.acts[0]?.handle).toBe("fp_Rival");
+    expect(agent.acts[0]?.args["target"]).toBe("1b8419ba-47da-3467-a92b-802c73b64b23");
+    expect(agent.acts[1]?.args["slot"]).toBe(0);
+    expect(stepByVerb(result, "act")?.detail).toContain("interactEntity");
+
+    // Driving an actor this session never spawned is a RED step, never a silent no-op —
+    // the handle registry is what stops the agent puppeting a real player.
+    const { url: strayUrl } = await startServerAgent();
+    const strayTest: NormalizedTest = {
+      name: "actor-unspawned",
+      requires: {},
+      steps: [
+        {
+          index: 0,
+          verb: "act",
+          args: { name: "Ghost", verb: "chat", args: { message: "hi" } },
+          requires: { fakePlayers: true },
+        },
+      ],
+    };
+    const failed = await runner.runTest(strayTest, mockDescriptor(driverUrl), driverUrl, EXEC, META, [
+      agentConn(strayUrl),
+    ]);
+    expect(failed.outcome).toBe("failed");
+    expect(stepByVerb(failed, "act")?.outcome).toBe("failed");
+  });
+
   it("5b. getBlock `expect` asserts the block id — match → passed, mismatch → failed (the world-truth negative control)", async () => {
     const driverUrl = await startDriver();
     const { url: agentUrl } = await startServerAgent({ block: { type: "minecraft:bedrock" } });

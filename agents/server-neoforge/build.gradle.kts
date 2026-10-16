@@ -24,20 +24,24 @@ plugins {
 group = "io.mctest"
 version = "0.1.0"
 
-// Pinned to one (loader × MC) build; fanned out by swapping these coordinates + mappings/Names.
-val minecraftVersion = "1.21.1"
-val neoForgeVersion = "21.1.234"
+// Pinned DEFAULTS for one (loader × MC) build; fanned out by swapping coordinates + mappings/Names.
+// Spec/42 Plan D makes the pins -P-overridable (`gradlew build -PmcVersion=… -PneoForgeVersion=…`) so
+// a variant build needs no file edit — a version whose Names.java no longer compiles fails LOUDLY at
+// build time, which is the honest "port needed" signal.
+val minecraftVersion = providers.gradleProperty("mcVersion").getOrElse("1.21.1")
+val neoForgeVersion = providers.gradleProperty("neoForgeVersion").getOrElse("21.1.234")
 
 base {
     // ENVIRONMENTS naming `agent-<variant>-<mc>.jar`; NeoGradle appends nothing extra to the jar task.
     archivesName.set("agent-server-neoforge")
 }
 
-// Drop the version suffix from ALL archive tasks so the produced jar is exactly `agent-server-neoforge.jar`
-// — the name the runner's KNOWN_AGENTS resolves (cli.ts). project.version still drives the maven
-// coordinate + neoforge.mods.toml ${version}; only the output file name is pinned.
+// The archive "version" is the MINECRAFT version (spec/42 Plan D): the runnable jar is
+// `agent-server-neoforge-<mc>.jar` so per-version variants coexist and resolvers (runner
+// KNOWN_AGENTS, CC's actors sidecar installer) pick by (loader, mcVersion). project.version still
+// drives the maven coordinate + neoforge.mods.toml ${version}; only the file name carries the MC pin.
 tasks.withType<AbstractArchiveTask>().configureEach {
-    archiveVersion.set("")
+    archiveVersion.set(minecraftVersion)
 }
 
 // The RUNNABLE mod jar must carry the nested core + Java-WebSocket + Gson (jarJar output), and the runner

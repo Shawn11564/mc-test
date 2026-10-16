@@ -452,6 +452,13 @@ export const SessionCreateParams = Obj({
   client: Obj({ name: Type.String(), version: Type.String(), lang: ClientLang }),
   requiredCapabilities: Type.Array(Type.String()),
   optionalCapabilities: Type.Optional(Type.Array(Type.String())),
+  /**
+   * Handshake auth (spec/42): when the agent is configured with a token
+   * (`MCTEST_AGENT_TOKEN` env / bukkit `token:` config), `session.create`
+   * requires `auth.token` to match — mismatch/absence is `-32602` and no
+   * session is created. Agents with no token configured ignore this field.
+   */
+  auth: Type.Optional(Obj({ token: Type.String() })),
   constraints: Type.Optional(
     Obj({
       mcVersionRange: Type.Optional(Type.String()),
@@ -941,6 +948,14 @@ export const PlayerSpawnFakeParams = StatefulParams({
   name: Type.String(),
   at: Type.Optional(Vec3),
   gameMode: Type.Optional(Type.String()),
+  /**
+   * `true` → the fake player joins the agent-global registry and SURVIVES
+   * `session.close` / socket drop (spec/42 bench actors); it dies only on
+   * `player.despawnFake`, the agent's in-game remove command, or server stop.
+   * Persistent actors are addressable by `name` from ANY session. Default
+   * `false` = today's session-scoped lifetime (released on close).
+   */
+  persist: Type.Optional(Type.Boolean()),
 });
 export type PlayerSpawnFakeParams = Static<typeof PlayerSpawnFakeParams>;
 
@@ -959,6 +974,127 @@ export type PlayerDespawnFakeParams = Static<typeof PlayerDespawnFakeParams>;
 
 export const PlayerDespawnFakeResult = ResultObject({ despawned: Type.String() });
 export type PlayerDespawnFakeResult = Static<typeof PlayerDespawnFakeResult>;
+
+/**
+ * The portable actor verbs `player.act` drives (spec/41 §5, minus join/leave —
+ * those are `player.spawnFake`/`player.despawnFake`). A closed union, so a
+ * typo'd verb is rejected by the schema instead of reaching the agent.
+ */
+export const PlayerActVerb = Type.Union(
+  [
+    Type.Literal("teleport"),
+    Type.Literal("lookAt"),
+    Type.Literal("chat"),
+    Type.Literal("command"),
+    Type.Literal("attack"),
+    Type.Literal("interactEntity"),
+    Type.Literal("interactBlock"),
+    Type.Literal("clickMenuSlot"),
+    Type.Literal("clickMenuText"),
+    Type.Literal("give"),
+    Type.Literal("hold"),
+    Type.Literal("sneak"),
+    Type.Literal("sprint"),
+    Type.Literal("setGameMode"),
+  ],
+  { description: "Portable actor verb driven on a session-spawned fake player." },
+);
+export type PlayerActVerb = Static<typeof PlayerActVerb>;
+
+export const PlayerActParams = StatefulParams({
+  handle: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+  verb: PlayerActVerb,
+  args: Type.Optional(JsonObject),
+});
+export type PlayerActParams = Static<typeof PlayerActParams>;
+
+export const PlayerActResult = ResultObject({
+  handle: Type.String(),
+  verb: Type.String(),
+  /** Short human-readable outcome (e.g. the interaction's `ActionResult`). */
+  detail: Type.Optional(Type.String()),
+});
+export type PlayerActResult = Static<typeof PlayerActResult>;
+
+/**
+ * One occupied slot of a fake player's open menu (`player.menu`, spec/42).
+ * `slot` is the index the click protocol addresses — the number
+ * `clickMenuSlot` takes. Empty slots are omitted, so a slot index the list
+ * skips is an empty one.
+ */
+export const MenuSlot = Obj({
+  slot: Type.Integer(),
+  item: Type.String(),
+  count: Type.Integer(),
+  /** Display name as plain text — what the GUI actually shows. */
+  name: Type.String(),
+  lore: Type.Optional(Type.Array(Type.String())),
+  /** The slot belongs to the player's own inventory rather than the container. */
+  playerInventory: Type.Optional(Type.Boolean()),
+});
+export type MenuSlot = Static<typeof MenuSlot>;
+
+/**
+ * `player.menu` — read back the container menu an agent-owned fake player has
+ * open. The point is addressing: a modded GUI (a PokeSteal steal menu, a
+ * Cobblemon screen) is only clickable by slot index once you know its layout,
+ * and this is how a controller learns it — or skips it entirely with the
+ * `clickMenuText` verb, which matches the same text server-side.
+ */
+export const PlayerMenuParams = StatefulParams({
+  handle: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+});
+export type PlayerMenuParams = Static<typeof PlayerMenuParams>;
+
+export const PlayerMenuResult = ResultObject({
+  handle: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+  /** False when the player is looking at the world or at its own inventory. */
+  open: Type.Boolean(),
+  /** Registry id of the menu, or the handler's class name for a modded GUI. */
+  type: Type.Optional(Type.String()),
+  /** Only agents whose runtime keeps the title (bukkit) report one. */
+  title: Type.Optional(Type.String()),
+  /** Total slots of the open menu, including the player-inventory rows. */
+  size: Type.Optional(Type.Integer()),
+  slots: Type.Optional(Type.Array(MenuSlot)),
+});
+export type PlayerMenuResult = Static<typeof PlayerMenuResult>;
+
+/**
+ * One agent-owned fake player in the `player.list` roster (spec/42). Live
+ * state fields (`position`/`dimension`/`gameMode`/`health`) are present only
+ * while the actor is online.
+ */
+export const PlayerListEntry = Obj({
+  name: Type.String(),
+  uuid: Type.String(),
+  /** `true` = survives session close (agent-global registry). */
+  persist: Type.Boolean(),
+  /** Which front door spawned it: an MCTP session or the in-game command. */
+  spawnedBy: Type.Union([Type.Literal("mctp"), Type.Literal("command")]),
+  online: Type.Boolean(),
+  position: Type.Optional(Vec3),
+  dimension: Type.Optional(Type.String()),
+  gameMode: Type.Optional(Type.String()),
+  health: Type.Optional(Type.Number()),
+});
+export type PlayerListEntry = Static<typeof PlayerListEntry>;
+
+/**
+ * `player.list` — enumerate every fake player the agent owns (both persistent
+ * actors and this session's session-scoped spawns), so a fresh controller can
+ * re-acquire the roster after a reconnect. Real players never appear here.
+ */
+export const PlayerListParams = StatefulParams({});
+export type PlayerListParams = Static<typeof PlayerListParams>;
+
+export const PlayerListResult = ResultObject({
+  players: Type.Array(PlayerListEntry),
+});
+export type PlayerListResult = Static<typeof PlayerListResult>;
 
 // ===========================================================================
 // 6. Event (notification) payloads

@@ -1,0 +1,115 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: player.menu",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "open"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "handle": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "open": {
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "slot",
+              "item",
+              "count",
+              "name"
+            ],
+            "properties": {
+              "slot": {
+                "type": "integer"
+              },
+              "item": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "lore": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "playerInventory": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

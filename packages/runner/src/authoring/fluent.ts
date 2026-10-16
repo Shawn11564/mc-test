@@ -3,6 +3,7 @@
  * the YAML loader produces, so both surfaces run identically through the engine.
  */
 import type {
+  ActVerb,
   BlockFace,
   BlockPos,
   Hand,
@@ -172,6 +173,21 @@ export class FluentTest {
   getItem(args: GetItemArgs): this {
     const { requires, ...rest } = args;
     return this.push("getItem", rest, requires);
+  }
+  /** Apply a named fixture (or `{ reset: true }` to revert the session's). */
+  fixture(args: { name?: string; args?: Record<string, unknown>; reset?: boolean }): this {
+    return this.push("fixture", args, { fixtures: true });
+  }
+  /** Spawn a server-side actor. Native on `server-fabric`; skips honestly elsewhere. */
+  spawnFakePlayer(args: { name: string; at?: Vec3; gameMode?: string }): this {
+    return this.push("spawnFakePlayer", args, { fakePlayers: true });
+  }
+  /**
+   * Drive one portable actor verb on a fake this run spawned — the second half of
+   * a multi-actor test (`{ name: "Rival", verb: "interactEntity", args: { target: "Tester" } }`).
+   */
+  act(args: { name?: string; handle?: string; verb: ActVerb; args?: Record<string, unknown>; timeoutMs?: number }): this {
+    return this.push("act", args, { fakePlayers: true });
   }
 
   /** Materialize the normalized test (the engine's input). */

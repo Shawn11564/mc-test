@@ -106,7 +106,8 @@
           "assertPluginState",
           "waitForPluginState",
           "fixture",
-          "spawnFakePlayer"
+          "spawnFakePlayer",
+          "act"
         ]
       }
     },

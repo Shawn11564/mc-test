@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { provisionClient } from "../src/launch/ClientProvisioner.js";
+import { provisionClient, mutedOptionsTxt } from "../src/launch/ClientProvisioner.js";
 import { makeStoredZip } from "./_zip.js";
 
 const MANIFEST = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
@@ -114,6 +114,10 @@ describe("provisionClient (injected fetch)", () => {
     // The instance mods/ holds the SUT mod + the client agent jar + the resolved Fabric API jar.
     const staged = readdirSync(join(client.gameDir, "mods")).sort();
     expect(staged).toEqual(["agent-client-fabric.jar", "fabric-api-0.103.0+1.21.1.jar", "openregions.jar"]);
+
+    // The instance is born muted: an automated test client must not play audio
+    // on the machine it runs on.
+    expect(readFileSync(join(client.gameDir, "options.txt"), "utf8")).toContain("soundCategory_master:0.0");
   });
 
   it("HONEST-SKIPs a modular loader (forge) that is not opted in — never a crash or false green", async () => {
@@ -208,5 +212,20 @@ describe("provisionClient (injected fetch)", () => {
         fetchImpl: makeFetch(),
       }),
     ).rejects.toThrow(/MOD_JAR_MISSING/);
+  });
+});
+
+describe("mutedOptionsTxt", () => {
+  it("creates a fresh options.txt with only the master mute", () => {
+    expect(mutedOptionsTxt(null)).toBe("soundCategory_master:0.0\n");
+  });
+
+  it("pins an existing master volume back to zero", () => {
+    const out = mutedOptionsTxt("fov:0.5\nsoundCategory_master:1.0\nsoundCategory_music:0.8\n");
+    expect(out).toBe("fov:0.5\nsoundCategory_master:0.0\nsoundCategory_music:0.8\n");
+  });
+
+  it("appends the mute when the game never wrote a master line", () => {
+    expect(mutedOptionsTxt("fov:0.5\n")).toBe("fov:0.5\nsoundCategory_master:0.0\n");
   });
 });

@@ -1,17 +1,65 @@
 package io.mctest.agent.serverneoforge.mappings;
 
+import com.mojang.authlib.GameProfile;
+import com.mojang.logging.LogUtils;
 import io.mctest.agent.core.McTestException;
+import io.mctest.agent.core.MenuView;
+import io.netty.channel.embedded.EmbeddedChannel;
+import java.util.AbstractSet;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
+import net.minecraft.ChatFormatting;
+import net.minecraft.commands.arguments.EntityAnchorArgument;
+import net.minecraft.network.chat.contents.TranslatableContents;
+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
+import net.minecraft.network.protocol.game.ClientboundSetActionBarTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
+import net.minecraft.network.protocol.game.ServerboundClientCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import net.neoforged.neoforge.network.registration.ChannelAttributes;
+import org.slf4j.Logger;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.Connection;
+import net.minecraft.network.DisconnectionDetails;
+import net.minecraft.network.PacketSendListener;
+import net.minecraft.network.chat.ChatType;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.PlayerChatMessage;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.server.level.ClientInformation;
+import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
@@ -53,9 +101,11 @@ import net.neoforged.neoforge.event.server.ServerStoppingEvent;
  * Mojmap-mapped NeoForge server APIs (NeoForge ships OFFICIAL Mojang names at dev AND runtime, so unlike
  * Forge there is no SRG reobfuscation step): {@link ServerLevel#getBlockState(BlockPos)} for blocks,
  * {@link ServerLevel} entity iteration for entities, {@link GameRules}/{@code setDayTime}/
- * {@code setWeatherParameters} for fixtures. <b>{@code fakePlayers} is intentionally dropped</b> on
- * NeoForge (no Carpet backend), so there is no {@code /player} console seam here — only the world-truth /
- * fixtures / plugin-state surface. The MCTP dispatch loop runs on a Java-WebSocket worker thread, so every
+ * {@code setWeatherParameters} for fixtures. {@code fakePlayers} is <b>native</b> here as of spec/42
+ * (the "no Carpet backend" rationale went stale the day server-fabric proved the
+ * {@code placeNewPlayer}-behind-a-discard-connection path needs no Carpet): a real {@link ServerPlayer}
+ * on the real join path, plus the {@code player.act} verb surface and the {@code /actor} command. The
+ * MCTP dispatch loop runs on a Java-WebSocket worker thread, so every
  * game access bounces onto the server thread via {@link #call(Callable, long)} (mirrors the fabric/forge
  * agents, using {@link MinecraftServer#submit}).
  *
@@ -72,7 +122,42 @@ import net.neoforged.neoforge.event.server.ServerStoppingEvent;
  */
 public final class Names {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+
+    /**
+     * Every channel, as far as NeoForge's "did the client agree to this channel?" check is concerned. An actor never
+     * negotiates channels, so without this any mod that sends its own packet to a joining player (Sable does) or to
+     * the players tracking its entities makes NeoForge throw, and the actor can't join. The packets are discarded
+     * anyway.
+     */
+    private static final Set<ResourceLocation> ANY_CHANNEL = new AbstractSet<>() {
+        @Override
+        public boolean contains(Object o) {
+            return true;
+        }
+
+        @Override
+        public boolean add(ResourceLocation id) {
+            return false;
+        }
+
+        @Override
+        public Iterator<ResourceLocation> iterator() {
+            return Collections.emptyIterator();
+        }
+
+        @Override
+        public int size() {
+            return 0;
+        }
+    };
+
     private volatile MinecraftServer server;
+    /** Actors whose messages aren't echoed to operators ({@code /actor <name> echo off}). */
+    private final Set<String> muted = ConcurrentHashMap.newKeySet();
+    /** The messages echoed this tick (by identity), so one broadcast to several actors is shown once. */
+    private final Set<Component> echoedThisTick = Collections.newSetFromMap(new IdentityHashMap<>());
+    private int echoTick = -1;
 
     public Names() {
     }
@@ -474,6 +559,590 @@ public final class Names {
         s.getCommands().performPrefixedCommand(s.createCommandSourceStack(), command);
     }
 
+    // --- native fake players (spec/41 tier 2 pattern, ported to Mojmap; spec/42 brings it here) ---
+    //
+    // The "player" is a real ServerPlayer joined through PlayerList.placeNewPlayer behind a Connection
+    // that discards every outbound packet (activated via an EmbeddedChannel so the connection looks open
+    // without a socket). Every join/leave/interact hook fires exactly as for a human; no Carpet mod is
+    // required. On NeoForge the interaction events (AttackEntityEvent, EntityInteract, RightClickBlock)
+    // are fired INSIDE the vanilla methods by the loader's patches — unlike Fabric, where the callbacks
+    // live in the packet handler and the facade must invoke them explicitly — so calling the vanilla
+    // method is the faithful full sequence. Identity is the deterministic offline UUID, stable across
+    // sessions and tiers. All of these are server-thread primitives; handlers wrap them in call().
+
+    /**
+     * Joins a native fake player. Optional spawn position and game mode.
+     *
+     * @return the joined player's UUID string.
+     * @throws McTestException {@code invalidParams} if already online or the game mode is unknown;
+     *                         {@code internal} if the join path fails.
+     */
+    public String spawnFakePlayer(String name, Double x, Double y, Double z, String gameMode)
+            throws McTestException {
+        MinecraftServer s = requireServer();
+        java.util.UUID id = java.util.UUID.nameUUIDFromBytes(
+                ("OfflinePlayer:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (s.getPlayerList().getPlayer(id) != null) {
+            throw McTestException.invalidParams("Fake player already online: " + name);
+        }
+        GameType mode = null;
+        if (gameMode != null && !gameMode.isEmpty()) {
+            mode = GameType.byName(gameMode, null);
+            if (mode == null) {
+                throw McTestException.invalidParams("Unknown gameMode: " + gameMode);
+            }
+        }
+        GameProfile profile = new GameProfile(id, name);
+        // A plain ServerPlayer: the actor pump (installActorPump) drives its network-side tick, which keeps
+        // working after a respawn, where PlayerList.respawn builds a new plain ServerPlayer anyway.
+        ServerPlayer player = new ServerPlayer(s, s.overworld(), profile, ClientInformation.createDefault());
+        DiscardingConnection connection = new DiscardingConnection(this, name);
+        // Activating an EmbeddedChannel with the connection as its handler runs channelActive, which
+        // adopts the channel — the supported way to make an unregistered connection look connected.
+        new EmbeddedChannel(connection);
+        connection.channel().attr(ChannelAttributes.ADHOC_CHANNELS).set(ANY_CHANNEL);
+        try {
+            s.getPlayerList().placeNewPlayer(connection, player,
+                    CommonListenerCookie.createInitial(profile, false));
+        } catch (Exception e) {
+            throw McTestException.internal("Native fake-player join failed for '" + name + "': "
+                    + describe(e));
+        }
+        if (x != null && y != null && z != null) {
+            player.teleportTo(s.overworld(), x, y, z, player.getYRot(), player.getXRot());
+        }
+        if (mode != null) {
+            player.setGameMode(mode);
+        }
+        return id.toString();
+    }
+
+    /**
+     * Disconnects a native fake player through the real leave path, so leave events fire.
+     *
+     * @return true if the player was online and is now disconnected; false if not online.
+     */
+    public boolean despawnFakePlayer(String name) {
+        ServerPlayer player = onlinePlayer(name);
+        if (player == null || !isActor(player)) {
+            return false; // never disconnect a real player who took an actor's name
+        }
+        if (!player.hasDisconnected()) {
+            player.connection.onDisconnect(new DisconnectionDetails(Component.literal("mc-test despawn")));
+        }
+        return true;
+    }
+
+    /** Broadcasts an unsigned player chat message from the fake player. */
+    public void actChat(String name, String message) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        requireServer().getPlayerList().broadcastChatMessage(
+                PlayerChatMessage.unsigned(player.getUUID(), message), player,
+                ChatType.bind(ChatType.CHAT, player));
+    }
+
+    /** Runs a command as the fake player (its own permission level, not console). */
+    public void actCommand(String name, String command) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        requireServer().getCommands().performPrefixedCommand(player.createCommandSourceStack(), command);
+    }
+
+    /** Teleports the fake player within/into the named world (default: its current world). */
+    public void actTeleport(String name, String worldName, double x, double y, double z)
+            throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        ServerLevel world = worldName == null || worldName.isEmpty()
+                ? player.serverLevel() : resolveWorld(worldName);
+        if (world == null) {
+            throw McTestException.worldNotReady("World not loaded: " + worldName);
+        }
+        player.teleportTo(world, x, y, z, player.getYRot(), player.getXRot());
+    }
+
+    /** Points the fake player's eyes at a position. */
+    public void actLookAt(String name, double x, double y, double z) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        player.lookAt(EntityAnchorArgument.Anchor.EYES, new Vec3(x, y, z));
+    }
+
+    /** The vanilla attack sequence (NeoForge fires AttackEntityEvent inside Player.attack). */
+    public String actAttackEntity(String name, String targetRef) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        Entity target = requireEntity(targetRef);
+        player.attack(target);
+        return "attacked";
+    }
+
+    /** The vanilla interact sequence (NeoForge fires EntityInteract inside Player.interactOn). */
+    public String actInteractEntity(String name, String targetRef) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        Entity target = requireEntity(targetRef);
+        InteractionResult vanilla = player.interactOn(target, InteractionHand.MAIN_HAND);
+        if (vanilla.consumesAction()) {
+            player.swing(InteractionHand.MAIN_HAND, true);
+        }
+        return "vanilla:" + vanilla;
+    }
+
+    /** Right-clicks the block at (x, y, z) with the main hand (fires RightClickBlock via the game mode). */
+    public String actInteractBlock(String name, int x, int y, int z) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        BlockPos pos = new BlockPos(x, y, z);
+        BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false);
+        InteractionResult result = player.gameMode.useItemOn(player, player.serverLevel(),
+                player.getItemInHand(InteractionHand.MAIN_HAND), InteractionHand.MAIN_HAND, hit);
+        return result.toString();
+    }
+
+    /**
+     * Right-clicks whatever block the fake player is facing (≤5 blocks, no fluids) — the
+     * {@code /actor <name> useblock} convenience (spec/42), with the REAL raycast hit (face + point).
+     */
+    public String actUseBlockFacing(String name) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        HitResult hit = player.pick(5.0, 1.0f, false);
+        if (hit.getType() != HitResult.Type.BLOCK || !(hit instanceof BlockHitResult blockHit)) {
+            throw McTestException.invalidParams("No block within reach of " + name);
+        }
+        InteractionResult result = player.gameMode.useItemOn(player, player.serverLevel(),
+                player.getItemInHand(InteractionHand.MAIN_HAND), InteractionHand.MAIN_HAND, blockHit);
+        return result.toString();
+    }
+
+    /**
+     * Clicks a slot of the fake player's open server-side container menu. {@code button} and
+     * {@code mode} are the vanilla click protocol's own two parameters (mouse button, and the
+     * canonical click-type name from {@code Menus.clickMode}), so a right-click or a shift-click on a
+     * modded GUI is expressible.
+     */
+    public void actClickMenuSlot(String name, int slot, int button, String mode) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        if (player.containerMenu == player.inventoryMenu) {
+            throw McTestException.invalidParams("clickMenuSlot: no menu open for " + name);
+        }
+        player.containerMenu.clicked(slot, button, clickType(mode), player);
+    }
+
+    /**
+     * The canonical click-mode name to this runtime's mapped constant. Resolved by a switch on
+     * purpose: enum constant names are remapped like any other field, so {@code valueOf} on a
+     * mapping-neutral string would work in dev and fail on a real server.
+     */
+    private ClickType clickType(String mode) throws McTestException {
+        switch (mode == null ? "PICKUP" : mode) {
+            case "PICKUP":
+                return ClickType.PICKUP;
+            case "QUICK_MOVE":
+                return ClickType.QUICK_MOVE;
+            case "SWAP":
+                return ClickType.SWAP;
+            case "CLONE":
+                return ClickType.CLONE;
+            case "THROW":
+                return ClickType.THROW;
+            case "PICKUP_ALL":
+                return ClickType.PICKUP_ALL;
+            default:
+                throw McTestException.invalidParams("Unknown click mode: " + mode);
+        }
+    }
+
+    /**
+     * The menu the fake player has open, flattened to plain text (spec/42 "click text"). The player's
+     * own inventory screen is NOT a menu — it is what "no menu open" means — matching
+     * {@link #actClickMenuSlot}'s guard exactly, so a text click can never silently address the
+     * inventory the player is carrying.
+     */
+    public MenuView menuOf(String name) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        AbstractContainerMenu menu = player.containerMenu;
+        if (menu == null || menu == player.inventoryMenu) {
+            return MenuView.CLOSED;
+        }
+        Container own = player.getInventory();
+        List<MenuView.Slot> rows = new ArrayList<>();
+        for (int i = 0; i < menu.slots.size(); i++) {
+            Slot slot = menu.slots.get(i);
+            ItemStack stack = slot.getItem();
+            if (stack.isEmpty()) {
+                continue;
+            }
+            rows.add(new MenuView.Slot(i, BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
+                    stack.getCount(), stack.getHoverName().getString(), loreOf(stack),
+                    slot.container == own));
+        }
+        return MenuView.of(menuType(menu), null, menu.slots.size(), rows);
+    }
+
+    /** Lore lines as plain text; 1.20.5+ keeps them in the LORE data component. */
+    private List<String> loreOf(ItemStack stack) {
+        List<String> lines = new ArrayList<>();
+        ItemLore lore = stack.get(DataComponents.LORE);
+        if (lore != null) {
+            for (Component line : lore.lines()) {
+                lines.add(line.getString());
+            }
+        }
+        return lines;
+    }
+
+    /**
+     * A menu's registry id, or the menu's class name when it has none. Modded GUIs are the case that
+     * matters and their class names survive remapping, so this is a real identity to look at.
+     */
+    private String menuType(AbstractContainerMenu menu) {
+        try {
+            ResourceLocation id = BuiltInRegistries.MENU.getKey(menu.getType());
+            if (id != null) {
+                return id.toString();
+            }
+        } catch (RuntimeException ignored) {
+            // getType() throws for menus that never registered one (most modded GUIs).
+        }
+        return menu.getClass().getSimpleName();
+    }
+
+
+    /** Inserts {@code count} of {@code itemId} into the fake player's inventory (overflow drops at its feet). */
+    public void actGive(String name, String itemId, int count) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        ItemStack stack = new ItemStack(requireItem(itemId), Math.max(1, count));
+        player.getInventory().add(stack);
+        if (!stack.isEmpty()) {
+            player.drop(stack, false, false);
+        }
+        player.containerMenu.broadcastChanges();
+    }
+
+    /** Puts {@code itemId} in the main hand; null/empty clears it. */
+    public void actHold(String name, String itemId) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        if (itemId == null || itemId.isEmpty()) {
+            player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        } else {
+            player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(requireItem(itemId), 1));
+        }
+    }
+
+    public void actSneak(String name, boolean sneaking) throws McTestException {
+        requireOnline(name).setShiftKeyDown(sneaking);
+    }
+
+    public void actSprint(String name, boolean sprinting) throws McTestException {
+        requireOnline(name).setSprinting(sprinting);
+    }
+
+    public void actSetGameMode(String name, String gameMode) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        GameType mode = GameType.byName(gameMode, null);
+        if (mode == null) {
+            throw McTestException.invalidParams("Unknown gameMode: " + gameMode);
+        }
+        player.setGameMode(mode);
+    }
+
+    /**
+     * Selects a hotbar slot (0–8) through the client's own packet handler, as its number keys do: the way to hold
+     * an item the actor already carries ({@code hold} makes a new one, which loses the item's data).
+     */
+    public void actSelectHotbar(String name, int slot) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        player.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket(slot));
+    }
+
+    /**
+     * Uses the held item without a block — a right-click in the air (throw, drink, eat, open a map, look through
+     * a spyglass) — through the client's own packet handler, facing where the actor faces.
+     *
+     * @return what was used.
+     */
+    public String actUseItem(String name, boolean offhand) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        InteractionHand hand = offhand ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        ItemStack stack = player.getItemInHand(hand);
+        if (stack.isEmpty()) {
+            throw McTestException.invalidParams(name + " has nothing in its " + (offhand ? "off hand" : "main hand"));
+        }
+        String used = stack.getHoverName().getString();
+        player.connection.handleUseItem(new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot()));
+        return "used " + used;
+    }
+
+    /**
+     * Breaks the block the actor faces (≤5 blocks) as if it had just finished mining it: the real
+     * {@code destroyBlock}, whose break event fires first, so a protection can still refuse it. Mining time
+     * isn't simulated.
+     */
+    public String actMineFacing(String name) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        HitResult hit = player.pick(5.0, 1.0f, false);
+        if (hit.getType() != HitResult.Type.BLOCK || !(hit instanceof BlockHitResult blockHit)) {
+            throw McTestException.invalidParams("No block within reach of " + name);
+        }
+        return mine(player, blockHit.getBlockPos());
+    }
+
+    /** Breaks the block at (x, y, z), as {@link #actMineFacing} does, wherever the actor looks. */
+    public String actMineAt(String name, int x, int y, int z) throws McTestException {
+        return mine(requireOnline(name), new BlockPos(x, y, z));
+    }
+
+    private static String mine(ServerPlayer player, BlockPos pos) {
+        String block = BuiltInRegistries.BLOCK.getKey(player.serverLevel().getBlockState(pos).getBlock()).toString();
+        boolean broken = player.gameMode.destroyBlock(pos);
+        return (broken ? "broke " : "couldn't break ") + block + " at " + pos.getX() + " " + pos.getY() + " " + pos.getZ();
+    }
+
+    /** Drops the held item, one or the whole stack, through the client's own packet handler (its Q key). */
+    public String actDrop(String name, boolean wholeStack) throws McTestException {
+        ServerPlayer player = requireOnline(name);
+        ItemStack held = player.getMainHandItem();
+        if (held.isEmpty()) {
+            throw McTestException.invalidParams(name + " has nothing in its main hand");
+        }
+        String item = held.getHoverName().getString();
+        player.connection.handlePlayerAction(new ServerboundPlayerActionPacket(wholeStack
+                ? ServerboundPlayerActionPacket.Action.DROP_ALL_ITEMS : ServerboundPlayerActionPacket.Action.DROP_ITEM,
+                BlockPos.ZERO, Direction.DOWN));
+        return "dropped " + item;
+    }
+
+    // --- actor upkeep: the tick pump, respawning, and echoing what an actor is told ---
+
+    /**
+     * Drives every actor's player tick each server tick. The network-driven half of a player tick
+     * ({@code doTick}: movement, regeneration, item ticks such as a held map filling in) never runs for a
+     * discard connection, because the server's connection listener never sees one, so this does it, with the
+     * Carpet keep-alive cadence. A dead actor respawns the way the death screen's Respawn button does it. A
+     * per-tick pump rather than a {@code ServerPlayer} subclass (as on bukkit), because
+     * {@code PlayerList.respawn} builds a new, plain {@code ServerPlayer}.
+     *
+     * @param roster the names of every actor this agent spawned, read each tick.
+     */
+    public void installActorPump(Supplier<Collection<String>> roster) {
+        NeoForge.EVENT_BUS.addListener((ServerTickEvent.Post e) -> pumpActors(e.getServer(), roster.get()));
+    }
+
+    private void pumpActors(MinecraftServer s, Collection<String> roster) {
+        for (String name : roster) {
+            ServerPlayer player = s.getPlayerList().getPlayerByName(name);
+            if (player == null || !(player.connection.getConnection() instanceof DiscardingConnection)) {
+                continue; // despawned, or a real player has the name
+            }
+            try {
+                if (player.isDeadOrDying() || player.wonGame) {
+                    // The listener's handler swaps the respawned ServerPlayer in, exactly as for a client.
+                    player.connection.handleClientCommand(
+                            new ServerboundClientCommandPacket(ServerboundClientCommandPacket.Action.PERFORM_RESPAWN));
+                    continue;
+                }
+                if (s.getTickCount() % 10 == 0) {
+                    player.connection.resetPosition();
+                    player.serverLevel().getChunkSource().move(player);
+                }
+                player.doTick();
+            } catch (RuntimeException e) {
+                LOGGER.warn("[mc-test] Actor tick failed for {}: {}", name, describe(e));
+            }
+        }
+    }
+
+    /** Starts or stops echoing what an actor is told ({@code /actor <name> echo on|off}); on by default. */
+    public void setEcho(String name, boolean on) {
+        if (on) {
+            muted.remove(name);
+        } else {
+            muted.add(name);
+        }
+    }
+
+    /**
+     * Shows what an actor was just told, since it has no screen to read it on: chat lines, action-bar messages
+     * and titles, prefixed with its name, in chat for every online operator who isn't an actor, and in the server
+     * log. Plain text only, so a clickable line can't act for the operator. A message broadcast to several actors
+     * in one tick is shown once, and the join, leave and death messages everyone receives are skipped.
+     */
+    void echo(String actor, Packet<?> packet) {
+        if (packet instanceof ClientboundBundlePacket bundle) {
+            for (Packet<?> part : bundle.subPackets()) {
+                echo(actor, part);
+            }
+            return;
+        }
+        String kind;
+        Component text;
+        if (packet instanceof ClientboundSystemChatPacket chat) {
+            kind = chat.overlay() ? "action bar" : null;
+            text = chat.content();
+        } else if (packet instanceof ClientboundSetActionBarTextPacket bar) {
+            kind = "action bar";
+            text = bar.text();
+        } else if (packet instanceof ClientboundSetTitleTextPacket title) {
+            kind = "title";
+            text = title.text();
+        } else if (packet instanceof ClientboundSetSubtitleTextPacket subtitle) {
+            kind = "subtitle";
+            text = subtitle.text();
+        } else {
+            return;
+        }
+        MinecraftServer s = this.server;
+        if (s == null || muted.contains(actor)) {
+            return;
+        }
+        if (s.isSameThread()) {
+            echoNow(s, actor, kind, text);
+        } else {
+            s.execute(() -> echoNow(s, actor, kind, text));
+        }
+    }
+
+    private void echoNow(MinecraftServer s, String actor, String kind, Component text) {
+        if (s.getTickCount() != echoTick) {
+            echoTick = s.getTickCount();
+            echoedThisTick.clear();
+        }
+        if (!echoedThisTick.add(text)) {
+            return;
+        }
+        if (text.getContents() instanceof TranslatableContents translatable
+                && (translatable.getKey().startsWith("multiplayer.player.") || translatable.getKey().startsWith("death."))) {
+            return;
+        }
+        String plain = text.getString();
+        if (plain.isBlank()) {
+            return; // clearing an action bar or a title
+        }
+        String label = kind == null ? actor : actor + " ▸ " + kind;
+        LOGGER.info("[actor {}] {}", label, plain);
+        Component line = Component.literal("[" + label + "] ").withStyle(ChatFormatting.GOLD)
+                .append(Component.literal(plain).withStyle(ChatFormatting.GRAY));
+        for (ServerPlayer viewer : s.getPlayerList().getPlayers()) {
+            if (!(viewer.connection.getConnection() instanceof DiscardingConnection) && viewer.hasPermissions(2)) {
+                viewer.sendSystemMessage(line);
+            }
+        }
+    }
+
+    /**
+     * Live state of one fake player for {@code player.list} / {@code /actor list} (spec/42).
+     * {@code online:false} means the roster remembers it but no entity is in-world.
+     */
+    public ActorState fakePlayerState(String name) {
+        ServerPlayer player = onlinePlayer(name);
+        ActorState state = new ActorState();
+        if (player == null || !isActor(player)) {
+            state.online = false;
+            return state;
+        }
+        state.online = true;
+        Vec3 pos = player.position();
+        state.x = pos.x;
+        state.y = pos.y;
+        state.z = pos.z;
+        state.dimension = worldId(player.serverLevel());
+        state.gameMode = player.gameMode.getGameModeForPlayer().getName();
+        state.health = player.getHealth();
+        return state;
+    }
+
+    private MinecraftServer requireServer() throws McTestException {
+        MinecraftServer s = this.server;
+        if (s == null) {
+            throw McTestException.internal("No server available");
+        }
+        return s;
+    }
+
+    private ServerPlayer requireOnline(String name) throws McTestException {
+        ServerPlayer player = onlinePlayer(name);
+        if (player == null) {
+            throw McTestException.invalidParams("Fake player not online: " + name);
+        }
+        if (!isActor(player)) {
+            // The roster goes by name: if the actor was disconnected (a duplicate login, /kick) and a real
+            // player joined under that name, the name now belongs to someone who must never be driven.
+            throw McTestException.invalidParams(name + " is a real player now, not an actor");
+        }
+        return player;
+    }
+
+    /** Whether this online player is one of this agent's actors (joined behind a discard connection). */
+    private static boolean isActor(ServerPlayer player) {
+        return player.connection.getConnection() instanceof DiscardingConnection;
+    }
+
+    /**
+     * Resolves an act verb's {@code target}: an entity UUID, or an online player's NAME (nothing
+     * carries a spawn's returned uuid between steps, so the name form is what makes "the actor
+     * right-clicks the other player" authorable — mirrors the fabric agent).
+     */
+    private Entity requireEntity(String target) throws McTestException {
+        MinecraftServer s = requireServer();
+        java.util.UUID id;
+        try {
+            id = java.util.UUID.fromString(target);
+        } catch (IllegalArgumentException e) {
+            ServerPlayer player = s.getPlayerList().getPlayerByName(target);
+            if (player != null) {
+                return player;
+            }
+            throw McTestException.invalidParams(
+                    "Bad entity target '" + target + "': not a uuid, and no online player by that name");
+        }
+        for (ServerLevel level : s.getAllLevels()) {
+            Entity entity = level.getEntity(id);
+            if (entity != null) {
+                return entity;
+            }
+        }
+        throw McTestException.invalidParams("No loaded entity with uuid " + target);
+    }
+
+    private Item requireItem(String itemId) throws McTestException {
+        ResourceLocation id = ResourceLocation.tryParse(itemId);
+        Item item = id != null ? BuiltInRegistries.ITEM.get(id) : null;
+        if (item == null || item == Items.AIR) {
+            throw McTestException.invalidParams("Unknown item: " + itemId);
+        }
+        return item;
+    }
+
+    /**
+     * A serverbound {@link Connection} that swallows every outbound packet without erroring — mods send
+     * packets at join and each one must vanish silently — after showing operators any message in it
+     * ({@link #echo}). A send completes as a real channel's would, so its listener runs: that's what lets
+     * {@code /kick} and server shutdown disconnect an actor.
+     */
+    private static final class DiscardingConnection extends Connection {
+        private final Names names;
+        private final String actor;
+
+        DiscardingConnection(Names names, String actor) {
+            super(PacketFlow.SERVERBOUND);
+            this.names = names;
+            this.actor = actor;
+        }
+
+        @Override
+        public void send(Packet<?> packet) {
+            send(packet, null, true);
+        }
+
+        @Override
+        public void send(Packet<?> packet, PacketSendListener listener) {
+            send(packet, listener, true);
+        }
+
+        @Override
+        public void send(Packet<?> packet, PacketSendListener listener, boolean flush) {
+            names.echo(actor, packet);
+            if (listener != null) {
+                listener.onSuccess();
+            }
+        }
+    }
+
     // --- private helpers (Mojmap-mapped; confined to this file) ---
 
     private ServerPlayer onlinePlayer(String name) {
@@ -584,6 +1253,17 @@ public final class Names {
     }
 
     // --- loader-neutral DTOs returned to the handlers (NO game types cross back) ---
+
+    /** Live fake-player state for {@code player.list} (spec/42); fields valid only when online. */
+    public static final class ActorState {
+        public boolean online;
+        public double x;
+        public double y;
+        public double z;
+        public String dimension;
+        public String gameMode;
+        public double health;
+    }
 
     /** Block read result: {@code type} (lowercase {@code namespace:path}), properties, biome id. */
     public static final class BlockInfo {

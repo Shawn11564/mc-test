@@ -10,6 +10,117 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-10-15 — Tab completion for `/actor`
+- **`/actor` completes actor names** (after `/actor` and `/actor remove`; real players are never
+  offered), online players for `attack`/`use`, and — the useful one — **the command after `cmd`**,
+  completed as the actor would see it: the server's dispatcher (Brigadier on fabric/forge/neoforge,
+  the command map on bukkit) is asked as the actor's own command source, so a non-op actor isn't
+  offered `gamemode`. Brigadier doesn't check `requires` when it lists the next words (vanilla relies
+  on the client only holding usable commands), so the Brigadier agents filter by `canUse` themselves.
+  The bukkit agent's `/actor` now also completes its subcommands, verbs and `on|off`.
+- **Proof**: `tests/e2e/run-bench-actors.mjs` step 3a joins a real client (Mineflayer) to each lane
+  and asks for completions over the protocol, including the non-op and non-actor negatives. Green on
+  fabric 1.21.1, neoforge 1.21.1, forge 1.20.1 and paper-native 1.21.1.
+
+### 2026-08-18 — Click a GUI by the text it shows (spec/42 click-text)
+- **New `player.act` verb `clickMenuText`** `{ text, exact?, lore?, index?, button?, mode? }` on all
+  four server agents: clicks the slot of the actor's open menu whose **display name — or lore —**
+  says `text`. Clicking a modded GUI by slot index requires already knowing its layout, which for a
+  PokeSteal steal menu or a Cobblemon screen means counting squares in a screenshot; this is the
+  addressing a human actually has. Matching runs through the project's one normalization pipeline
+  (`SelectorMatch.normalize`, SELECTORS.md §4.1), name hits ranked ahead of lore hits. No match →
+  `-32000 ELEMENT_NOT_FOUND` **naming what the menu does say**; more than one match without an
+  explicit `index` → `-32001 AMBIGUOUS_SELECTOR` listing the matching slots (a guess is worse than a
+  question when the click is a real action).
+- **New MCTP method `player.menu`** (cap `fakePlayers`, detail `menu:true`): the open menu's slots —
+  index, item id, count, display name, lore, and whether the slot is the actor's own inventory. The
+  read half of the same feature: a controller can show a GUI's real contents instead of guessing.
+- **`clickMenuSlot` gained `button` + `mode`** (the vanilla click protocol's own two parameters), so
+  right-clicks and shift-clicks on a menu are expressible; `mode: "right"` is accepted as the button
+  it plainly means. Click types are mapped by an explicit switch per loader — enum constant names are
+  remapped at runtime, so `valueOf` on a mapping-neutral string would work in dev and fail on a real
+  server.
+- **`/actor` gained `menu`, `click`, `rclick`, `shiftclick`** on all four agents (and `slot <n> [mode]`),
+  delegating to the same one implementation `player.act` uses — one behaviour, two front doors.
+- Shared, testable core: `Menus` + `MenuView` in `agents/core` (10 unit tests) — matching, click-mode
+  aliases, the error factories, and the JSON shaping every agent returns.
+- **Live-verified on all four loaders** (`tests/e2e/run-bench-actors.mjs`, 30/30 per lane against a
+  real dedicated server): the actor places a chest, fills two slots, opens it, `player.menu` reads it
+  back, a miss returns `ELEMENT_NOT_FOUND`, a tie returns `AMBIGUOUS_SELECTOR`, and `index:1` clicks
+  exactly the second match. That run caught a real bug on Paper — `InventoryView.countSlots()` counts
+  the armour and offhand slots a container menu does not expose, so reading to it overran the view.
+
+### 2026-08-17 — Bench actors: persistent fake players + /actor + handshake token (spec/42)
+- **`player.spawnFake` gains `persist:true`** (commandcenter spec/42): the fake joins an
+  **agent-global registry**, survives `session.close`/socket drop, is addressable by `name` from
+  any session, and dies only on `player.despawnFake`, `/actor remove`, or server stop. Default
+  (`false`) keeps today's session-scoped lifetime — the runner is untouched. The ownership
+  registry stays the puppetability boundary: real players can never be driven.
+- **New MCTP method `player.list`** (cap `fakePlayers`, detail `list:true`): the full agent-owned
+  roster — name/uuid/persist/spawnedBy plus live position/dimension/gameMode/health — so a fresh
+  controller (CC's Actors panel) re-acquires persistent actors after a reconnect. Schemas,
+  conformance fixture, and core stubs included; `fakePlayers` detail now also advertises
+  `persist`/`list`.
+- **New in-game `/actor` command on `server-fabric`** (op level 2, Brigadier): spawn/remove/list
+  plus the whole portable verb set (`here`, `look`, `chat`, `cmd`, `attack`, `use`, `useblock`,
+  `slot`, `give`, `hold`, `sneak`, `sprint`, `gamemode`) — the manual front door onto the SAME
+  primitives `player.act` drives. Command spawns are persistent by nature.
+- **Handshake token implemented** (the one ENVIRONMENTS.md promised): `Dispatch.setAuthToken` +
+  `session.create` `params.auth.token`, checked before anything else, `-32602` on mismatch with
+  no session created. Agents read `MCTEST_AGENT_TOKEN` (env); the Bukkit agent also honors
+  `token:` in `config.yml`. Unset = open (existing runner flows unchanged).
+- **`fakePlayers` native on `server-neoforge` (1.21.1 Mojmap) and `server-forge` (1.20.1 Mojmap)**
+  — the "no Carpet backend" rationale was stale; both got the full port (Names.java fake-player
+  block, FakePlayerManager, `/actor` via `RegisterCommandsEvent`, persist/list, token). NeoForge
+  gained a `MappingContractTest` twin; on Forge the ForgeGradle compile against remapped 1.20.1 is
+  the drift guard. Runner capability mirrors updated (`fakePlayers: true` on both).
+- **`fakePlayers` native on `server-bukkit` — probe-gated reflection** (spec/42 Plan C): the same
+  join pattern via reflection against Paper's Mojang-mapped RUNTIME (1.20.5+), quarantined in
+  `players/NativeFakePlayers.java`; the enable-time probe resolves every symbol or logs the miss
+  and falls back to Carpet-or-skip (Spigot / pre-1.20.5 keep their honest skip). Interaction verbs
+  keep Bukkit-event fidelity (`useItemOn`/`clicked` fire the events via CraftBukkit's own patches;
+  `PlayerInteractEntityEvent` fired manually first, event-then-vanilla). `/actor` ships as a
+  plugin.yml command (`mctest.actor`, default op). The module stays compile-time Bukkit-API-only.
+- **Per-version agent jars** (spec/42 Plan D): the modded server agents' gradle pins are now
+  `-P`-overridable (`-PmcVersion=…` etc.) and the artifact is `agent-server-<loader>-<mc>.jar`
+  (ENVIRONMENTS.md's documented naming, finally true). The runner resolves variants next to the
+  legacy path — exact `-<mc>.jar` for the target's MC wins; a version-mismatched variant is never
+  silently substituted (warn-and-drop → honest skip).
+- **New real-boot E2E `tests/e2e/run-bench-actors.mjs`**: boots each loader's dedicated server
+  (Paper included, proving the reflective probe live) and asserts over raw MCTP what a step file
+  cannot: token refusal, persist-vs-session lifetime across a DROPPED socket, cross-session
+  `player.act` by name, the un-puppetable guard, and roster teardown.
+
+### 2026-08-17 — Native fake players on server-fabric (spec/41 tier 2)
+- **`fakePlayers` is native on `server-fabric`** — a real `ServerPlayerEntity` joined through
+  `PlayerManager.onPlayerConnect` behind a discard `ClientConnection` (EmbeddedChannel-activated),
+  so every join/leave hook fires and **no Carpet mod is required**. Advertised as
+  `backend:"native"` with a `verbs` array. Identity is the deterministic offline UUID (stable
+  across sessions and tiers, per commandcenter spec/41 §3).
+- **New MCTP method `player.act`** (cap `fakePlayers`, native backend only): drives one portable
+  actor verb — teleport, lookAt, chat, command, attack, interactEntity, interactBlock,
+  clickMenuSlot, give, hold, sneak, sprint, setGameMode — on a fake **this session spawned** (the
+  handle registry keeps real players un-puppetable). Interaction verbs fire the Fabric callback
+  first, then the vanilla method, mirroring the real packet-handler sequence. Conformance fixture
+  `player.act.json` + ConformanceTest coverage; a new server-fabric `MappingContractTest` guards
+  the Yarn symbols the join/act path depends on.
+- **`player.act` is now in the TypeScript contract** (`METHOD_NAMES` / `MctpMethods` /
+  `METHOD_SCHEMAS`, with a closed `PlayerActVerb` union), so its request/result JSON Schemas are
+  generated and the conformance fixture validates against them (74 schema files, was 72).
+- **New step verb `act`** — the authoring face of `player.act`:
+  `act: { name: Rival, verb: interactEntity, args: { target: Tester } }`. Gated on `fakePlayers`
+  and routed to the server agent like the other player verbs. Without it a step file could spawn an
+  actor and then never move it, which is the half of a two-player feature no test could reach.
+- **`attack`/`interactEntity` accept an online player's NAME as `target`**, not only an entity
+  uuid. Nothing carries a spawn's returned uuid from one step to the next, so the uuid-only form
+  left a step-file author hand-computing offline UUIDs to aim at the other player.
+- **`spawnFakePlayer` forwards `gameMode`** — the agent has always accepted it; the step verb was
+  dropping it.
+- **`server-bukkit` remains Carpet-backed** (spawn/despawn only, opt-in, honest skip on plain
+  Paper); its native NMS backend is the remaining spec/41 plan-C work. Docs updated across
+  PROTOCOL/CAPABILITIES/AUTHORING/ARCHITECTURE (`engine` detail key corrected to the canonical
+  `backend`).
+
 ### 2026-08-12 — The §5 controls actually reach a MODDED SUT
 Both found by running the ChestShop placement matrix (spec 40 §10 Plan D step 4) — the first real
 project outside the regions example to drive `validate --against-commit`.

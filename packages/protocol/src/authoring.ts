@@ -303,6 +303,38 @@ export interface SpawnFakePlayerStep {
   spawnFakePlayer: { name?: string; username?: string; at?: Vec3; gameMode?: string };
 }
 
+/**
+ * Drive one portable actor verb on a fake player this session spawned — the
+ * step-file face of `player.act`. Addressed by the spawn `name` (or the
+ * `handle` the spawn returned); `args` are the verb's own parameters.
+ */
+export interface ActStep {
+  act: {
+    name?: string;
+    handle?: string;
+    verb: ActVerb;
+    args?: Record<string, unknown>;
+    timeoutMs?: number;
+  };
+}
+
+/** The portable actor verbs an `act` step may drive (PROTOCOL.md §7.5). */
+export type ActVerb =
+  | "teleport"
+  | "lookAt"
+  | "chat"
+  | "command"
+  | "attack"
+  | "interactEntity"
+  | "interactBlock"
+  | "clickMenuSlot"
+  | "clickMenuText"
+  | "give"
+  | "hold"
+  | "sneak"
+  | "sprint"
+  | "setGameMode";
+
 /** A single authored step (exactly one verb key). */
 export type Step =
   | JoinStep
@@ -330,7 +362,8 @@ export type Step =
   | GetEntitiesStep
   | AssertPluginStateStep
   | FixtureStep
-  | SpawnFakePlayerStep;
+  | SpawnFakePlayerStep
+  | ActStep;
 
 /** The canonical step verbs (ROADMAP §10), for validation/loaders. */
 export const STEP_VERBS = [
@@ -360,6 +393,7 @@ export const STEP_VERBS = [
   "assertPluginState",
   "fixture",
   "spawnFakePlayer",
+  "act",
 ] as const;
 
 export type StepVerb = (typeof STEP_VERBS)[number];

@@ -5,3 +5,12 @@ api-version: '1.20'
 load: STARTUP
 description: mc-test server-side agent — MCTP world-truth, fixtures, plugin-state, and fake players.
 author: mc-test
+commands:
+  actor:
+    description: Spawn/control/remove persistent fake players (spec/42 bench actors; native backend only).
+    usage: /actor spawn <name> [gamemode] | remove <name>|all | list | <name> <verb ...>
+    permission: mctest.actor
+permissions:
+  mctest.actor:
+    description: Drive the mc-test agent's fake players in-game.
+    default: op

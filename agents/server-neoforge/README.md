@@ -15,10 +15,9 @@ twin, DRIVERS.md §3).
 > Per Prime Directive 2, fan-out (other MC versions) re-implements **only `mappings/Names.java`**; the
 > core, the handler skeleton, and the pure-Java helpers are unchanged.
 >
-> **One deliberate difference from the fabric/bukkit twins: `fakePlayers` is DROPPED.** NeoForge has no
-> Carpet fake-player backend, so this agent does **not** advertise `fakePlayers` and registers **no**
-> `player.spawnFake` / `player.despawnFake`. A test that requires `fakePlayers` honestly **skips** on a
-> NeoForge target rather than false-greening.
+> **Fake players are native here (spec/42)**, as on the fabric/bukkit twins: `player.spawnFake`,
+> `player.despawnFake`, `player.act`, `player.list`, `player.menu` and the in-game `/actor` command, with no
+> Carpet mod. See [Fake players (actors)](#fake-players-actors).
 
 ## Build (standalone Gradle build — needs NeoGradle + network)
 
@@ -42,7 +41,7 @@ What needs a real NeoForge server (live `ServerLevel`, game rules, inventories) 
 
 ## Capabilities advertised
 
-`agent.kind = serverMod`, with the `serverMod` bundle MINUS `fakePlayers` (PROTOCOL.md §6.1–§6.2; mirrors
+`agent.kind = serverMod`, with the full `serverMod` bundle (PROTOCOL.md §6.1–§6.2; mirrors
 `SERVER_NEOFORGE_CAPABILITIES` in the runner's `cli.ts`):
 
 | Capability | Methods | Detail |
@@ -52,9 +51,10 @@ What needs a real NeoForge server (live `ServerLevel`, game rules, inventories) 
 | `fixtures` | `fixture.set`, `fixture.reset` | — |
 | `chat` | (advertised for co-selection; chat events come from the UI driver) | — |
 | `testIdTags` | `testId` selector resolution carriers for SUTs we control | — |
+| `fakePlayers` | `player.spawnFake`, `player.despawnFake`, `player.act`, `player.list`, `player.menu` | `backend: "native"`, `persist`, `list`, `menu`, `verbs` |
 
-It does **not** advertise `fakePlayers` (no Carpet on NeoForge), nor `clientScreens` / `containerGui` /
-`screenshot` (a dedicated server has no client UI). Pair with `client-neoforge` for the rendered-GUI half
+It does **not** advertise `clientScreens` / `containerGui` / `screenshot` (a dedicated server has no
+client UI). Pair with `client-neoforge` for the rendered-GUI half
 (the runner unions the co-selected agents' caps; missing caps **skip honestly**).
 
 The universal `session.*` group and `world.join` / `world.leave` are handled by the core `Dispatch`;
@@ -91,7 +91,52 @@ during shutdown so socket-close cleanups still run). A main-thread overrun maps 
   reverts all session fixtures (LIFO). `snapshot` restore is not supported by this build →
   `-32005 FIXTURE_FAILED`.
 
-There is **no** `player.spawnFake` / `player.despawnFake` here (fakePlayers dropped on NeoForge).
+## Fake players (actors)
+
+An actor is a real `ServerPlayer` joined through `PlayerList.placeNewPlayer` behind a connection that
+discards every packet (`mappings/Names.java`, `players/FakePlayerManager.java`). Identity is the offline
+UUID of its name, so an actor's playerdata, inventory and position persist across sessions.
+
+- **Ticking and respawning.** A per-tick pump (`Names.installActorPump`, `ServerTickEvent.Post`) runs
+  each actor's `doTick` (movement, regeneration, item ticks: a held map fills in) and the Carpet
+  keep-alive cadence, since the server's connection listener never ticks a discard connection. A dead
+  actor respawns through the client's own respawn packet. It's a pump, as on bukkit, rather than a
+  `ServerPlayer` subclass because `PlayerList.respawn` builds a new, plain `ServerPlayer`.
+- **Network channels.** The actor's channel claims every payload channel (`ChannelAttributes.ADHOC_CHANNELS`).
+  NeoForge throws on a custom payload sent to a client that never agreed to its channel, and an actor
+  never negotiates one, so without this a mod that sends packets to joining players (Sable) or to
+  players tracking its entities stops the actor joining.
+- **Real players stay out of reach.** The roster goes by name, so every verb, `player.menu`, `player.list`
+  and despawn also checks that the online player of that name is still behind a discard connection. An
+  actor disconnected by a duplicate login or `/kick`, whose name a real player then took, is reported
+  offline and can't be driven or removed.
+- **Aiming.** `useblock` and `mine` without coordinates ray-cast from the actor's current eyes and
+  rotation. `/tp <actor> … facing <pos>` from a command aims the actor's *feet* at the target, so use
+  `/actor <name> look <x y z>` (eyes) or the coordinate forms instead.
+- **Sends complete.** A discarded packet's send listener still runs, as a real channel's would, so
+  `/kick` and server shutdown disconnect an actor through the real leave path.
+- **What an actor is told.** Chat lines, action-bar messages and titles sent to an actor are echoed, as
+  plain text prefixed with its name, to every online operator who isn't an actor, and to the server log
+  (`[actor Bob] …`). One message broadcast to several actors in a tick is echoed once; vanilla join,
+  leave and death messages (which everyone receives anyway) are skipped. `/actor <name> echo off`
+  silences one actor.
+
+`/actor` (op level 2) is the in-game front door: `spawn`, `remove`, `list`, and per actor `here`,
+`look [<x y z>]`, `chat`, `cmd`, `attack`, `use`, `useblock [<x y z>]` (the faced block, or that block's
+top face, as `interactBlock` does), `slot`, `click`/`rclick`/`shiftclick` (an ambiguous text points at
+`slot <n>`, since there's no index argument in game), `menu` (every
+labelled slot of the open menu with its lore), `give`, `hold`, `sneak`, `sprint`, `gamemode`, plus
+in-game-only conveniences no `player.act` verb backs yet: `useitem [offhand]` (right-click in the air),
+`mine [<x y z>]` (break the faced or given block through the real `destroyBlock`, so break events fire;
+mining time isn't simulated), `drop [all]`, `hotbar <1-9>` (hold what an actor already carries; `hold` makes a new item)
+and `echo on|off`.
+Tab completes actor names, online players for `attack`/`use`, and the command after `cmd` as the actor
+sees it (its own permission level); `tests/e2e/run-bench-actors.mjs` step 3a checks it with a real client.
+
+The pump, respawning, channel claim, completed sends and echo were checked live on a NeoForge 1.21.1
+server running MapFactions with Sable, Hundred Years Warfare, MCA Reborn, Create and Numismatics
+(2026-10-08). They are NeoForge-only so far; the fabric and forge agents still tick through a
+`ServerPlayer` subclass and don't respawn or echo.
 
 Per-session resources (applied fixtures) are released automatically on `session.close` and on socket
 close via the core `ResourceRegistry`.

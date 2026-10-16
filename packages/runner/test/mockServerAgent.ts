@@ -36,6 +36,12 @@ export interface MockServerAgentOptions {
 
 const DEFAULT_CAPS = ["worldTruth", "pluginState", "fixtures", "fakePlayers", "chat", "testIdTags"];
 
+/** The portable actor verbs `player.act` accepts (mirrors the native agent's set). */
+const ACT_VERBS = new Set([
+  "teleport", "lookAt", "chat", "command", "attack", "interactEntity", "interactBlock",
+  "clickMenuSlot", "give", "hold", "sneak", "sprint", "setGameMode",
+]);
+
 interface FakePlayerRecord {
   name: string;
   uuid: string;
@@ -59,6 +65,8 @@ export class MockServerAgent {
 
   /** Every method this agent received — proves GUI calls do NOT reach the agent. */
   readonly calls: string[] = [];
+  /** Every `player.act` this agent drove, in order (what the actor actually did). */
+  readonly acts: { handle: string; verb: string; args: Record<string, unknown> }[] = [];
 
   constructor(opts: MockServerAgentOptions = {}) {
     this.caps = opts.capabilities ?? DEFAULT_CAPS;
@@ -284,6 +292,18 @@ export class MockServerAgent {
         if (!this.fakePlayers.has(handle)) this.err(-32602, "invalidParams", `unknown fake player '${handle}'`);
         this.fakePlayers.delete(handle);
         return { ok: true, despawned: handle };
+      }
+
+      case "player.act": {
+        // The native backend's safety boundary: only a fake THIS session spawned
+        // can be driven, and only through a known verb.
+        const handle = (params["handle"] as string | undefined) ?? `fp_${String(params["name"] ?? "")}`;
+        if (!this.fakePlayers.has(handle)) this.err(-32602, "invalidParams", `unknown fake player '${handle}'`);
+        const verb = String(params["verb"] ?? "");
+        if (!ACT_VERBS.has(verb)) this.err(-32602, "invalidParams", `Unknown act verb: ${verb}`);
+        const args = (params["args"] as Record<string, unknown> | undefined) ?? {};
+        this.acts.push({ handle, verb, args });
+        return { ok: true, handle, verb, detail: `${verb} ok` };
       }
 
       default:

@@ -55,6 +55,9 @@ export const METHOD_NAMES = [
   "fixture.reset",
   "player.spawnFake",
   "player.despawnFake",
+  "player.act",
+  "player.list",
+  "player.menu",
 ] as const;
 
 export type MethodName = (typeof METHOD_NAMES)[number];
@@ -111,6 +114,9 @@ export interface MctpMethods {
   "fixture.reset": { params: M.FixtureResetParams; result: M.FixtureResetResult };
   "player.spawnFake": { params: M.PlayerSpawnFakeParams; result: M.PlayerSpawnFakeResult };
   "player.despawnFake": { params: M.PlayerDespawnFakeParams; result: M.PlayerDespawnFakeResult };
+  "player.act": { params: M.PlayerActParams; result: M.PlayerActResult };
+  "player.list": { params: M.PlayerListParams; result: M.PlayerListResult };
+  "player.menu": { params: M.PlayerMenuParams; result: M.PlayerMenuResult };
 }
 
 /** Params type for a given method. */
@@ -170,6 +176,9 @@ export const METHOD_SCHEMAS: Record<MethodName, MethodSchemaEntry> = {
   "fixture.reset": { params: M.FixtureResetParams, result: M.FixtureResetResult, paramsOptional: false },
   "player.spawnFake": { params: M.PlayerSpawnFakeParams, result: M.PlayerSpawnFakeResult, paramsOptional: false },
   "player.despawnFake": { params: M.PlayerDespawnFakeParams, result: M.PlayerDespawnFakeResult, paramsOptional: false },
+  "player.act": { params: M.PlayerActParams, result: M.PlayerActResult, paramsOptional: false },
+  "player.list": { params: M.PlayerListParams, result: M.PlayerListResult, paramsOptional: false },
+  "player.menu": { params: M.PlayerMenuParams, result: M.PlayerMenuResult, paramsOptional: false },
 };
 
 export interface EventSchemaEntry {

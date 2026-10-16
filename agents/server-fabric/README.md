@@ -29,7 +29,7 @@ The **CI-provable** half of the server agent — the loader-neutral wire logic a
 skeleton — lives in `/agents/core` (the cross-driver `ConformanceTest`) and in `/agents/server-bukkit`,
 from which this module is mirrored verbatim. The pure-Java pieces shared between the two server agents
 (`Params`, `StateQuery`, `FixtureLedger`, `AppliedFixture`) are copied byte-for-byte (only the package
-declaration differs). What needs a real Fabric server (live `ServerWorld`, Carpet `/player`, game rules)
+declaration differs). What needs a real Fabric server (live `ServerWorld`, the native fake-player join path, game rules)
 is acceptance-only.
 
 ## Capabilities advertised
@@ -41,7 +41,7 @@ is acceptance-only.
 | `worldTruth` | `truth.getWorldBlock`, `truth.getEntities` | `radiusLimit: 64`, `version: 1` |
 | `pluginState` | `truth.assertPluginState` | — |
 | `fixtures` | `fixture.set`, `fixture.reset` | — |
-| `fakePlayers` | `player.spawnFake`, `player.despawnFake` | `backend: "carpet"` |
+| `fakePlayers` | `player.spawnFake`, `player.despawnFake`, `player.act`, `player.list` | `backend: "native"`, `verbs: [...]`, `persist: true`, `list: true` |
 | `chat` | (advertised for co-selection; chat events come from the UI driver) | — |
 | `testIdTags` | `testId` selector resolution carriers for SUTs we control | — |
 
@@ -51,7 +51,7 @@ agents' caps; missing caps **skip honestly**).
 
 The universal `session.*` group and `world.join` / `world.leave` are handled by the core `Dispatch`;
 `world.join` is a no-op that transitions the session to Connected (the agent is already in the server
-process). The entrypoint registers **no** `session.*` or `world.*` methods itself — only the seven
+process). The entrypoint registers **no** `session.*` or `world.*` methods itself — only the eight
 above.
 
 ## The 7 handlers (all game access on the server thread)
@@ -82,10 +82,29 @@ during shutdown so socket-close cleanups still run). A main-thread overrun maps 
 - **`fixture.reset`** (`fixtures/FixtureManager`) — with `fixtureId` reverts one handle, otherwise
   reverts all session fixtures (LIFO). `snapshot` restore is not supported by this build →
   `-32005 FIXTURE_FAILED`.
-- **`player.spawnFake`** / **`player.despawnFake`** (`players/FakePlayerManager`) — Carpet console
-  command backend (`/player <name> spawn at <x> <y> <z>`, `/player <name> kill`), dispatched through
-  `MinecraftServer#getCommandManager().executeWithPrefix(source, …)` at permission level 4; fakes are
-  tracked per session and despawned on `session.close`.
+- **`player.spawnFake`** / **`player.despawnFake`** / **`player.act`** (`players/FakePlayerManager`) —
+  **native** backend (spec/41 tier 2): a real `ServerPlayerEntity` joined through
+  `PlayerManager.onPlayerConnect` behind a discard `ClientConnection` (EmbeddedChannel-activated), so
+  every join/leave hook fires and no Carpet mod is needed. `player.act` drives the portable actor verbs
+  (teleport/lookAt/chat/command/attack/interactEntity/interactBlock/clickMenuSlot/clickMenuText/give/hold/sneak/
+  sprint/setGameMode) on session-spawned fakes only; interaction verbs fire the Fabric callback first,
+  then the vanilla method. The `attack`/`interactEntity` `target` is an entity uuid **or an online
+  player's name** — a step file cannot carry a spawn's returned uuid into a later step, so the name
+  form is what makes "the actor right-clicks the other player" authorable. Session-scoped fakes are
+  tracked per session and despawned on `session.close`; **`persist:true` spawns (spec/42 bench
+  actors) join an agent-global registry instead** — they survive session close and socket drops,
+  are addressable by name from any session, appear in **`player.list`** (the roster method a fresh
+  controller uses to re-acquire them), and die only on `player.despawnFake`, `/actor remove`, or
+  server stop. Either registry is the puppetability boundary: real players are never in one.
+- **`/actor`** (`mappings/ActorCommands`, op level 2) — the in-game manual front door (spec/42 §4)
+  onto the same primitives: `spawn <name> [gamemode]` (persistent, at the caller), `remove
+  <name>|all`, `list`, and per-actor `here`, `look`, `chat`, `cmd`, `attack`, `use`, `useblock`,
+  `slot`, `give <item [count]>`, `hold [item]`, `sneak|sprint on|off`, `gamemode <mode>`. Handlers
+  run on the server thread and are guarded by the agent-owned roster. Tab completes actor names,
+  online players for `attack`/`use`, and the command after `cmd` as the actor sees it (its own
+  permission level). The agent reads
+  `MCTEST_AGENT_TOKEN` (spec/42 handshake token, PROTOCOL.md §4.2); when set, `session.create`
+  requires `auth.token`.
 
 Per-session resources (applied fixtures, spawned fakes) are released automatically on `session.close`
 and on socket close via the core `ResourceRegistry`.
@@ -154,7 +173,7 @@ The remapped mod jar `build/libs/agent-server-fabric.jar` shades the core + Java
 Loom `include(...)` (jar-in-jar). Note the **Gson** difference from `server-bukkit`: Paper ships Gson at
 runtime (so the Bukkit agent keeps it `compileOnly`), but a vanilla Fabric **dedicated server** does not
 reliably expose Gson to our classes, so this build **shades Gson in** to guarantee the envelope/JSON code
-resolves at runtime. The jar is dropped into the server's `mods/` alongside the SUT mod (and Carpet for
-`fakePlayers`). On start the agent logs **`MCTP listening on :PORT`** — the line the runner scrapes to
+resolves at runtime. The jar is dropped into the server's `mods/` alongside the SUT mod (no Carpet needed —
+`fakePlayers` is native). On start the agent logs **`MCTP listening on :PORT`** — the line the runner scrapes to
 learn the port. The MCTP port is read from env **`MCTEST_AGENT_PORT`** (default `25575`, matching the
 Bukkit agent's `config.yml`), bound on `127.0.0.1`.

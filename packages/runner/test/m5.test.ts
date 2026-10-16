@@ -349,7 +349,7 @@ describe("M5 skip matrix: which (test × target) cells were skipped and why", ()
   });
 });
 
-describe("M5 mappings quarantine: mapped names ONLY in mappings/Names.java for the new shims", () => {
+describe("M5 mappings quarantine: mapped names ONLY in mappings/ for the new shims", () => {
   // The CI import-scan (CLAUDE.md Prime Directive 2; ROADMAP §6.1/§8.1) extended to
   // the three M5 fan-out shims. Refinement vs m4's scan: the obfuscation-mapped
   // namespace is `net.minecraft.` *with the trailing dot* — so the stable loader
@@ -359,8 +359,12 @@ describe("M5 mappings quarantine: mapped names ONLY in mappings/Names.java for t
   const MAPPED =
     /\b(?:net\.minecraft\.|net\.fabricmc\.yarn|org\.lwjgl\.glfw|com\.mojang\.(?:blaze3d|authlib|serialization|datafixers))/;
 
+  // The quarantine boundary is the mappings/ PACKAGE (matching Names.java's own doc): Names.java
+  // is the primitive facade and MUST carry mapped symbols; sibling files there (e.g. server-fabric's
+  // ActorCommands.java — the spec/42 Brigadier /actor front door, inherently mapped code) are part
+  // of the same per-(loader×version) recompile tax. Everything OUTSIDE mappings/ stays mapped-free.
   for (const shim of ["client-forge", "client-neoforge", "server-fabric", "server-forge", "server-neoforge"]) {
-    it(`${shim}: no mapped (net.minecraft.*) import outside mappings/Names.java`, () => {
+    it(`${shim}: no mapped (net.minecraft.*) import outside mappings/`, () => {
       // Scope the quarantine to PRODUCTION code (src/main): the per-(loader×version) recompile tax is
       // the shipped shim. Tests (src/test) legitimately reference mapped names — e.g. the mapping-contract
       // tests assert `net.minecraft.*` symbols resolve — so they are out of scope for the scan.
@@ -385,10 +389,10 @@ describe("M5 mappings quarantine: mapped names ONLY in mappings/Names.java for t
 
       const leaks: string[] = [];
       for (const file of javaFiles) {
-        if (file === namesPath) continue;
+        if (file.replace(/\\/g, "/").includes("/mappings/")) continue;
         if (MAPPED.test(readFileSync(file, "utf8"))) leaks.push(relative(root, file).replace(/\\/g, "/"));
       }
-      expect(leaks, `mapped symbols leaked outside Names.java in ${shim}: ${leaks.join(", ")}`).toEqual([]);
+      expect(leaks, `mapped symbols leaked outside mappings/ in ${shim}: ${leaks.join(", ")}`).toEqual([]);
     });
   }
 });

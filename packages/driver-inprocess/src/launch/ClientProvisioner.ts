@@ -253,6 +253,7 @@ export async function provisionClient(opts: ProvisionOptions): Promise<ResolvedC
     if (apiJar) runtimeMods.push(apiJar);
   }
   stageMods(gameDir, runtimeMods, opts.clientAgentJar, log);
+  stageMutedAudio(gameDir, log);
 
   return {
     mc: opts.mc,
@@ -584,6 +585,40 @@ function stageMods(gameDir: string, mods: string[], agentJar: string | undefined
     copyFileSync(src, join(modsDir, basename(src)));
   }
   log(`Staged ${all.length} mod jar(s) into ${modsDir}`);
+}
+
+/**
+ * `options.txt` with the master sound category zeroed: an automated test client
+ * must not play audio on the machine it runs on. Master gain covers every
+ * category, so one line silences the whole client. Any other line the game has
+ * written (or a previous run left) is preserved — only the master volume is
+ * pinned. Pure, so the merge is testable without a filesystem.
+ */
+export function mutedOptionsTxt(existing: string | null): string {
+  const muted = "soundCategory_master:0.0";
+  const lines = (existing ?? "").split(/\r?\n/).filter((l) => l !== "");
+  const idx = lines.findIndex((l) => l.startsWith("soundCategory_master:"));
+  if (idx >= 0) lines[idx] = muted;
+  else lines.push(muted);
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Write the muted `options.txt` into the instance game dir. The instance is
+ * mc-test's own (per-loader, per-version, under the work dir), never the user's
+ * launcher profile, so persisting the mute here silences no one's real game.
+ * `MC_TEST_CLIENT_SOUND=1` opts back in for a human deliberately listening.
+ */
+function stageMutedAudio(gameDir: string, log: (l: string) => void): void {
+  if (process.env["MC_TEST_CLIENT_SOUND"] === "1") {
+    log("MC_TEST_CLIENT_SOUND=1 — leaving client audio audible.");
+    return;
+  }
+  mkdirSync(gameDir, { recursive: true });
+  const path = join(gameDir, "options.txt");
+  const existing = existsSync(path) ? readFileSync(path, "utf8") : null;
+  writeFileSync(path, mutedOptionsTxt(existing));
+  log("Muted client audio (options.txt soundCategory_master:0.0).");
 }
 
 /** Re-export for callers/tests that want the resolved shape. */

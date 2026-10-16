@@ -27,26 +27,30 @@ plugins {
 group = "io.mctest"
 version = "0.1.0"
 
-// Pinned to one (loader × MC) build; fanned out by swapping these coordinates + mappings/Names.
+// Pinned DEFAULTS for one (loader × MC) build; fanned out by swapping coordinates + mappings/Names.
 // NOTE: Forge 47.3.39 is a REAL published 1.20.1 build (47.2.0 does NOT exist).
-val minecraftVersion = "1.20.1"
-val forgeVersion = "47.3.39"
+// Spec/42 Plan D makes the pins -P-overridable (`gradlew build -PmcVersion=… -PforgeVersion=…`) so a
+// variant build needs no file edit — a version whose Names.java no longer compiles fails LOUDLY at
+// build time, which is the honest "port needed" signal.
+val minecraftVersion = providers.gradleProperty("mcVersion").getOrElse("1.20.1")
+val forgeVersion = providers.gradleProperty("forgeVersion").getOrElse("47.3.39")
 val mappingsChannel = "official"
-val mappingsVersion = "1.20.1"
+val mappingsVersion = minecraftVersion
 // The loader/forge version ranges stamped into mods.toml.
-val loaderRange = "47"
-val forgeRange = "47.3.39"
+val loaderRange = forgeVersion.substringBefore('.')
+val forgeRange = forgeVersion
 
 base {
     // ENVIRONMENTS naming `agent-<variant>-<mc>.jar`.
     archivesName.set("agent-server-forge")
 }
 
-// Drop the version suffix from ALL archive tasks (jar + shadowJar) so the produced jar is exactly
-// `agent-server-forge.jar` — the name the runner's KNOWN_AGENTS resolves (cli.ts). project.version still
-// drives the maven coordinate + mods.toml ${version}; only the output file name is pinned.
+// The archive "version" is the MINECRAFT version (spec/42 Plan D): the runnable jar is
+// `agent-server-forge-<mc>.jar` so per-version variants coexist and resolvers (runner KNOWN_AGENTS,
+// CC's actors sidecar installer) pick by (loader, mcVersion). project.version still drives the maven
+// coordinate + mods.toml ${version}; only the file name carries the MC pin.
 tasks.withType<AbstractArchiveTask>().configureEach {
-    archiveVersion.set("")
+    archiveVersion.set(minecraftVersion)
 }
 
 java {

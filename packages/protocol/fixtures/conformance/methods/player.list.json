@@ -1,0 +1,41 @@
+{
+  "method": "player.list",
+  "description": "Enumerate every fake player the agent owns (spec/42 bench actors): persistent actors from any controller plus this session's session-scoped spawns. Real players never appear.",
+  "request": { "jsonrpc": "2.0", "id": 29, "method": "player.list", "params": { "sessionId": "s_srv_01" } },
+  "responses": [
+    {
+      "name": "success",
+      "envelope": {
+        "jsonrpc": "2.0",
+        "id": 29,
+        "result": {
+          "ok": true,
+          "players": [
+            {
+              "name": "Rival",
+              "uuid": "069a79f4-44e9-4726-a5be-fca90e38bbbb",
+              "persist": true,
+              "spawnedBy": "command",
+              "online": true,
+              "position": { "x": 2.5, "y": 64.0, "z": 2.5 },
+              "dimension": "minecraft:overworld",
+              "gameMode": "survival",
+              "health": 20.0
+            },
+            {
+              "name": "Bot2",
+              "uuid": "8faf0713-6ebc-3a24-9f19-e1ba54b9022d",
+              "persist": false,
+              "spawnedBy": "mctp",
+              "online": true,
+              "position": { "x": 2.0, "y": 64.0, "z": 2.0 },
+              "dimension": "minecraft:overworld",
+              "gameMode": "survival",
+              "health": 20.0
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -238,6 +238,7 @@ Clients MUST tolerate receiving an event whose `subscriptionId` they have alread
     "client": { "name": "mc-test-runner", "version": "0.4.2", "lang": "ts" },
     "requiredCapabilities": ["command", "containerGui", "worldTruth"],
     "optionalCapabilities": ["screenshot"],
+    "auth": { "token": "…" },
     "constraints": { "mcVersionRange": "1.20.4", "loader": "paper" },
     "connection": {
       "maxFrameBytes": 8388608,
@@ -257,6 +258,7 @@ Field reference:
 | `client.name` / `.version` / `.lang` | yes | Caller identity for logs/artifacts. `lang` ∈ `{ "ts", "java", "kotlin", "other" }`. |
 | `requiredCapabilities` | yes | Capability keys (§6) the test cannot run without. Empty array means "any agent". |
 | `optionalCapabilities` | no | Capabilities the client will use **if granted** but can proceed without. |
+| `auth.token` | no* | Handshake token (spec/42). *Required when the agent is configured with one (`MCTEST_AGENT_TOKEN` env / bukkit `token:` config): absence or mismatch is `-32602 invalidParams`, checked **before anything else** (the caller learns nothing about the target) and NO session is created. An agent with no token configured ignores this field — throwaway test instances stay open. A long-lived agent on a server a human plays SHOULD always be configured with one; the socket itself is otherwise unauthenticated (loopback bind is the only guard). |
 | `constraints` | no | Hints/assertions about the target, expressed with the target descriptors. The agent MAY refuse if it cannot satisfy them (e.g. wrong loader). Keys: `mcVersionRange` (string, e.g. `"1.20.4"` or a range), `loader` (enum), `worldId`. |
 | `connection.maxFrameBytes` | no | Client's max acceptable inbound frame; agent MUST NOT send larger frames (use `ref` returns instead). |
 | `connection.eventBufferSize` | no | Max events the agent buffers per subscription before applying overflow policy (§7.6). |
@@ -310,7 +312,7 @@ If negotiation **fails**, the agent MUST return a JSON-RPC **error** instead of 
 { "jsonrpc": "2.0", "id": 99, "method": "session.close", "params": { "sessionId": "s_7f3c1a", "reason": "suiteComplete" } }
 ```
 
-Response `{ "ok": true }`. The agent MUST: cancel all subscriptions for the session, release fixtures/fake players it created, and invalidate the `sessionId`. The agent SHOULD keep the socket open so the client may close it cleanly; the agent MAY close the socket after responding.
+Response `{ "ok": true }`. The agent MUST: cancel all subscriptions for the session, release fixtures/fake players it created — **except fake players spawned with `persist:true`** (spec/42), which the agent MUST keep in an agent-global registry, expose via `player.list`, and release only on `player.despawnFake`, its in-game remove command, or server shutdown — and invalidate the `sessionId`. The agent SHOULD keep the socket open so the client may close it cleanly; the agent MAY close the socket after responding.
 
 ### 4.5 `world.join` / `world.leave`
 
@@ -390,7 +392,7 @@ The canonical capability-key set is exactly these flat keys:
 | `worldTruth` | `truth.getWorldBlock`, `truth.getEntities`, `truth.getContainer`, `truth.getItem` | serverPlugin, serverMod, headlessBot (via server agent) |
 | `pluginState` | `truth.assertPluginState` | serverPlugin, serverMod |
 | `fixtures` | `fixture.reset`, `fixture.set` | serverPlugin, serverMod |
-| `fakePlayers` | `player.spawnFake`, `player.despawnFake` | serverPlugin (Carpet), serverMod |
+| `fakePlayers` | `player.spawnFake`, `player.despawnFake`, `player.act`, `player.list` | serverMod (native), serverPlugin (native when the Mojang-mapped-runtime probe succeeds — Paper 1.20.5+; else Carpet backend, spawn/despawn/list only) |
 | `typeText` | `screen.typeText` | headlessBot (anvil/sign), clientMod, pixelOcr |
 | `pressKey` | `screen.pressKey` | clientMod, pixelOcr |
 | `testIdTags` | `testId` selector resolution via the `testId` carriers (§7.3.2) | headlessBot, clientMod, serverMod (SUTs we control) |
@@ -423,6 +425,8 @@ When granting a capability, the agent MAY attach a value object under `capabilit
 | `screenshot` | `formats` | array, e.g. `["png"]`; `maxWidth`/`maxHeight`. |
 | `worldInteraction` | `reach` | max interaction distance in blocks the agent will honor. |
 | `fakePlayers` | `backend` | `"carpet"` \| `"native"`. |
+| `fakePlayers` | `persist` | `true` if `player.spawnFake` honors `persist:true` (spec/42 bench actors — agent-global lifetime). |
+| `fakePlayers` | `list` | `true` if the agent implements `player.list`. |
 | any | `version` | integer sub-feature version for that capability surface. |
 
 ---
@@ -999,16 +1003,41 @@ Result:
 #### `player.spawnFake`  *(cap `fakePlayers`)*
 Spawns a server-side fake/bot player (Carpet `/player` or native), e.g. to test multiplayer plugin behavior without a second real client.
 ```json
-{ "method": "player.spawnFake", "params": { "sessionId": "s_7f3c1a", "name": "Bystander", "at": { "x": 2, "y": 64, "z": 2 }, "gameMode": "survival" } }
+{ "method": "player.spawnFake", "params": { "sessionId": "s_7f3c1a", "name": "Bystander", "at": { "x": 2, "y": 64, "z": 2 }, "gameMode": "survival", "persist": false } }
 ```
-Result `{ "ok": true, "name": "Bystander", "uuid": "…", "handle": "fp_Bystander" }`. The agent MUST track and despawn fake players it created on `session.close`.
+Result `{ "ok": true, "name": "Bystander", "uuid": "…", "handle": "fp_Bystander" }`. The agent MUST track and despawn fake players it created on `session.close` — **unless `persist:true`** (spec/42 bench actors, agents advertising detail `persist:true` only): a persistent actor joins the **agent-global registry**, survives session close and socket drops, is addressable by `name` from ANY session, and dies only on `player.despawnFake`, the agent's in-game remove command, or server stop. Ownership stays the safety boundary either way: the registries only ever contain fakes the agent itself spawned, so a real player can never be puppeted.
 
 #### `player.despawnFake`  *(cap `fakePlayers`)*
-Despawns a fake/bot player previously created by `player.spawnFake`, addressed by its `handle` (or `name`).
+Despawns a fake/bot player previously created by `player.spawnFake`, addressed by its `handle` (or `name`). Session-scoped fakes may only be despawned by their spawning session; persistent actors from any session.
 ```json
 { "method": "player.despawnFake", "params": { "sessionId": "s_7f3c1a", "handle": "fp_Bystander" } }
 ```
-Result `{ "ok": true, "despawned": "fp_Bystander" }`. Unknown handle → `-32602 invalidParams`. The agent also despawns any remaining fake players automatically on `session.close`.
+Result `{ "ok": true, "despawned": "fp_Bystander" }`. Unknown handle → `-32602 invalidParams`. The agent also despawns any remaining session-scoped fake players automatically on `session.close`.
+
+#### `player.act`  *(cap `fakePlayers`, `backend:"native"` only)*
+Drives one portable actor verb on an **agent-owned** fake player — one this session spawned, or any persistent actor (the ownership registry is the safety boundary — a real player can never be puppeted). Verbs match the spec/41 §5 actor set, minus join/leave (= spawn/despawn): `teleport { x, y, z, world? }`, `lookAt { x, y, z }`, `chat { message }`, `command { command }`, `attack { target: uuid }`, `interactEntity { target: uuid }`, `interactBlock { x, y, z }`, `clickMenuSlot { slot, button?, mode? }`, `clickMenuText { text, exact?, lore?, index?, button?, mode? }`, `give { item, count? }`, `hold { item? }` (empty clears), `sneak { on }`, `sprint { on }`, `setGameMode { mode }`. Interaction verbs run the same sequence the vanilla packet handler runs — the loader event first, then the vanilla method — so SUT mods listening at either level see a faithful interaction.
+```json
+{ "method": "player.act", "params": { "sessionId": "s_7f3c1a", "handle": "fp_Bystander", "verb": "chat", "args": { "message": "gl hf" } } }
+```
+Result `{ "ok": true, "handle": "fp_Bystander", "verb": "chat", "detail": "chatted" }` (`detail` is a short human-readable outcome, e.g. the `ActionResult` for interactions). Unknown handle/verb or missing verb args → `-32602 invalidParams`. Carpet-backed agents do not register this method → `-32601 methodNotFound`.
+
+#### `player.list`  *(cap `fakePlayers`, detail `list:true` only)*
+Enumerates every fake player the agent owns (spec/42): persistent actors from any controller — MCTP sessions or the agent's in-game `/actor` command — plus this session's session-scoped spawns. Real players never appear. This is how a fresh controller (e.g. CC's Actors panel after a reconnect) re-acquires the roster.
+```json
+{ "method": "player.list", "params": { "sessionId": "s_7f3c1a" } }
+```
+Result `{ "ok": true, "players": [ { "name": "Rival", "uuid": "…", "persist": true, "spawnedBy": "command", "online": true, "position": { "x": 2.5, "y": 64.0, "z": 2.5 }, "dimension": "minecraft:overworld", "gameMode": "survival", "health": 20.0 } ] }` — `spawnedBy` ∈ `{ "mctp", "command" }`; the live-state fields (`position`/`dimension`/`gameMode`/`health`) are present only while `online:true`.
+
+**Menu clicks.** `clickMenuSlot` and `clickMenuText` share the vanilla click protocol's own two knobs: `button` (0 = left, 1 = right) and `mode`, the click type — `pickup` (default), `quickMove`｜`shift`, `swap`, `clone`, `throw`｜`drop`, `pickupAll`. `mode: "right"` is accepted as the button it plainly means.
+
+`clickMenuText` addresses a slot by the text the GUI shows instead of by index, which is the only workable way to drive a menu whose layout you do not already know (a PokeSteal steal menu, a Cobblemon screen). It matches the item's display name first and its lore second (`lore: false` searches names only; `exact: true` requires the whole normalized string), through the same normalization the client agent's GUI selectors use (SELECTORS.md §4.1). Zero matches → `-32000 ELEMENT_NOT_FOUND`, with what the menu *does* say in the message and in `data.details.menu`. More than one match without an explicit 0-based `index` → `-32001 AMBIGUOUS_SELECTOR`, listing the matching slots: clicking the wrong row of a steal menu is a real action, so the agent asks rather than guesses.
+
+#### `player.menu`  *(cap `fakePlayers`, detail `menu:true` only)*
+Reads back the container menu an agent-owned fake player has open (spec/42) — slot indices, item ids, display names and lore, all flattened to plain text. It is how a controller (CC's Actors panel, a step file) learns a modded GUI's layout, and it is the read half of `clickMenuText`'s write. The player's own inventory screen is **not** a menu: `open:false` there, exactly as `clickMenuSlot` refuses it.
+```json
+{ "method": "player.menu", "params": { "sessionId": "s_7f3c1a", "name": "Rival" } }
+```
+Result `{ "ok": true, "handle": "fp_Rival", "name": "Rival", "open": true, "type": "minecraft:generic_9x6", "title": "Steal Menu", "size": 90, "slots": [ { "slot": 4, "item": "minecraft:player_head", "count": 1, "name": "Steal from Rival", "lore": ["Costs 1 token"] } ] }` — only occupied slots are listed (a skipped index is an empty slot) and `slot` is the index the click protocol addresses, i.e. what `clickMenuSlot` takes. `playerInventory: true` marks the rows that belong to the player's own inventory rather than the container. `type` is a registry id when the runtime has one and the handler's class name otherwise (modded menus, where the class name is the useful identity); `title` is only present on agents whose runtime keeps it (bukkit). Unknown handle → `-32602 invalidParams`.
 
 #### `truth.assertPluginState`  *(cap `pluginState`)*
 Reads authoritative plugin/mod state for assertions (the server-truth twin of GUI assertions). **The agent only fetches/evaluates a named state query; it does not decide pass/fail policy** — it returns the value plus a boolean for the supplied predicate, and the runner owns the verdict and reporting.
@@ -1393,7 +1422,7 @@ These notes keep both reference implementations honest against the same contract
 | `screen.typeText` | ✅ | ✅ | ➖ | ✅ |
 | `world.useBlock`/`world.attackBlock`/`world.setHeldItem`/`world.look`/`world.move` | ✅ | ✅ | ➖ | ➖ (sees only pixels) |
 | `truth.getWorldBlock`/`truth.getEntities`/`truth.getContainer`/`truth.getItem`/`getPlayerState`/`getLogs` | via server session | ✅ (client log) | ✅ | ➖ |
-| `fixture.reset`/`fixture.set`/`player.spawnFake`/`truth.assertPluginState` | ➖ | ➖ | ✅ | ➖ |
+| `fixture.reset`/`fixture.set`/`player.spawnFake`/`player.act`/`truth.assertPluginState` | ➖ | ➖ | ✅ | ➖ |
 | `subscribe`/`unsubscribe` (chat/log/screen) | chat(+screen) | chat/log/screen | chat/log | ➖ |
 
 (✅ supported, ➖ not advertised — negotiation will deny the corresponding capability.)
@@ -1403,7 +1432,7 @@ These notes keep both reference implementations honest against the same contract
 ## 13. Quick reference — method and event index
 
 **Methods (requests) — canonical catalog:**
-`session.create`, `session.describe`, `session.close`, `session.ping`, `world.join`, `world.leave`, `world.sendChat`, `world.runCommand`, `world.waitForChat`, `screen.get`, `screen.listElements`, `screen.clickElement`, `screen.typeText`, `screen.pressKey`, `screen.screenshot`, `screen.waitForScreen`, `screen.close`, `world.useBlock`, `world.attackBlock`, `world.setHeldItem`, `world.look`, `world.move`, `truth.getWorldBlock`, `truth.getEntities`, `truth.getContainer`, `truth.getItem`, `truth.assertPluginState`, `fixture.set`, `fixture.reset`, `player.spawnFake`, `player.despawnFake`.
+`session.create`, `session.describe`, `session.close`, `session.ping`, `world.join`, `world.leave`, `world.sendChat`, `world.runCommand`, `world.waitForChat`, `screen.get`, `screen.listElements`, `screen.clickElement`, `screen.typeText`, `screen.pressKey`, `screen.screenshot`, `screen.waitForScreen`, `screen.close`, `world.useBlock`, `world.attackBlock`, `world.setHeldItem`, `world.look`, `world.move`, `truth.getWorldBlock`, `truth.getEntities`, `truth.getContainer`, `truth.getItem`, `truth.assertPluginState`, `fixture.set`, `fixture.reset`, `player.spawnFake`, `player.despawnFake`, `player.act`, `player.list`.
 
 *(Non-canon agent extensions documented above but outside the canonical catalog: `useItem`, `move`, `getWindow`, `getPlayerState`, `getLogs`, `subscribe`, `unsubscribe`.)*
 

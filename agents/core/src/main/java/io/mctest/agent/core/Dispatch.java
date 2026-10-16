@@ -62,6 +62,9 @@ public final class Dispatch {
     private String targetLoader;
     private String targetLoaderVersion;
 
+    /** Handshake token (spec/42); null/empty = open agent (today's behavior, throwaway test instances). */
+    private String authToken;
+
     private LogSink log = (level, message) -> {
     };
 
@@ -91,6 +94,18 @@ public final class Dispatch {
         if (log != null) {
             this.log = log;
         }
+        return this;
+    }
+
+    /**
+     * Configures the handshake token (spec/42, the one ENVIRONMENTS.md promises). When set,
+     * {@code session.create} requires {@code params.auth.token} to match — mismatch/absence is
+     * {@code -32602} and NO session is created, so every stateful method stays unreachable. When
+     * unset (null/empty) the agent is open, preserving existing runner flows on throwaway instances.
+     * A long-lived agent on a server a human plays should always have one.
+     */
+    public Dispatch setAuthToken(String token) {
+        this.authToken = token != null && !token.isEmpty() ? token : null;
         return this;
     }
 
@@ -193,6 +208,20 @@ public final class Dispatch {
     }
 
     private JsonObject create(JsonObject p, ConnectionState conn) throws McTestException {
+        // 0. handshake token (spec/42). Checked before anything else so an unauthenticated caller
+        //    learns nothing about the target and can never create a session.
+        if (authToken != null) {
+            JsonObject auth = p.has("auth") && p.get("auth").isJsonObject()
+                    ? p.getAsJsonObject("auth") : null;
+            String token = auth != null && auth.has("token") && auth.get("token").isJsonPrimitive()
+                    ? auth.get("token").getAsString() : null;
+            byte[] want = authToken.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] got = token != null ? token.getBytes(java.nio.charset.StandardCharsets.UTF_8) : new byte[0];
+            if (!java.security.MessageDigest.isEqual(want, got)) {
+                throw McTestException.invalidParams("auth.token missing or invalid");
+            }
+        }
+
         // 1. protocol-version major check.
         String requested = p.has("protocolVersion") ? p.get("protocolVersion").getAsString() : null;
         if (requested == null || !MctpProtocol.isMajorSupported(requested)) {

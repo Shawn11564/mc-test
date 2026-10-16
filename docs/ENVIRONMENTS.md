@@ -434,10 +434,31 @@ the instance's `launch.json` so boot (§2.8) and teardown are loader-agnostic.
    - If no agent exists for `(loader,mc,side)`, the instance is **skipped** with
      `AGENT_NOT_AVAILABLE` (clear, actionable: "build `/agents/server-bukkit` for 1.21.4").
 
+   **Porting recipe (spec/42 Plan D)** — building a server-agent variant for a new MC version:
+   1. `agents/gradlew :core:publishToMavenLocal` (once per checkout; the standalone builds pull
+      the shared core from mavenLocal).
+   2. `agents/server-<loader>/gradlew build -PmcVersion=<v>` plus the loader's coordinate
+      overrides (fabric: `-PyarnMappings=<v>+build.N -PfabricLoaderVersion=… -PfabricApiVersion=…`;
+      neoforge: `-PneoForgeVersion=…`; forge: `-PforgeVersion=…`). Output:
+      `build/libs/agent-server-<loader>-<v>.jar`.
+   3. If the build FAILS in `mappings/` (Names.java / ActorCommands.java), that is the honest
+      "port needed" signal: re-implement only the broken names in that package for the new
+      version (Prime Directive 2 — nothing outside `mappings/` recompiles), and let
+      `MappingContractTest` (fabric/neoforge) name any drift the compiler missed.
+   4. The bukkit agent needs none of this — Bukkit-API-only, one versionless jar
+      (`mc-test-agent-bukkit.jar`) serves every version; its native fake-player backend probes
+      the runtime at enable and falls back honestly where the probe fails.
+   CC's mctest module wraps steps 1–2 as the "Agent variants" build action.
+
 The agent is configured (via a generated `mc-test-agent.toml` / `config.yml` in the
 instance) to open the MCTP WebSocket on the **allocated `mctpPort`**, bound to
-`provision.bindHost`, with a one-time **handshake token** the runner also holds — so only
-our runner can drive the instance.
+`provision.bindHost`, optionally with a **handshake token** — so only a holder of the token
+can drive the instance. The token is implemented as of spec/42: agents read
+`MCTEST_AGENT_TOKEN` (env; the Bukkit agent also reads `token:` in its `config.yml`) and,
+when set, require `session.create` `params.auth.token` to match (PROTOCOL.md §4.2) before
+any session exists. Throwaway CI instances may omit it (loopback bind remains the default
+guard); a long-lived agent on a server a human plays — the bench-actors sidecar CC installs
+— always gets one.
 
 ### 2.4.1 The server agent (`server-bukkit`) — install, port, and discovery
 

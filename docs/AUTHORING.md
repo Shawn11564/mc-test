@@ -77,7 +77,37 @@ test("regions-open-testregion")
 | `assertPluginState` | `{ plugin, query, args?, expect }` | `pluginState` | `expect` is REQUIRED; a bare value is `equals` (e.g. `expect: true`), or use `{ gt, gte, lt, lte, contains, equals, notEquals, exists }`. |
 | `waitForPluginState` | the same + `{ timeoutMs?, intervalMs? }` | `pluginState` | assert-until twin of the above. |
 | `fixture` | `{ name, args }` or `{ reset: true }` | `fixtures` | deterministic setup; `reset` reverts session fixtures. |
-| `spawnFakePlayer` | `{ name, at? }` | `fakePlayers` | server agent + Carpet backend (skips on plain Paper). |
+| `spawnFakePlayer` | `{ name, at?, gameMode?, persist? }` | `fakePlayers` | native on `server-fabric`/`server-forge`/`server-neoforge` and on `server-bukkit` when its Mojang-mapped-runtime probe succeeds (Paper 1.20.5+); Carpet fallback otherwise (Spigot / old Paper skip honestly). `persist: true` = spec/42 bench actor (survives session close). |
+| `act` | `{ name (or handle), verb, args? }` | `fakePlayers` | drive one **actor verb** on a fake this run spawned. Native backend only — a Carpet-backed agent has no `player.act` and the step fails loudly rather than no-op'ing. |
+
+### Actor verbs (`act`)
+
+A fake player is a second *player*, not a puppet with its own vocabulary: `act` drives the same
+portable verb set on the server that a human's packets would (each interaction fires the loader
+callback first, then the vanilla method). Address it by the `name:` you spawned it with.
+
+| `verb` | `args` |
+|---|---|
+| `teleport` | `{ x, y, z, world? }` |
+| `lookAt` | `{ x, y, z }` |
+| `chat` / `command` | `{ message }` / `{ command }` |
+| `attack` / `interactEntity` | `{ target }` — an entity uuid **or an online player's name** |
+| `interactBlock` | `{ x, y, z }` |
+| `clickMenuSlot` | `{ slot, button?, mode? }` — click a slot of the actor's OPEN server-side menu (`mode`: `pickup`｜`quickMove`｜`swap`｜`clone`｜`throw`｜`pickupAll`) |
+| `clickMenuText` | `{ text, exact?, lore?, index?, button?, mode? }` — click the slot whose display name (or lore) says `text`. No match → `ELEMENT_NOT_FOUND`; more than one without `index` → `AMBIGUOUS_SELECTOR` |
+| `give` / `hold` | `{ item, count? }` / `{ item }` |
+| `sneak` / `sprint` | `{ on }` |
+| `setGameMode` | `{ mode }` |
+
+```yaml
+- spawnFakePlayer: { name: Rival }
+- act: { name: Rival, verb: interactEntity, args: { target: Tester } }
+- act: { name: Rival, verb: clickMenuSlot, args: { slot: 0 } }
+- act: { name: Rival, verb: clickMenuText, args: { text: Steal from Tester } }
+```
+
+Assert on **server state** afterwards (`assertPluginState`, `getContainer`, `getEntities`), never on
+what an actor "saw" — it has no client, so there is nothing to have seen.
 
 ## Selectors (semantic, never coordinates)
 
@@ -245,7 +275,8 @@ false pass). Keys: `chat`, `command`, `containerGui`, `clientScreens`, `screensh
 `rendering`, `worldTruth`, `pluginState`, `fixtures`, `fakePlayers`, `typeText`, `pressKey`,
 `testIdTags`. The headless bot advertises `chat/command/containerGui/typeText/pressKey`;
 `server-bukkit` adds `worldTruth/pluginState/fixtures/chat/testIdTags` (and `fakePlayers` only
-with a Carpet backend). Put GUI assertions behind `containerGui`, server-truth behind
+with a Carpet backend); `server-fabric` adds `fakePlayers` natively (`backend:"native"`, incl.
+the `player.act` actor verbs). Put GUI assertions behind `containerGui`, server-truth behind
 `pluginState`, etc., and the same file runs-or-honestly-skips across the matrix.
 
 ## Pitfalls

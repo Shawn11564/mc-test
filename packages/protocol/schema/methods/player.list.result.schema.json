@@ -1,0 +1,131 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: player.list",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "players"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "players": {
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name",
+              "uuid",
+              "persist",
+              "spawnedBy",
+              "online"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "uuid": {
+                "type": "string"
+              },
+              "persist": {
+                "type": "boolean"
+              },
+              "spawnedBy": {
+                "anyOf": [
+                  {
+                    "const": "mctp",
+                    "type": "string"
+                  },
+                  {
+                    "const": "command",
+                    "type": "string"
+                  }
+                ]
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "position": {
+                "additionalProperties": false,
+                "description": "World-space position (doubles).",
+                "type": "object",
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                }
+              },
+              "dimension": {
+                "type": "string"
+              },
+              "gameMode": {
+                "type": "string"
+              },
+              "health": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

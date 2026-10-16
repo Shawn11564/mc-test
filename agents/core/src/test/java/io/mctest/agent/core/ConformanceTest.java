@@ -195,6 +195,54 @@ class ConformanceTest {
             result.addProperty("despawned", handle != null ? handle : "");
             return result;
         });
+
+        dispatch.register("player.act", "fakePlayers", (session, params) -> {
+            if (!params.has("verb")) {
+                throw McTestException.invalidParams("Requires verb");
+            }
+            JsonObject result = new JsonObject();
+            result.addProperty("ok", true);
+            result.addProperty("handle", params.has("handle") ? params.get("handle").getAsString() : "fp_Bot2");
+            result.addProperty("verb", params.get("verb").getAsString());
+            result.addProperty("detail", "chatted");
+            return result;
+        });
+
+        dispatch.register("player.list", "fakePlayers", (session, params) -> {
+            // Golden roster shape (spec/42): one persistent command-spawned actor.
+            JsonObject result = new JsonObject();
+            result.addProperty("ok", true);
+            JsonArray players = new JsonArray();
+            JsonObject rival = new JsonObject();
+            rival.addProperty("name", "Rival");
+            rival.addProperty("uuid", "069a79f4-44e9-4726-a5be-fca90e38bbbb");
+            rival.addProperty("persist", true);
+            rival.addProperty("spawnedBy", "command");
+            rival.addProperty("online", true);
+            JsonObject pos = new JsonObject();
+            pos.addProperty("x", 2.5);
+            pos.addProperty("y", 64.0);
+            pos.addProperty("z", 2.5);
+            rival.add("position", pos);
+            rival.addProperty("dimension", "minecraft:overworld");
+            rival.addProperty("gameMode", "survival");
+            rival.addProperty("health", 20.0);
+            players.add(rival);
+            result.add("players", players);
+            return result;
+        });
+
+        dispatch.register("player.menu", "fakePlayers", (session, params) -> {
+            // Golden open-menu shape (spec/42 click-text): one modded GUI row with lore.
+            MenuView view = MenuView.of("minecraft:generic_9x6", null, 90, Collections.singletonList(
+                    new MenuView.Slot(4, "minecraft:player_head", 1, "Steal from Rival",
+                            Collections.singletonList("Costs 1 token"), false)));
+            JsonObject result = Menus.json(view);
+            result.addProperty("ok", true);
+            result.addProperty("handle", "fp_Rival");
+            result.addProperty("name", "Rival");
+            return result;
+        });
     }
 
     // --- Fixture-driven assertions ---
@@ -377,6 +425,49 @@ class ConformanceTest {
     }
 
     @Test
+    void playerActEchoesVerbAndDetail() throws Exception {
+        String session = createServerSession();
+        JsonObject args = new JsonObject();
+        args.addProperty("message", "gl hf");
+        JsonObject p = new JsonObject();
+        p.addProperty("handle", "fp_Bot2");
+        p.addProperty("verb", "chat");
+        p.add("args", args);
+        JsonObject result = call("player.act", withSession(session, p)).getAsJsonObject("result");
+        assertTrue(result.get("ok").getAsBoolean());
+        assertEquals("chat", result.get("verb").getAsString());
+        assertEquals("fp_Bot2", result.get("handle").getAsString());
+        assertNotNull(result.get("detail"));
+    }
+
+    @Test
+    void playerListReturnsRoster() throws Exception {
+        String session = createServerSession();
+        JsonObject result = call("player.list", withSession(session, new JsonObject()))
+                .getAsJsonObject("result");
+        assertTrue(result.get("ok").getAsBoolean());
+        JsonObject first = result.getAsJsonArray("players").get(0).getAsJsonObject();
+        assertEquals("Rival", first.get("name").getAsString());
+        assertTrue(first.get("persist").getAsBoolean());
+        assertEquals("command", first.get("spawnedBy").getAsString());
+        assertTrue(first.get("online").getAsBoolean());
+    }
+
+    @Test
+    void playerMenuReturnsTheOpenMenusSlots() throws Exception {
+        String session = createServerSession();
+        JsonObject p = new JsonObject();
+        p.addProperty("name", "Rival");
+        JsonObject result = call("player.menu", withSession(session, p)).getAsJsonObject("result");
+        assertTrue(result.get("ok").getAsBoolean());
+        assertTrue(result.get("open").getAsBoolean());
+        JsonObject slot = result.getAsJsonArray("slots").get(0).getAsJsonObject();
+        assertEquals(4, slot.get("slot").getAsInt());
+        assertEquals("Steal from Rival", slot.get("name").getAsString());
+        assertEquals("Costs 1 token", slot.getAsJsonArray("lore").get(0).getAsString());
+    }
+
+    @Test
     void truthGetWorldBlockReturnsBlock() throws Exception {
         String session = createServerSession();
         JsonObject p = new JsonObject();
@@ -470,7 +561,8 @@ class ConformanceTest {
         Path dir = fixturesDir();
         for (String method : new String[]{"session.create", "session.ping", "world.join",
                 "truth.assertPluginState", "truth.getWorldBlock", "truth.getEntities",
-                "fixture.set", "fixture.reset", "player.spawnFake", "player.despawnFake"}) {
+                "fixture.set", "fixture.reset", "player.spawnFake", "player.despawnFake",
+                "player.act", "player.list", "player.menu"}) {
             Path f = dir.resolve(method + ".json");
             assertTrue(Files.exists(f), "missing golden fixture: " + f);
             JsonObject fixture = JsonParser.parseString(

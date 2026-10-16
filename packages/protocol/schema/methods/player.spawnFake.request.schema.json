@@ -72,6 +72,9 @@
         },
         "gameMode": {
           "type": "string"
+        },
+        "persist": {
+          "type": "boolean"
         }
       }
     }

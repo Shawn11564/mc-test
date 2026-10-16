@@ -1,0 +1,126 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP request: player.act",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "method": {
+      "const": "player.act",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessionId",
+        "verb"
+      ],
+      "properties": {
+        "sessionId": {
+          "description": "Opaque session token from session.create.",
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "verb": {
+          "description": "Portable actor verb driven on a session-spawned fake player.",
+          "anyOf": [
+            {
+              "const": "teleport",
+              "type": "string"
+            },
+            {
+              "const": "lookAt",
+              "type": "string"
+            },
+            {
+              "const": "chat",
+              "type": "string"
+            },
+            {
+              "const": "command",
+              "type": "string"
+            },
+            {
+              "const": "attack",
+              "type": "string"
+            },
+            {
+              "const": "interactEntity",
+              "type": "string"
+            },
+            {
+              "const": "interactBlock",
+              "type": "string"
+            },
+            {
+              "const": "clickMenuSlot",
+              "type": "string"
+            },
+            {
+              "const": "clickMenuText",
+              "type": "string"
+            },
+            {
+              "const": "give",
+              "type": "string"
+            },
+            {
+              "const": "hold",
+              "type": "string"
+            },
+            {
+              "const": "sneak",
+              "type": "string"
+            },
+            {
+              "const": "sprint",
+              "type": "string"
+            },
+            {
+              "const": "setGameMode",
+              "type": "string"
+            }
+          ]
+        },
+        "args": {
+          "description": "Free-form by-name JSON object.",
+          "type": "object",
+          "patternProperties": {
+            "^(.*)$": {}
+          }
+        }
+      }
+    }
+  }
+}

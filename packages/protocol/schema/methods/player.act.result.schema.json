@@ -1,0 +1,71 @@
+{
+  "additionalProperties": false,
+  "description": "MCTP success response: player.act",
+  "type": "object",
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "properties": {
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "id": {
+      "description": "JSON-RPC correlation id (string or integer, never null).",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        }
+      ]
+    },
+    "result": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "handle",
+        "verb"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "screenChanged": {
+          "type": "boolean"
+        },
+        "tookMs": {
+          "type": "number"
+        },
+        "serverTick": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "handle": {
+          "type": "string"
+        },
+        "verb": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

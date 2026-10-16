@@ -16,10 +16,10 @@
  * the Gradle front door so the freshly-built jar is tested without editing the
  * matrix). Multiple step files run as (test × target), aggregated into one JUnit.
  */
-import { resolve, join, dirname } from "node:path";
+import { resolve, join, dirname, basename } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import type { Capabilities } from "@mc-test/protocol";
 import { loadMatrix, findTarget, resolveWorld } from "./config/loadMatrix.js";
@@ -91,8 +91,11 @@ const SERVER_BUKKIT_CAPABILITIES: Capabilities = {
  * The capabilities the Fabric server-mod agent advertises (M5): the same
  * server-truth surface as the Bukkit agent (PROTOCOL.md §6.3: serverMod →
  * `worldTruth, pluginState, fixtures, fakePlayers, chat, testIdTags`), but for
- * the Fabric/NeoForge/Quilt **server** loaders. Used to build the `AgentConn` the
- * runner co-selects alongside a rendered-client (`inprocess`) driver.
+ * the Fabric/NeoForge/Quilt **server** loaders. Its `fakePlayers` backend is
+ * **native** (spec/41 tier 2: `backend:"native"` + the `player.act` verbs; no
+ * Carpet needed — the live grant carries the detail). Used to build the
+ * `AgentConn` the runner co-selects alongside a rendered-client (`inprocess`)
+ * driver.
  */
 const SERVER_FABRIC_CAPABILITIES: Capabilities = {
   worldTruth: true,
@@ -106,15 +109,17 @@ const SERVER_FABRIC_CAPABILITIES: Capabilities = {
 
 /**
  * The Forge / NeoForge server-mod truth agents (F5). Same server-truth surface as the
- * Fabric agent, but for a FORGE / NEOFORGE server. `fakePlayers` is NOT advertised —
- * those loaders have no Carpet-style fake-player backend by default, so those steps
- * honestly skip (the agent's live grant is authoritative regardless). Built and booted
- * via the e2e modded-server lane (ForgeGradle / NeoGradle build).
+ * Fabric agent, but for a FORGE / NEOFORGE server. As of spec/42, `fakePlayers` is
+ * native on both (the discard-connection join path needs no Carpet — the stale "no
+ * Carpet backend" rationale died with server-fabric's port); the live grant carries
+ * the `backend:"native"` / `persist` / `list` detail. Built and booted via the e2e
+ * modded-server lane (ForgeGradle / NeoGradle build).
  */
 const SERVER_FORGE_CAPABILITIES: Capabilities = {
   worldTruth: true,
   pluginState: true,
   fixtures: true,
+  fakePlayers: true,
   chat: true,
   testIdTags: true,
   loader: ["forge"],
@@ -124,6 +129,7 @@ const SERVER_NEOFORGE_CAPABILITIES: Capabilities = {
   worldTruth: true,
   pluginState: true,
   fixtures: true,
+  fakePlayers: true,
   chat: true,
   testIdTags: true,
   loader: ["neoforge"],
@@ -247,6 +253,25 @@ function currentSha(): string | undefined {
  *  agents (M4) are launched by the in-process driver, not the provisioner, so
  *  they are skipped here. Unknown agent names throw with a clear message; a
  *  missing built jar is reported at boot. */
+/**
+ * Per-version agent variants (spec/42 Plan D): the modded server agents now emit
+ * `agent-<variant>-<mc>.jar` (ENVIRONMENTS.md naming). When the table's un-versioned path is
+ * absent, look for a variant next to it: the exact `-<mc>.jar` for the target's MC version wins;
+ * with no MC to match, a SINGLE variant is unambiguous. A version-mismatched variant is never
+ * silently substituted — the agent pins one MC and injecting the wrong one fails confusingly at
+ * runtime, so the honest outcome is the existing missing-jar warn-and-drop (steps skip).
+ */
+function resolveVariantJar(builtIn: string, mc: string | undefined): string {
+  if (existsSync(builtIn)) return builtIn;
+  const dir = dirname(builtIn);
+  if (!existsSync(dir)) return builtIn;
+  const base = basename(builtIn, ".jar");
+  const candidates = readdirSync(dir).filter((f) => f.startsWith(`${base}-`) && f.endsWith(".jar"));
+  if (mc && candidates.includes(`${base}-${mc}.jar`)) return join(dir, `${base}-${mc}.jar`);
+  if (!mc && candidates.length === 1) return join(dir, candidates[0]!);
+  return builtIn;
+}
+
 function resolveAgentJars(target: MatrixTarget): { name: string; jarPath: string; advertised: Capabilities }[] {
   return (target.agents ?? [])
     .filter((name) => !(name in KNOWN_CLIENT_AGENTS))
@@ -260,7 +285,9 @@ function resolveAgentJars(target: MatrixTarget): { name: string; jarPath: string
       return {
         name,
         // A user-supplied override is CWD-relative; the built-in path is monorepo-relative.
-        jarPath: override ? resolve(override) : resolve(REPO_ROOT, known.jarPath),
+        jarPath: override
+          ? resolve(override)
+          : resolveVariantJar(resolve(REPO_ROOT, known.jarPath), target.mc),
         advertised: known.advertised,
       };
     });

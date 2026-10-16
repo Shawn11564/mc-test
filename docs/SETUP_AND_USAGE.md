@@ -209,7 +209,7 @@ steps:
 **Step verbs:** `join`, `leave`, `chat`, `command`, `waitForChat`/`assertChat`, `waitForScreen`,
 `listElements`, `click`, `type`, `press`, `screenshot`, `useBlock`, `attackBlock`, `setHeldItem`,
 `look`, `move`, `getBlock`, `waitForBlock`, `getContainer`, `getItem`, `getEntities`,
-`assertPluginState`, `waitForPluginState`, `fixture`, `spawnFakePlayer`.
+`assertPluginState`, `waitForPluginState`, `fixture`, `spawnFakePlayer`, `act`.
 
 **Time verbs** — `waitForBlock` / `waitForPluginState` take the same arguments as `getBlock` /
 `assertPluginState` plus `timeoutMs` (default 10000) and `intervalMs` (default 250), and poll until

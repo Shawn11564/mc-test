@@ -464,8 +464,10 @@ params/results/errors.
 **Fixture / fake-player primitives (server companion)**
 - `fixture.set` — apply a named world/plugin fixture for setup.
 - `fixture.reset` — reset fixtures to a clean baseline.
-- `player.spawnFake` — spawn a Carpet-style fake player for action automation.
+- `player.spawnFake` — spawn a fake player (native `ServerPlayerEntity` on server-fabric; Carpet-style on server-bukkit).
 - `player.despawnFake` — despawn a fake player.
+- `player.act` — drive one portable actor verb (teleport/lookAt/chat/command/attack/interactEntity/interactBlock/clickMenuSlot/clickMenuText/give/hold/sneak/sprint/setGameMode) on a session-spawned fake (native backend only).
+- `player.menu` — read back the container menu an actor has open (slot indices, item ids, display names, lore), which is what `clickMenuText` matches against.
 
 **Events (server→client notifications, not request/response)**
 - `event.chat` — a chat/system message line arrived.
@@ -578,7 +580,7 @@ the protocol. That is the narrow waist paying off.
 - **Fabric / NeoForge GameTest** — world-behavior assertions inside the game.
 - **MockBukkit** — pure unit tests with **no** client; use for plugin logic that
   needs no live GUI (these never enter the MCTP path at all).
-- **Carpet fake players** — server-side action automation (`player.spawnFake`).
+- **Fake players** — server-side action automation (`player.spawnFake` / `player.act`): native on server-fabric (spec/41 tier 2), Carpet-backed on server-bukkit.
 
 ---
 

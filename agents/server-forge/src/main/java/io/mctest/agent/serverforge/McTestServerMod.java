@@ -1,12 +1,15 @@
 package io.mctest.agent.serverforge;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import io.mctest.agent.core.Capabilities;
 import io.mctest.agent.core.Dispatch;
 import io.mctest.agent.core.LogSink;
 import io.mctest.agent.core.MctpServer;
 import io.mctest.agent.serverforge.fixtures.FixtureManager;
+import io.mctest.agent.serverforge.mappings.ActorCommands;
 import io.mctest.agent.serverforge.mappings.Names;
+import io.mctest.agent.serverforge.players.FakePlayerManager;
 import io.mctest.agent.serverforge.truth.PluginStateProbe;
 import io.mctest.agent.serverforge.truth.WorldTruth;
 import net.minecraftforge.fml.common.Mod;
@@ -16,8 +19,9 @@ import net.minecraftforge.fml.common.Mod;
  * modern Forge style) that hosts an MCTP WebSocket server and answers the server-truth / fixtures /
  * plugin-state half of the protocol (PROTOCOL.md §7.3–§7.5). It mirrors the <b>wiring</b> of
  * {@code /agents/server-fabric}'s {@code McTestServerMod}, but binds Mojmap-mapped Forge server
- * primitives instead of Yarn-mapped Fabric ones, and <b>drops {@code fakePlayers}</b> (Forge has no
- * Carpet fake-player backend). {@code agent.kind = serverMod}.
+ * primitives instead of Yarn-mapped Fabric ones. As of spec/42, {@code fakePlayers} is <b>native</b>
+ * here too (the discard-connection join path needs no Carpet), including persistent bench actors,
+ * {@code player.list}, and the in-game {@code /actor} command. {@code agent.kind = serverMod}.
  *
  * <p>All wire logic, negotiation, and error mapping live in the shared {@code io.mctest.agent.core}
  * ({@code MctpServer} + {@code Dispatch}); this class only assembles them around a loader-specific
@@ -30,10 +34,9 @@ import net.minecraftforge.fml.common.Mod;
  * {@code ServerLevel}, {@code BlockState}, game rules, and the {@code ServerStarted/StoppingEvent}s that
  * capture the server — is confined to {@link Names} (the CI import-scan enforces it).
  *
- * <p>Differences from the fabric twin: (1) the {@code fakePlayers} capability and the
- * {@code player.spawnFake}/{@code player.despawnFake} handlers are NOT advertised/registered; (2) the
- * server lifecycle is captured via Forge's game event bus (owned inside {@link Names}) rather than
- * Fabric's {@code ServerLifecycleEvents}.
+ * <p>Difference from the fabric twin: the server lifecycle and command registration are captured via
+ * Forge's game event bus (owned inside {@code mappings/}) rather than Fabric's
+ * {@code ServerLifecycleEvents}/{@code CommandRegistrationCallback}.
  */
 @Mod("mctestserverforge")
 public final class McTestServerMod {
@@ -62,35 +65,59 @@ public final class McTestServerMod {
         // loader-specific) and install the server-lifecycle hooks that capture the server.
         Names names = new Names();
 
-        // Advertise exactly the serverMod capability bundle MINUS fakePlayers (PROTOCOL.md §6.1–§6.2;
-        // mirrors SERVER_FORGE_CAPABILITIES in the runner's cli.ts). Forge has no Carpet backend, so
-        // fakePlayers is intentionally dropped — a fakePlayers-requiring test honestly skips.
+        // Advertise the full serverMod capability bundle (PROTOCOL.md §6.1–§6.2; mirrors
+        // SERVER_FORGE_CAPABILITIES in the runner's cli.ts). fakePlayers is native as of spec/42 —
+        // the discard-connection join path needs no Carpet — with the persist/list bench-actor
+        // extensions, exactly like server-fabric.
         JsonObject worldTruthDetail = new JsonObject();
         worldTruthDetail.addProperty("version", 1);
         worldTruthDetail.addProperty("radiusLimit", RADIUS_LIMIT);
+        JsonObject fakePlayersDetail = new JsonObject();
+        fakePlayersDetail.addProperty("backend", "native");
+        fakePlayersDetail.addProperty("persist", true);
+        fakePlayersDetail.addProperty("list", true);
+        fakePlayersDetail.addProperty("menu", true);
+        JsonArray actVerbs = new JsonArray();
+        for (String verb : FakePlayerManager.ACT_VERBS) {
+            actVerbs.add(verb);
+        }
+        fakePlayersDetail.add("verbs", actVerbs);
         Capabilities capabilities = new Capabilities()
                 .advertise("worldTruth", worldTruthDetail)
                 .advertise("pluginState")
                 .advertise("fixtures")
+                .advertise("fakePlayers", fakePlayersDetail)
                 .advertise("chat")
                 .advertise("testIdTags");
 
         // Primitive handlers — each gated by its capability key (PROTOCOL.md §6.1). All game access
-        // routes through the Names facade on the server thread. No FakePlayerManager (fakePlayers dropped).
+        // routes through the Names facade on the server thread.
         WorldTruth worldTruth = new WorldTruth(names, RADIUS_LIMIT);
         PluginStateProbe stateProbe = new PluginStateProbe(names);
         FixtureManager fixtures = new FixtureManager(names);
+        FakePlayerManager fakePlayers = new FakePlayerManager(names);
 
         Dispatch dispatch = new Dispatch()
                 .setAgentInfo("mc-test-server-forge", "0.1.0", "serverMod", "java")
                 .setCapabilities(capabilities)
                 .setTargetInfo(names.mcVersion(), "forge", names.loaderVersion())
                 .setLogSink(logSink)
+                // spec/42: the launcher (CC's servers module) always sets MCTEST_AGENT_TOKEN for
+                // long-lived agents; unset = open (throwaway test instances, existing runner flows).
+                .setAuthToken(System.getenv("MCTEST_AGENT_TOKEN"))
                 .register("truth.getWorldBlock", "worldTruth", worldTruth::getWorldBlock)
                 .register("truth.getEntities", "worldTruth", worldTruth::getEntities)
                 .register("truth.assertPluginState", "pluginState", stateProbe::assertPluginState)
                 .register("fixture.set", "fixtures", fixtures::set)
-                .register("fixture.reset", "fixtures", fixtures::reset);
+                .register("fixture.reset", "fixtures", fixtures::reset)
+                .register("player.spawnFake", "fakePlayers", fakePlayers::spawnFake)
+                .register("player.despawnFake", "fakePlayers", fakePlayers::despawnFake)
+                .register("player.act", "fakePlayers", fakePlayers::act)
+                .register("player.list", "fakePlayers", fakePlayers::list)
+                .register("player.menu", "fakePlayers", fakePlayers::menu);
+
+        // The in-game /actor front door (spec/42 §4): same primitives, op-gated, dev sidecar only.
+        ActorCommands.install(fakePlayers);
 
         // Defer MctpServer start until the dedicated server is up (so the server-thread bounce has a
         // thread to submit to), and stop it at shutdown. Names owns the mapped server-lifecycle events and
