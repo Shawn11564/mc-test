@@ -5,10 +5,13 @@ setup a tester repeats ("Carol takes expedition #2", "give area B back to South"
 twenty pasted ones with the names changed by hand. It sits next to `/actor` ([commandcenter spec/42](../../commandcenter/spec/42-bench-actors.md))
 in the server agent and drives actors by running `/actor` lines.
 
-> **A bench convenience, not a test path.** The runner never uses `/macro`, and nothing on the wire (MCTP) changes.
-> A macro's `expect` lines are hints for the human watching, not verdicts: verdicts stay in the runner (Prime
-> Directive 2). The macro engine is game-free Java in `agents/core` (`io.mctest.agent.core.bench`), unit-tested
-> there; each loader adds a thin command shim.
+> **A bench convenience, not (yet) a test path.** The runner doesn't use `/macro` in test runs. A macro's `expect`
+> lines are hints for the human watching, not verdicts: verdicts stay in the runner (Prime Directive 2). A spike
+> (2026-10-16, server-neoforge and server-fabric) lets the runner start a macro over MCTP, `bench.runMacro`
+> (PROTOCOL.md §7.5, provisional), and judge every `expect` itself from the evidence each step reports;
+> `MacroRun.Observer` is the core seam and `MacroEvents` the wire shape. Proof:
+> `node tests/e2e/run-macro-mctp.mjs [neoforge|fabric]`. The macro engine is game-free Java in `agents/core`
+> (`io.mctest.agent.core.bench`), unit-tested there; each loader adds a thin command shim.
 
 **Status:** server-neoforge and server-fabric (1.21.1) have it. server-forge and server-bukkit don't yet; their shims
 would mirror `agents/server-neoforge/.../mappings/MacroCommands.java` and `CommandOutcome.java`.

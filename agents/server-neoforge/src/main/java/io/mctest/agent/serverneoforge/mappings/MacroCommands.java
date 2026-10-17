@@ -7,11 +7,16 @@ import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
+import io.mctest.agent.core.EventBus;
+import io.mctest.agent.core.McTestException;
+import io.mctest.agent.core.McTestSession;
 import io.mctest.agent.core.bench.Args;
 import io.mctest.agent.core.bench.CommandLog;
 import io.mctest.agent.core.bench.Macro;
 import io.mctest.agent.core.bench.MacroEditor;
+import io.mctest.agent.core.bench.MacroEvents;
 import io.mctest.agent.core.bench.MacroLayout;
 import io.mctest.agent.core.bench.MacroLibrary;
 import io.mctest.agent.core.bench.MacroMenu;
@@ -20,6 +25,7 @@ import io.mctest.agent.core.bench.MacroSource;
 import io.mctest.agent.core.bench.MacroSource.EditException;
 import io.mctest.agent.core.bench.Problem;
 import io.mctest.agent.core.bench.ToldLog;
+import io.mctest.agent.serverneoforge.Params;
 import io.mctest.agent.serverneoforge.players.FakePlayerManager;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -37,6 +43,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSource;
 import net.minecraft.commands.CommandSourceStack;
@@ -57,9 +64,9 @@ import org.slf4j.Logger;
 
 /**
  * The in-game {@code /macro} command (docs/MACROS.md): saved, parameterized command groups for manual play
- * testing, read from the project's {@code .macro} files. A bench convenience next to {@code /actor}, not a
- * test path: the runner never uses it, and its {@code expect} lines are hints for the human watching, not
- * verdicts (Prime Directive 2 keeps those in the runner).
+ * testing, read from the project's {@code .macro} files. A bench convenience next to {@code /actor}. The runner can also start
+ * one over MCTP ({@code bench.runMacro}, a spike) and then judges each {@code expect} itself from the evidence
+ * the run reports: the agent's own ✔/✘ is only ever a hint (Prime Directive 2 keeps verdicts in the runner).
  *
  * <pre>
  * /macro                        — the macro menu: every macro, drag them around, open one to see and edit it
@@ -99,9 +106,12 @@ public final class MacroCommands {
     private final Deque<Runnable> later = new ArrayDeque<>();
     /** Who asked for text through chat from the menu, and when: the menu opens again once their command works. */
     private final Map<String, Long> reopen = new HashMap<>();
+    /** The MCTP server's event bus once it is up (null before), for {@code bench.runMacro}'s step events. */
+    private final Supplier<EventBus> events;
 
-    private MacroCommands(FakePlayerManager actors, Names names, MacroLibrary library) {
+    private MacroCommands(FakePlayerManager actors, Names names, MacroLibrary library, Supplier<EventBus> events) {
         this.actors = actors;
+        this.events = events;
         this.names = names;
         this.library = library;
         Path folder = library.recordFolder();
@@ -109,10 +119,15 @@ public final class MacroCommands {
         this.editor = new MacroEditor(library, layout);
     }
 
-    /** Registers {@code /macro} and {@code /m}; call once at mod init. Macros come from {@code MCTEST_MACROS}. */
-    public static void install(FakePlayerManager actors, Names names) {
+    /**
+     * Registers {@code /macro} and {@code /m}; call once at mod init. Macros come from {@code MCTEST_MACROS}.
+     *
+     * @param events the MCTP server's event bus once it is up, for {@link #runMacro}.
+     * @return the instance, whose {@link #runMacro} the agent registers as {@code bench.runMacro}.
+     */
+    public static MacroCommands install(FakePlayerManager actors, Names names, Supplier<EventBus> events) {
         MacroLibrary library = new MacroLibrary(MacroLibrary.folders(System.getenv("MCTEST_MACROS"), Path.of("macros")));
-        MacroCommands macros = new MacroCommands(actors, names, library);
+        MacroCommands macros = new MacroCommands(actors, names, library, events);
         names.setToldListener(macros.told::record);
         NeoForge.EVENT_BUS.addListener(macros::register);
         NeoForge.EVENT_BUS.addListener((ServerTickEvent.Post e) -> macros.tick(e.getServer()));
@@ -123,6 +138,67 @@ public final class MacroCommands {
             }
         });
         LOGGER.info("[mc-test] Macros are read from {}", library.folders());
+        return macros;
+    }
+
+    // --- MCTP: bench.runMacro, a run the runner judges (spike) ---
+
+    /**
+     * {@code bench.runMacro} params {@code { sessionId, name, args?, as? }}: starts macro {@code name} with
+     * {@code args} (as typed after {@code /m <name>}) as the console, or as the agent-owned actor {@code as}, and
+     * answers at once with its {@code runId}. Every step then arrives as an {@code event.macroStep} (once with
+     * {@code phase:"start"}, once with {@code phase:"end"}) and the run's end as {@code event.macroEnd}. A
+     * {@code waitfor}/{@code expect} ends with its {@code check}: the evidence window the runner judges.
+     */
+    public JsonObject runMacro(McTestSession session, JsonObject params) throws McTestException {
+        String name = Params.requireString(params, "name");
+        String args = Params.optString(params, "args", "");
+        String as = Params.optString(params, "as", null);
+        if (as != null && !actors.isActor(as)) {
+            throw McTestException.invalidParams("bench.runMacro: " + as + " is not an agent-owned actor");
+        }
+        String runId = "mr_" + UUID.randomUUID().toString().substring(0, 8);
+        String error = names.call(() -> {
+            if (server == null) {
+                return "the server isn't ticking yet";
+            }
+            CommandSourceStack source;
+            if (as == null) {
+                source = server.createCommandSourceStack();
+            } else {
+                ServerPlayer player = server.getPlayerList().getPlayerByName(as);
+                if (player == null) {
+                    return as + " isn't online";
+                }
+                source = player.createCommandSourceStack();
+            }
+            Macro macro = library.get(name);
+            if (macro == null) {
+                return "no macro named " + name;
+            }
+            Map<String, String> vars;
+            try {
+                vars = Args.bind(macro, Args.tokenize(args), builtIns(source));
+            } catch (Args.BindException e) {
+                return e.getMessage();
+            }
+            String who = source.getTextName();
+            MacroRun current = runs.get(who);
+            if (current != null && !current.finished()) {
+                return "already running " + current.title() + " as " + who;
+            }
+            MacroRun run = new MacroRun(library, macro, vars, builtIns(source), new Host(who), told)
+                    .observe(new MacroEvents(runId, events));
+            runs.put(who, run);
+            return null;
+        }, Params.timeoutMs(params, 5000));
+        if (error != null) {
+            throw McTestException.invalidParams("bench.runMacro: " + error);
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("ok", true);
+        result.addProperty("runId", runId);
+        return result;
     }
 
     // --- registration ---

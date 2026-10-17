@@ -130,6 +130,17 @@ public final class ToldLog {
         return text.replaceAll("§.", "").replaceAll("\\s+", " ").strip();
     }
 
+    /** Every kept message to {@code who} after {@code mark}, oldest first: the evidence a judge reads. */
+    public synchronized List<Entry> entriesAfter(String who, long mark) {
+        List<Entry> out = new ArrayList<>();
+        for (Entry e : entries(who)) {
+            if (e.seq() > mark) {
+                out.add(e);
+            }
+        }
+        return out;
+    }
+
     /** Up to {@code max} of the newest messages to {@code who} after {@code mark}, oldest first. */
     public synchronized List<String> since(String who, long mark, int max) {
         List<String> out = new ArrayList<>();

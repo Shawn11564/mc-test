@@ -51,7 +51,7 @@ public final class McTestServerMod {
     /** Granted {@code worldTruth.radiusLimit} (PROTOCOL.md §6.3). */
     static final int RADIUS_LIMIT = 64;
 
-    private MctpServer server;
+    private volatile MctpServer server;
 
     /**
      * NeoForge constructs the mod during loading. We assemble the dispatch here and arm the
@@ -92,7 +92,8 @@ public final class McTestServerMod {
                 .advertise("fixtures")
                 .advertise("fakePlayers", fakePlayersDetail)
                 .advertise("chat")
-                .advertise("testIdTags");
+                .advertise("testIdTags")
+                .advertise("benchMacros"); // bench.runMacro (spike): a macro run the runner judges
 
         // Primitive handlers — each gated by its capability key (PROTOCOL.md §6.1). All game access
         // routes through the Names facade on the server thread.
@@ -100,6 +101,12 @@ public final class McTestServerMod {
         PluginStateProbe stateProbe = new PluginStateProbe(names);
         FixtureManager fixtures = new FixtureManager(names);
         FakePlayerManager fakePlayers = new FakePlayerManager(names);
+        // Saved command groups for the same bench (docs/MACROS.md): /macro and /m, read from MCTEST_MACROS. Its step
+        // events reach MCTP clients through the server's bus, which exists only once the server is up.
+        MacroCommands macros = MacroCommands.install(fakePlayers, names, () -> {
+            MctpServer s = server;
+            return s == null ? null : s.events();
+        });
 
         Dispatch dispatch = new Dispatch()
                 .setAgentInfo("mc-test-server-neoforge", "0.1.0", "serverMod", "java")
@@ -118,13 +125,12 @@ public final class McTestServerMod {
                 .register("player.despawnFake", "fakePlayers", fakePlayers::despawnFake)
                 .register("player.act", "fakePlayers", fakePlayers::act)
                 .register("player.list", "fakePlayers", fakePlayers::list)
-                .register("player.menu", "fakePlayers", fakePlayers::menu);
+                .register("player.menu", "fakePlayers", fakePlayers::menu)
+                .register("bench.runMacro", "benchMacros", macros::runMacro);
 
         // The in-game /actor front door (spec/42 §4): same primitives, op-gated, dev sidecar only.
         // /actor <name> view|control and /actor back: see as, or play as, an actor, then return.
         ActorCommands.install(fakePlayers, ActorControl.install(fakePlayers));
-        // Saved command groups for the same bench (docs/MACROS.md): /macro and /m, read from MCTEST_MACROS.
-        MacroCommands.install(fakePlayers, names);
 
         // Defer MctpServer start until the dedicated server is up (so the server-thread bounce has a
         // thread to submit to), and stop it at shutdown. Names owns the mapped server-lifecycle events and

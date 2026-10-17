@@ -10,6 +10,34 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-10-16 — spikes: code coverage and runner-judged macros, on NeoForge and Fabric
+- **Coverage spike** (`node tests/e2e/run-coverage.mjs [neoforge|fabric]`): a real 1.21.1 server with the JaCoCo
+  0.8.12 agent (tcpserver + `classdumpdir`), dumped and reset after boot and after each of two checks.
+  NeoForge: MapFactions. `raid start` covers `RaidService.java:179` and not `OrgService.java:124`/`276`; founding a
+  bank and faction covers those and not the raid line. Fabric: the server-fabric agent itself (a remapped Fabric
+  mod; no other Fabric server mod with source here). `/macro list` and `/actor list` each cover only their own
+  lines. On both, the deployed jar's classes match JaCoCo's ids and the entry class is covered at boot. Fabric API
+  under JaCoCo shows the loader-rewrite hazard: 2 mixin accessor interfaces don't match their jar, and reporting
+  against `classdumpdir` matches every class. Mixin classes show 0 lines (their bodies run inside Minecraft's
+  classes). No product code: the agent goes in through `JAVA_TOOL_OPTIONS`.
+- **Client-only stripping, proven** (lane `fabric-strip`, fixture mod `tests/fixtures/fabric-env-strip`): on a
+  dedicated server Fabric strips `Shared.clientOnly()` (`@Environment(CLIENT)`), so exactly `Shared` stops matching
+  its jar and its executed line reads not covered there (a false red); against `classdumpdir` it reads covered.
+  `Plain` (no client-only member) matches either way.
+- **Coverage in IntelliJ** (every lane writes `intellij.exec`): IntelliJ's Run › Show Coverage Data runs JaCoCo's
+  Analyzer over the module's compiled classes, so it shows only bytes that ran. On NeoForge MapFactions'
+  `build/classes` already match (0 of 120 re-keyed). On Fabric no class matches (Loom's remap re-serializes every
+  class), so `tests/e2e/jacoco/RekeyExec.java` carries the hits onto the IDE's classes method by method: by name,
+  then by shape and probe count in file order for overrides the remap renamed. Checked per lane: every IDE class
+  matches, each covers exactly the lines the class dump covers (a name-only re-key lost 12 lines in two classes),
+  and only stripped methods are left behind, reading not run.
+- **Runner-judged macro spike** (`node tests/e2e/run-macro-mctp.mjs [neoforge|fabric]`): `bench.runMacro` +
+  `event.macroStep` / `event.macroEnd` on server-neoforge and server-fabric, capability `benchMacros` (PROTOCOL.md
+  §7.5, PROVISIONAL). Core gains `MacroRun.Observer` (each step started and ended once, a check ending with its
+  evidence window), `MacroEvents` (the wire shape, shared by both shims) and `ToldLog.entriesAfter`; new
+  `MacroRunTest` and `MacroEventsTest` cases. The e2e judges every `expect` on the runner side from the evidence,
+  with a failing check, a stopped run, refused requests, and a tamper control (the judge ignores `hint`).
+
 ### 2026-10-16 — the macro menu, and `/macro edit`
 - **`/macro` (or `/m` alone) opens a macro menu** on server-neoforge and server-fabric (docs/MACROS.md §8). It's a
   chest menu, so a vanilla client needs nothing. Every macro is a shulker box (one colour per file) whose tooltip

@@ -29,8 +29,37 @@ public final class MacroRun {
         void show(Level level, String text);
     }
 
+    /**
+     * Structured progress for a controller that judges the run itself (the runner, over MCTP {@code bench.runMacro}):
+     * every step is started and ended exactly once, in order, and a {@code waitfor}/{@code expect} ends with its
+     * {@link Check}, the evidence window, so the judge needs nothing from this class's own ✔/✘. Optional.
+     */
+    public interface Observer {
+        /** {@code kind}: command, wait, waitfor, expect, run, say, pause. {@code where}: {@code file:line}. */
+        void stepStarted(int seq, int depth, String kind, String text, String where);
+
+        /** {@code status}: ok, carriedOn (a {@code -/} command failed), failed (it stopped the run), observed, stopped. */
+        void stepEnded(int seq, String status, String detail, Check check);
+
+        /** {@code status}: done or stopped. */
+        void ended(String status, String text);
+    }
+
+    /**
+     * What a {@code waitfor}/{@code expect} watched: who, the text, whether it was negated, for how long, why the
+     * window closed ({@code match} or {@code timeout}), this engine's own reading ({@code pass}/{@code fail}, a hint
+     * only), and every message {@code who} was told inside the window.
+     */
+    public record Check(String who, String text, boolean negate, int ticks, String closedBy, String hint,
+            List<ToldLog.Entry> told) {
+    }
+
     private record Frame(Macro macro, Map<String, String> vars, int[] pc) {
     }
+
+    private Observer observer;
+    private int stepSeq;
+    private int openStep = -1;
 
     private final MacroLibrary library;
     private final Host host;
@@ -71,6 +100,12 @@ public final class MacroRun {
         return title;
     }
 
+    /** Reports every step to {@code observer} from now on; set it before the first {@link #tick}. */
+    public MacroRun observe(Observer observer) {
+        this.observer = observer;
+        return this;
+    }
+
     public boolean finished() {
         return finished;
     }
@@ -93,6 +128,7 @@ public final class MacroRun {
             return false;
         }
         paused = false;
+        endStep("ok", null, null);
         return true;
     }
 
@@ -119,6 +155,7 @@ public final class MacroRun {
                     return true;
                 }
                 waitUntil = -1;
+                endStep("ok", null, null);
             }
             if (waitingFor != null && !checkWait(now)) {
                 return true;
@@ -143,13 +180,16 @@ public final class MacroRun {
             if (step instanceof Macro.Command c) {
                 String command = Args.substitute(c.text(), frame.vars());
                 host.show(Level.STEP, command);
+                startStep(frame, step, "command", (c.ignoreFailure() ? "-" : c.sameTick() ? "+" : "") + command);
                 mark = told.seq();
                 String error = host.runCommand(command);
                 if (error != null && !c.ignoreFailure()) {
+                    endStep("failed", error, null);
                     finish(Level.STOPPED, "stopped " + title + ": " + command + " failed — " + error
                             + where(frame, step));
                     return false;
                 }
+                endStep(error == null ? "ok" : "carriedOn", error, null);
                 int next = frame.pc()[0];
                 if (next < steps.size() && steps.get(next) instanceof Macro.Command following && following.sameTick()) {
                     continue;
@@ -157,6 +197,7 @@ public final class MacroRun {
                 return true; // one command per tick
             } else if (step instanceof Macro.Wait w) {
                 host.show(Level.INFO, "waiting " + w.shown());
+                startStep(frame, step, "wait", "wait " + w.shown());
                 waitUntil = now + w.ticks();
             } else if (step instanceof Macro.WaitFor w) {
                 waitingFor = w;
@@ -164,16 +205,26 @@ public final class MacroRun {
                 waitWho = Args.substitute(w.who(), frame.vars());
                 waitText = Args.substitute(w.text(), frame.vars());
                 waitDeadline = now + w.ticks();
+                startStep(frame, step, w.expect() ? "expect" : "waitfor", (w.expect() ? "expect " : "waitfor ")
+                        + waitWho + (w.negate() ? " not" : "") + " told \"" + waitText + "\"");
                 if (!w.expect()) {
                     host.show(Level.INFO, "waiting for " + waitWho + " to be told \"" + waitText + "\"");
                 }
             } else if (step instanceof Macro.Run r) {
+                startStep(frame, step, "run", "run " + Args.substitute((r.macro() + " " + r.args()).strip(), frame.vars()));
                 startNested(frame, r);
+                if (!finished) {
+                    endStep("ok", null, null);
+                }
             } else if (step instanceof Macro.Say s) {
-                host.show(Level.INFO, Args.substitute(s.text(), frame.vars()));
+                String text = Args.substitute(s.text(), frame.vars());
+                host.show(Level.INFO, text);
+                startStep(frame, step, "say", "say " + text);
+                endStep("ok", null, null);
             } else if (step instanceof Macro.Pause p) {
                 String text = Args.substitute(p.text(), frame.vars());
                 host.show(Level.PAUSE, text.isBlank() ? "paused" : text);
+                startStep(frame, step, "pause", "pause " + text);
                 paused = true;
             }
         }
@@ -195,11 +246,14 @@ public final class MacroRun {
             hit = captured == null ? null : captured.toString();
         }
         String quoted = "\"" + waitText + "\"";
+        String hint;
         if (w.negate()) {
             if (hit != null) {
                 fail(waitWho + " was told " + quoted + ": " + hit);
+                hint = "fail";
             } else if (now >= waitDeadline) {
                 pass(waitWho + " wasn't told " + quoted);
+                hint = "pass";
             } else {
                 return false;
             }
@@ -207,14 +261,17 @@ public final class MacroRun {
             if (w.expect()) {
                 pass(waitWho + " was told " + quoted);
             }
+            hint = "pass";
         } else if (now >= waitDeadline) {
             List<String> recent = told.since(waitWho, mark, 3);
             String seen = recent.isEmpty() ? " (told nothing since the last command)"
                     : " (last told: " + String.join(" | ", recent) + ")";
             if (w.expect()) {
                 fail(waitWho + " wasn't told " + quoted + " within " + Args.describeTicks(w.ticks()) + seen);
+                hint = "fail";
             } else {
                 waitingFor = null;
+                endStep("failed", "timed out", check(w, "timeout", "fail"));
                 finish(Level.STOPPED, "stopped " + title + ": " + waitWho + " wasn't told " + quoted + " within "
                         + Args.describeTicks(w.ticks()) + seen);
                 return false;
@@ -223,18 +280,45 @@ public final class MacroRun {
             return false;
         }
         waitingFor = null;
+        endStep("observed", null, check(w, hit != null ? "match" : "timeout", hint));
         return true;
     }
 
+    /** The evidence window of the wait that just closed: everything its player was told after the mark. */
+    private Check check(Macro.WaitFor w, String closedBy, String hint) {
+        if (observer == null) {
+            return null;
+        }
+        return new Check(waitWho, waitText, w.negate(), w.ticks(), closedBy, hint, told.entriesAfter(waitWho, mark));
+    }
+
+    private void startStep(Frame frame, Macro.Step step, String kind, String text) {
+        if (observer == null) {
+            return;
+        }
+        openStep = ++stepSeq;
+        observer.stepStarted(openStep, frames.size() - 1, kind, text, frame.macro().file() + ":" + step.line());
+    }
+
+    private void endStep(String status, String detail, Check check) {
+        if (observer == null || openStep < 0) {
+            return;
+        }
+        int seq = openStep;
+        openStep = -1;
+        observer.stepEnded(seq, status, detail, check);
+    }
 
     private void startNested(Frame frame, Macro.Run r) {
         String name = Args.substitute(r.macro(), frame.vars());
         Macro macro = library.get(name);
         if (macro == null) {
+            endStep("failed", "could not start it", null);
             finish(Level.STOPPED, "stopped " + title + ": no macro named " + name + where(frame, r));
             return;
         }
         if (frames.size() >= MAX_DEPTH) {
+            endStep("failed", "could not start it", null);
             finish(Level.STOPPED, "stopped " + title + ": macros nested more than " + MAX_DEPTH + " deep at "
                     + name + where(frame, r));
             return;
@@ -243,6 +327,7 @@ public final class MacroRun {
         try {
             vars = Args.bind(macro, Args.tokenize(Args.substitute(r.args(), frame.vars())), builtIns);
         } catch (Args.BindException e) {
+            endStep("failed", "could not start it", null);
             finish(Level.STOPPED, "stopped " + title + ": run " + name + ": " + e.getMessage() + where(frame, r));
             return;
         }
@@ -264,7 +349,11 @@ public final class MacroRun {
         finished = true;
         waitingFor = null;
         frames.clear();
+        endStep("stopped", text, null); // a step still open when the run ends was cut short (/macro stop, a bad run)
         host.show(level, text);
+        if (observer != null) {
+            observer.ended(level == Level.DONE ? "done" : "stopped", text);
+        }
     }
 
     private static String where(Frame frame, Macro.Step step) {

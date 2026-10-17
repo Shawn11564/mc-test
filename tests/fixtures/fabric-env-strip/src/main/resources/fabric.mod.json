@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "mctest_fixture_envstrip",
+  "version": "0.1.0",
+  "name": "mc-test env-strip fixture",
+  "description": "Code-coverage spike fixture: a common class with a client-only method that Fabric strips on a dedicated server.",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "io.mctest.fixture.envstrip.EnvStripMod"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "fabric-api": "*"
+  }
+}

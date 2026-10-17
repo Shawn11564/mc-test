@@ -1080,6 +1080,20 @@ Result:
 > `query`, gated by the same `pluginState` capability. Result shape is unchanged
 > (`{ ok, query, value, matched, valueJson }`, here `value` a boolean).
 
+#### `bench.runMacro`  *(cap `benchMacros` — PROVISIONAL, spike 2026-10-16, server-neoforge + server-fabric)*
+> **Not canonical yet.** A spike for runner-judged macros (CC spec/40, the feature-map plan). It is not in the
+> canonical capability set (§6.1), has no TS/JSON-Schema pair under `packages/protocol/schema/methods/`, and may
+> change. Both agents send the same shapes from the core `bench.MacroEvents`. Proof:
+> `node tests/e2e/run-macro-mctp.mjs [neoforge|fabric]`.
+
+Starts a saved macro (docs/MACROS.md) as the console, or as the agent-owned actor named by `as`, and answers at once; the run then reports itself as events. `args` is the text a person would type after `/m <name>`.
+```json
+{ "method": "bench.runMacro", "params": { "sessionId": "s_7f3c1a", "name": "member.leader-only", "args": "Bob", "as": "Alice" } }
+```
+Result `{ "ok": true, "runId": "mr_1a2b3c4d" }`. An unknown macro, arguments that don't fit, a run already going for the same invoker, or an `as` the agent doesn't own → `-32602 invalidParams`.
+
+Every step then arrives twice as **`event.macroStep`**: `{ runId, seq, phase: "start", depth, kind, text, where }` and `{ runId, seq, phase: "end", status, detail?, check? }`. `kind` ∈ `command|wait|waitfor|expect|run|say|pause`; `depth` is the `run` nesting (0 = the macro started); `where` is `file:line`; `status` ∈ `ok|carriedOn|failed|observed|stopped`. A `waitfor`/`expect` ends with its **evidence window**: `check: { who, text, negate, windowMs, closedBy: "match"|"timeout", hint: "pass"|"fail", told: [{ seq, text }] }`: every message `who` was told after the step's command mark. **The runner judges `check` from `told` alone** (selector text normalization, `{=name}` captures one word; a negated check passes only on `closedBy:"timeout"` with no match). `hint` is the agent's own reading and is never a verdict. The run ends with **`event.macroEnd`** `{ runId, status: "done"|"stopped", text }`.
+
 ---
 
 ### 7.6 Events / streams group

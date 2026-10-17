@@ -219,4 +219,92 @@ class MacroRunTest {
         assertEquals(List.of(), host.ran);
         assertEquals("STOPPED stopped m", host.last());
     }
+
+    /** Writes every observer call as one line, so a test reads the whole stream at once. */
+    private static final class Recorder implements MacroRun.Observer {
+        final List<String> events = new ArrayList<>();
+
+        @Override
+        public void stepStarted(int seq, int depth, String kind, String text, String where) {
+            events.add("start " + seq + " d" + depth + " " + kind + " " + text + " @" + where);
+        }
+
+        @Override
+        public void stepEnded(int seq, String status, String detail, MacroRun.Check check) {
+            String c = check == null ? "" : " [" + check.who() + (check.negate() ? " not" : "") + " \"" + check.text()
+                    + "\" " + check.closedBy() + " hint=" + check.hint() + " told="
+                    + check.told().stream().map(ToldLog.Entry::text).toList() + "]";
+            events.add("end " + seq + " " + status + (detail == null ? "" : " (" + detail + ")") + c);
+        }
+
+        @Override
+        public void ended(String status, String text) {
+            events.add("ended " + status);
+        }
+    }
+
+    @Test
+    void anObserverSeesEveryStepOnceInOrderWithTheEvidenceOfEachCheck() throws Exception {
+        host.outcome = c -> c.contains("bad") ? "the command failed" : null;
+        Recorder rec = new Recorder();
+        MacroRun run = start("""
+                macro m who
+                /give {who} x
+                -/bad
+                expect {who} told "hello"
+                expect {who} not told "nope" within 1s
+                run inner
+                end
+                macro inner
+                say hi
+                end""", "m", "Bob").observe(rec);
+        run.tick(0);
+        run.tick(1);
+        told.record("Bob", "Hello there");
+        told.record("Carol", "hello to someone else"); // another player's message is not Bob's evidence
+        run.tick(2);
+        run.tick(10); // the negated check is still watching
+        run.tick(22);
+        assertTrue(run.finished());
+        assertEquals(List.of(
+                "start 1 d0 command /give Bob x @t.macro:2",
+                "end 1 ok",
+                "start 2 d0 command -/bad @t.macro:3",
+                "end 2 carriedOn (the command failed)",
+                "start 3 d0 expect expect Bob told \"hello\" @t.macro:4",
+                "end 3 observed [Bob \"hello\" match hint=pass told=[Hello there]]",
+                "start 4 d0 expect expect Bob not told \"nope\" @t.macro:5",
+                "end 4 observed [Bob not \"nope\" timeout hint=pass told=[Hello there]]",
+                "start 5 d0 run run inner @t.macro:6",
+                "end 5 ok",
+                "start 6 d1 say say hi @t.macro:9",
+                "end 6 ok",
+                "ended done"), rec.events);
+    }
+
+    @Test
+    void aStoppingFailureEndsItsStepAsFailedThenTheRunAsStopped() throws Exception {
+        host.outcome = c -> c.contains("bad") ? "the command failed" : null;
+        Recorder rec = new Recorder();
+        MacroRun run = start("macro m\n/bad\n/never\nend", "m", "").observe(rec);
+        run.tick(0);
+        assertEquals(List.of(
+                "start 1 d0 command /bad @t.macro:2",
+                "end 1 failed (the command failed)",
+                "ended stopped"), rec.events);
+    }
+
+    @Test
+    void aWaitforThatTimesOutFailsWithItsWindowAndStopping() throws Exception {
+        Recorder rec = new Recorder();
+        MacroRun run = start("macro m\nwaitfor Bob told \"ready\" timeout 1s\n/never\nend", "m", "").observe(rec);
+        run.tick(0);
+        told.record("Bob", "not yet");
+        run.tick(20);
+        assertEquals(List.of(
+                "start 1 d0 waitfor waitfor Bob told \"ready\" @t.macro:2",
+                "end 1 failed (timed out) [Bob \"ready\" timeout hint=fail told=[not yet]]",
+                "ended stopped"), rec.events);
+        assertEquals(List.of(), host.ran);
+    }
 }
