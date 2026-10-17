@@ -3,6 +3,7 @@ package io.mctest.agent.serverfabric.mappings;
 import io.mctest.agent.core.McTestException;
 import io.mctest.agent.core.MenuView;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,9 +13,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.WeakHashMap;
+import java.util.function.BiConsumer;
 import com.mojang.authlib.GameProfile;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.loader.api.FabricLoader;
@@ -30,6 +34,12 @@ import net.minecraft.network.PacketCallbacks;
 import net.minecraft.network.message.MessageType;
 import net.minecraft.network.message.SignedMessage;
 import net.minecraft.network.packet.Packet;
+import net.minecraft.network.packet.s2c.play.BundleS2CPacket;
+import net.minecraft.network.packet.s2c.play.GameMessageS2CPacket;
+import net.minecraft.network.packet.s2c.play.OverlayMessageS2CPacket;
+import net.minecraft.network.packet.s2c.play.SubtitleS2CPacket;
+import net.minecraft.network.packet.s2c.play.TitleS2CPacket;
+import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.network.packet.c2s.common.SyncedClientOptions;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKey;
@@ -88,6 +98,12 @@ import net.minecraft.entity.EntityType;
 public final class Names {
 
     private volatile MinecraftServer server;
+    private volatile ActorCommandObserver actorCommandObserver;
+    private volatile BiConsumer<String, String> toldListener;
+    private volatile Swaps swaps;
+    /** The network handlers behind this agent's discard connections (by identity; a respawn keeps its handler). */
+    private final java.util.Set<ServerPlayNetworkHandler> fakeHandlers =
+            Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
 
     public Names() {
     }
@@ -110,6 +126,9 @@ public final class Names {
                 onStarted.run();
             }
         });
+        // A player behind a discard connection that isn't a FakeAvatar (an actor respawned after dying while
+        // someone controlled it) still needs the network-side half of its tick.
+        ServerTickEvents.END_SERVER_TICK.register(this::pumpPlainActors);
         ServerLifecycleEvents.SERVER_STOPPING.register(s -> {
             if (onStopping != null) {
                 onStopping.run();
@@ -516,8 +535,8 @@ public final class Names {
             }
         }
         GameProfile profile = new GameProfile(id, name);
-        FakeAvatar player = new FakeAvatar(s, s.getOverworld(), profile);
-        DiscardingConnection connection = new DiscardingConnection();
+        FakeAvatar player = new FakeAvatar(this, s, s.getOverworld(), profile);
+        DiscardingConnection connection = new DiscardingConnection(this, name);
         // Activating an EmbeddedChannel with the connection as its handler runs channelActive, which
         // adopts the channel — the supported way to make an unregistered connection look connected.
         new EmbeddedChannel(connection);
@@ -528,6 +547,7 @@ public final class Names {
             throw McTestException.internal("Native fake-player join failed for '" + name + "': "
                     + describe(e));
         }
+        fakeHandlers.add(player.networkHandler);
         if (x != null && y != null && z != null) {
             player.teleport(s.getOverworld(), x, y, z, player.getYaw(), player.getPitch());
         }
@@ -544,8 +564,8 @@ public final class Names {
      */
     public boolean despawnFakePlayer(String name) {
         ServerPlayerEntity player = onlinePlayer(name);
-        if (player == null) {
-            return false;
+        if (player == null || !isActorPlayer(player)) {
+            return false; // never disconnect a real player (or someone playing as this actor)
         }
         if (!player.isDisconnected()) {
             player.networkHandler.onDisconnected(new DisconnectionInfo(Text.literal("mc-test despawn")));
@@ -564,7 +584,95 @@ public final class Names {
     /** Runs a command as the fake player (its own permission level, not console). */
     public void actCommand(String name, String command) throws McTestException {
         ServerPlayerEntity player = requireOnline(name);
-        requireServer().getCommandManager().executeWithPrefix(player.getCommandSource(), command);
+        ServerCommandSource source = player.getCommandSource();
+        ActorCommandObserver observer = actorCommandObserver;
+        if (observer != null) {
+            source = observer.started(name, command).watch(source, player, null);
+        }
+        requireServer().getCommandManager().executeWithPrefix(source, command);
+    }
+
+    /** Told about each command an actor is made to run, so a macro can tell whether it worked. */
+    public interface ActorCommandObserver {
+        CommandOutcome started(String actor, String command);
+    }
+
+    /** Set while a macro step runs ({@link MacroCommands}); null otherwise. */
+    public void setActorCommandObserver(ActorCommandObserver observer) {
+        this.actorCommandObserver = observer;
+    }
+
+    /** Hears every message an actor is told (actor name, plain text): chat, action bar, titles; for macro waits. */
+    public void setToldListener(BiConsumer<String, String> listener) {
+        this.toldListener = listener;
+    }
+
+    /**
+     * What {@link ActorControl} tells the facade about the players it has swapped: while someone controls an
+     * actor, their own body sits behind the actor's discard connection and the actor behind theirs.
+     */
+    public interface Swaps {
+        /** A real player's body, parked behind an actor's connection while they control the actor. */
+        boolean isParked(ServerPlayerEntity player);
+
+        /** Who is controlling the actor {@code name}, or null. */
+        String controllerOf(String name);
+    }
+
+    public void setSwaps(Swaps swaps) {
+        this.swaps = swaps;
+    }
+
+    /** Whether {@code player} is behind one of this agent's discard connections (an actor, or a parked body). */
+    boolean isDiscarding(ServerPlayerEntity player) {
+        return fakeHandlers.contains(player.networkHandler);
+    }
+
+    /** One of this agent's actors: behind a discard connection, and not someone's parked body. */
+    private boolean isActorPlayer(ServerPlayerEntity player) {
+        Swaps s = swaps;
+        return isDiscarding(player) && (s == null || !s.isParked(player));
+    }
+
+    /** Messages a discard connection carries, for {@link #setToldListener}. */
+    void told(String who, Packet<?> packet) {
+        BiConsumer<String, String> listener = toldListener;
+        if (listener == null) {
+            return;
+        }
+        if (packet instanceof BundleS2CPacket bundle) {
+            for (Packet<?> part : bundle.getPackets()) {
+                told(who, part);
+            }
+            return;
+        }
+        Text text;
+        if (packet instanceof GameMessageS2CPacket chat) {
+            text = chat.content();
+        } else if (packet instanceof OverlayMessageS2CPacket bar) {
+            text = bar.text();
+        } else if (packet instanceof TitleS2CPacket title) {
+            text = title.text();
+        } else if (packet instanceof SubtitleS2CPacket subtitle) {
+            text = subtitle.text();
+        } else {
+            return;
+        }
+        listener.accept(who, text.getString());
+    }
+
+    /** The network-side tick for actors that aren't FakeAvatars (see installServerLifecycle). */
+    private void pumpPlainActors(MinecraftServer s) {
+        for (ServerPlayerEntity player : new ArrayList<>(s.getPlayerManager().getPlayerList())) {
+            if (player instanceof FakeAvatar || !isActorPlayer(player)) {
+                continue;
+            }
+            if (s.getTicks() % 10 == 0) {
+                player.networkHandler.syncWithPlayerPosition();
+                player.getServerWorld().getChunkManager().updatePosition(player);
+            }
+            player.playerTick();
+        }
     }
 
     /** Teleports the fake player within/into the named world (default: current rules per resolveWorld). */
@@ -813,6 +921,16 @@ public final class Names {
         if (player == null) {
             throw McTestException.invalidParams("Fake player not online: " + name);
         }
+        Swaps s = swaps;
+        String controller = s == null ? null : s.controllerOf(name);
+        if (controller != null) {
+            throw McTestException.invalidParams(name + " is being controlled by " + controller
+                    + " (/actor back hands it back)");
+        }
+        if (!isActorPlayer(player)) {
+            // The roster goes by name: a real player who took a departed actor's name is never driven.
+            throw McTestException.invalidParams(name + " is a real player now, not an actor");
+        }
         return player;
     }
 
@@ -858,40 +976,68 @@ public final class Names {
      * connection listener never saw it), so the entity tick drives it — the Carpet fake-player pattern.
      */
     private static final class FakeAvatar extends ServerPlayerEntity {
-        FakeAvatar(MinecraftServer server, ServerWorld world, GameProfile profile) {
+        private final Names names;
+
+        FakeAvatar(Names names, MinecraftServer server, ServerWorld world, GameProfile profile) {
             super(server, world, profile, SyncedClientOptions.createDefault());
+            this.names = names;
         }
 
         @Override
         public void tick() {
-            if (this.getServer() != null && this.getServer().getTicks() % 10 == 0) {
+            // Only behind its own discard connection: while someone controls it, their real connection ticks it.
+            boolean discarding = names.isDiscarding(this);
+            if (discarding && this.getServer() != null && this.getServer().getTicks() % 10 == 0) {
                 this.networkHandler.syncWithPlayerPosition();
                 this.getServerWorld().getChunkManager().updatePosition(this);
             }
             super.tick();
-            this.playerTick();
+            if (discarding) {
+                this.playerTick();
+            }
         }
     }
 
     /**
      * A serverbound {@link ClientConnection} that swallows every outbound packet without erroring —
-     * mods send packets at join and each one must vanish silently.
+     * mods send packets at join and each one must vanish silently — after handing any message in it to the
+     * told listener. A send completes as a real channel's would, so its callback runs: that's what lets
+     * {@code /kick} and server shutdown disconnect an actor.
      */
     private static final class DiscardingConnection extends ClientConnection {
-        DiscardingConnection() {
+        private final Names names;
+        private final String actor;
+
+        DiscardingConnection(Names names, String actor) {
             super(NetworkSide.SERVERBOUND);
+            this.names = names;
+            this.actor = actor;
         }
 
         @Override
         public void send(Packet<?> packet) {
+            send(packet, null, true);
         }
 
         @Override
         public void send(Packet<?> packet, PacketCallbacks callbacks) {
+            send(packet, callbacks, true);
         }
 
         @Override
         public void send(Packet<?> packet, PacketCallbacks callbacks, boolean flush) {
+            names.told(holder(), packet);
+            if (callbacks != null) {
+                callbacks.onSuccess();
+            }
+        }
+
+        /** Whoever is behind this connection now: the actor, or the parked body of someone controlling it. */
+        private String holder() {
+            if (getPacketListener() instanceof ServerPlayNetworkHandler game && game.player != null) {
+                return game.player.getGameProfile().getName();
+            }
+            return actor;
         }
     }
 

@@ -108,7 +108,11 @@ public final class McTestServerMod implements DedicatedServerModInitializer {
                 .register("player.menu", "fakePlayers", fakePlayers::menu);
 
         // The in-game /actor front door (spec/42 §4): same primitives, op-gated, dev sidecar only.
-        io.mctest.agent.serverfabric.mappings.ActorCommands.install(fakePlayers);
+        // /actor <name> view|control and /actor back: see as, or play as, an actor, then return.
+        io.mctest.agent.serverfabric.mappings.ActorCommands.install(fakePlayers,
+                io.mctest.agent.serverfabric.mappings.ActorControl.install(fakePlayers));
+        // Saved command groups for the same bench (docs/MACROS.md): /macro and /m, read from MCTEST_MACROS.
+        io.mctest.agent.serverfabric.mappings.MacroCommands.install(fakePlayers);
 
         // Defer MctpServer start until the dedicated server is up (so the server-thread bounce has a
         // thread to submit to), and stop it at shutdown. Names owns the mapped ServerLifecycleEvents and

@@ -102,7 +102,26 @@ during shutdown so socket-close cleanups still run). A main-thread overrun maps 
   `slot`, `give <item [count]>`, `hold [item]`, `sneak|sprint on|off`, `gamemode <mode>`. Handlers
   run on the server thread and are guarded by the agent-owned roster. Tab completes actor names,
   online players for `attack`/`use`, and the command after `cmd` as the actor sees it (its own
-  permission level). The agent reads
+  permission level). `/actor <name> view` (spectate it), `/actor <name> control` (play as it) and
+  `/actor back` (`mappings/ActorControl`) let a human see as an actor or take it over and then return to
+  their own player as they left it; the mechanism, the guarantees and what happens on a disconnect are
+  described in [server-neoforge's README](../server-neoforge/README.md) (same design; here
+  `Entity.unsetRemoved` is opened by `mc-test-server-fabric.accesswidener`). A FakeAvatar runs its own
+  network-side tick only while it is behind its discard connection, and an actor that respawned while
+  controlled (a plain `ServerPlayerEntity`) is ticked by a server-tick pump. Checked live by
+  `tests/e2e/run-bench-control.mjs`.
+- **`/macro`** and **`/m`** (`mappings/MacroCommands`, op level 2) — saved command groups from the
+  project's `.macro` files ([docs/MACROS.md](../../docs/MACROS.md)). What an actor is told (chat,
+  action bar, titles) reaches the macro engine through the discard connection; recording hears typed
+  commands through `mappings/mixin/CommandManagerMixin` (Fabric API has no command-executed event).
+  Checked live by `tests/e2e/run-bench-macros.mjs`. `/macro` on its own opens the **macro menu**
+  (`mappings/MacroMenus`, the Yarn twin of NeoForge's: a chest menu drawing `core/bench/MacroMenu`'s
+  screens, plus the book a macro is edited in). Checked live by `tests/e2e/run-bench-macro-menu.mjs`.
+- **Sends complete.** The discard connection runs each send's callbacks as a real channel would, so
+  `/kick` and server shutdown disconnect an actor through the real leave path (a disconnect closes the
+  channel from the disconnect packet's callback, which the connection used to drop). Despawn refuses a
+  player who isn't behind a discard connection.
+- The agent reads
   `MCTEST_AGENT_TOKEN` (spec/42 handshake token, PROTOCOL.md §4.2); when set, `session.create`
   requires `auth.token`.
 

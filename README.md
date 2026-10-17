@@ -95,6 +95,7 @@ artifacts bundle) land under `./mc-test-report/`. JVM/IntelliJ users can instead
 - [`SETUP_AND_USAGE.md`](./docs/SETUP_AND_USAGE.md) — one-page setup + CLI/Gradle usage + authoring reference.
 - [`AUTHORING.md`](./docs/AUTHORING.md) — step verbs, selectors, capabilities, fluent ↔ YAML, plus
   `matrix:`/`expect:` (one invariant judging every generated case) and the `validate` lab controls.
+- [`MACROS.md`](./docs/MACROS.md) — `/macro`: saved command groups for manual play testing, and how to write a test guide that uses them.
 - [`EVENTS.md`](./docs/EVENTS.md) — the `--events` NDJSON run stream a live consumer animates.
 
 **Design docs** in [`/docs`](./docs):

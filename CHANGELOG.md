@@ -10,6 +10,78 @@ All notable changes to this project are recorded here. The format is based on
 
 ## [Unreleased]
 
+### 2026-10-16 — the macro menu, and `/macro edit`
+- **`/macro` (or `/m` alone) opens a macro menu** on server-neoforge and server-fabric (docs/MACROS.md §8). It's a
+  chest menu, so a vanilla client needs nothing. Every macro is a shulker box (one colour per file) whose tooltip
+  shows its parameters, description and steps. Click to pick one up and put it down elsewhere (drop it on another to
+  swap, carry it onto ▶ for the next page), right-click to open it, shift-click to run it. The arrangement is kept
+  in `macros.layout` in the first macro folder. An open macro shows every step as an icon for its kind. Drag them to
+  reorder, right-click to edit, shift-click to insert before, Q to delete. Undo, run, run with values, add a step,
+  rename or re-parameter, describe, copy and delete (with a confirm screen) are buttons. Text goes through chat as a
+  filled-in, clickable command, and the menu opens again when it works. **Edit in a book** puts the whole macro in
+  a book and quill; Done saves it.
+- **`/macro new|copy|delete|undo` and `/macro edit <name> add|step|insert|remove|move|header|describe|book`**: the
+  commands behind the menu, usable on their own. Edits change only that macro's lines (other macros, comments,
+  indentation and line endings stay). An edit that would add a parse error is refused, and undo refuses if the file
+  changed since. `/macro show` now prints the steps. `/macro help` lists the commands.
+- **Game-free core:** `bench/MacroMenu` (screens), `MacroSource` (text edits), `MacroEditor` (files, checks, undo),
+  `MacroLayout` (arrangement). The shims are `mappings/MacroMenus` per agent. `MacroLibrary` now rescans its folders
+  at most every 500 ms instead of on every lookup (the menu looks up a lot per redraw), and knows each macro's file.
+- **Proof:** `agents/core` unit tests (`MacroSourceTest`, `MacroMenuTest`), and **`tests/e2e/run-bench-macro-menu.mjs`**,
+  42 checks per loader on a real server with a real client (Mineflayer) sending the clicks a vanilla client sends.
+  Both loaders pass. Negative control: on Fabric, with shift-click mapped to nothing, exactly the three run checks
+  fail.
+- **Fixed a race in `run-bench-control.mjs`** ("kicking the parked player disconnects the client" failed once on
+  each loader when run after the other checks). The server sends the reason and closes. A client still sending
+  movement can get the close as a TCP reset, and on Windows the reset can drop the unread reason (seen in a run:
+  the client got `end socketClosed` while the server logged the reason). The check now takes the reason from the
+  server's `lost connection` line and only needs the client to be gone. It also checks that control works again
+  after logging back in, and prints triage on failure.
+
+### 2026-10-16 — `/actor <name> view|control` + `/actor back`; `/macro` on Fabric
+- **See as an actor, or play as one, then go back** (server-neoforge and server-fabric, `mappings/ActorControl`):
+  `/actor <name> view` makes you a spectator with your camera on the actor. `/actor <name> control` hands your
+  connection to the actor's player the way vanilla's respawn hands one to a new player, so your keys, mouse,
+  inventory, menus, chat and commands are the actor's, with its permissions. Your own player is parked out of the
+  world, still online. `/actor back` (or the clickable **[back]**, which keeps working as a non-op actor) returns you
+  where and as you were: position, world, inventory, game mode. Nobody logs in or out. A disconnect mid-control saves
+  both players where they were and brings the actor back a tick later. A kick of your parked player disconnects your
+  client. A server stop hands everyone back first. While controlled, the actor refuses `/actor` verbs and `player.act`
+  ("being controlled by …").
+- **`/macro` and `/m` on server-fabric**, the same engine and commands as NeoForge. Fabric gains the hooks they need:
+  the actor-command observer, a told-listener on the discard connection (chat, action bar, titles), and a
+  `CommandManager.execute` mixin for recording (Fabric API has no command event). Fabric's agent now has an access
+  widener and a mixin config.
+- **Fabric fixes found on the way:** the discard connection now runs send callbacks, which a disconnect needs to close
+  the channel, so `/kick` and shutdown take an actor through the real leave path. Despawn and `player.act` refuse a
+  player who isn't behind a discard connection, as NeoForge already did.
+- **Proof, real servers + a real client (Mineflayer), both loaders:** `tests/e2e/run-bench-control.mjs` (34 checks per
+  loader: hand-over to the actor's position/inventory/game mode, walking moves the actor, chat and commands are the
+  actor's, back as a non-op, view, the real-player guard, disconnect and kick mid-control) and
+  `tests/e2e/run-bench-macros.mjs` (19 checks per loader). Negative controls: dropping the actor-command observer
+  turns "a refused actor command stops the macro" red; skipping the game-mode relabel turns the own-tab-entry check
+  red. `run-bench-actors.mjs` still passes on both. Not checked: a rendered vanilla client (Docker wasn't running).
+
+### 2026-10-16 — `/macro`: saved command groups for manual play testing (docs/MACROS.md)
+- **New in-game `/macro` and `/m`** on server-neoforge (op 2), next to `/actor`: run a project's named,
+  parameterized command groups from `.macro` files in the folders `MCTEST_MACROS` names (re-read when they change).
+  `/m expedition.take Carol n=2`, `/macro again Dave`, `list`, `show`, `stop`, `continue`, `reload`,
+  `record start|save|cancel`, `last <n> as <name>`. Steps: commands (`-/` carries on after a failure, `+/` shares the
+  previous command's tick), `wait`, `waitfor`/`expect <who> [not] told "<text>"` with `{=name}` captures, `run`,
+  `say`, `pause`. A command fails when it doesn't run, throws, or returns 0 after a red message, and an
+  `/actor X cmd` step fails when the actor's command does: a refused setup step stops the macro instead of testing
+  the wrong state. Recording turns actor names into parameters.
+- **Game-free engine in `agents/core`** (`io.mctest.agent.core.bench`: parser, arguments, runner, told-log,
+  recorder): 27 unit tests. **`GuideCheck`** checks a markdown test guide: every `/m` call resolves and fits, and no
+  step points back ("the same way", "as in 3.3", "(step 2)") instead of saying what to do.
+- **A bench convenience, not a test path:** no MCTP change; the runner doesn't use it. Fabric, Forge and Bukkit
+  shims are still to do.
+- **`/actor <name> cmd`** now reports to an observer whether the actor's command worked (`Names.setActorCommandObserver`),
+  and every message an actor is told reaches a listener (`setToldListener`); `player.act` is unchanged.
+- **Proof:** MapFactions' `checkPlaytest` runs its playtest macros through actors on a real NeoForge 1.21.1 server
+  with five integration mods: a menu path, the empty-hand guard stopping a run, a refused actor command stopping a
+  run, and a listing number captured from chat and used to buy a deed (`Playtest check PASSED`).
+
 ### 2026-10-15 — Tab completion for `/actor`
 - **`/actor` completes actor names** (after `/actor` and `/actor remove`; real players are never
   offered), online players for `attack`/`use`, and — the useful one — **the command after `cmd`**,

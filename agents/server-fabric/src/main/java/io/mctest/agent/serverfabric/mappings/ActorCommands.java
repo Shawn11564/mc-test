@@ -55,6 +55,9 @@ import net.minecraft.util.math.Vec3d;
  * /actor &lt;name&gt; click &lt;text…&gt;         — click the slot whose name/lore says that
  * /actor &lt;name&gt; rclick|shiftclick &lt;text…&gt;
  * /actor &lt;name&gt; sneak|sprint on|off   /actor &lt;name&gt; gamemode &lt;mode&gt;
+ * /actor &lt;name&gt; view                  — watch through the actor's eyes ({@link ActorControl})
+ * /actor &lt;name&gt; control               — play as the actor
+ * /actor back                         — back to your own player
  * </pre>
  *
  * <p>Tab completion: actor names after {@code /actor} and {@code /actor remove}, online players for
@@ -71,10 +74,13 @@ public final class ActorCommands {
     }
 
     /** Registers the {@code /actor} tree; call once at mod init (before the server starts). */
-    public static void install(FakePlayerManager fpm) {
+    public static void install(FakePlayerManager fpm, ActorControl control) {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            // Someone playing as an actor keeps /actor (to go back) even when the actor isn't an operator.
             LiteralArgumentBuilder<ServerCommandSource> root = CommandManager.literal("actor")
-                    .requires(src -> src.hasPermissionLevel(2));
+                    .requires(src -> src.hasPermissionLevel(2) || control.isControlling(src));
+
+            root.then(CommandManager.literal("back").executes(ctx -> away(ctx, () -> control.back(ctx.getSource()))));
 
             root.then(CommandManager.literal("spawn")
                     .then(CommandManager.argument("name", StringArgumentType.word())
@@ -93,6 +99,11 @@ public final class ActorCommands {
                             .suggests((ctx, builder) -> suggestActors(fpm, builder))
                             .executes(ctx -> {
                                 String name = StringArgumentType.getString(ctx, "name");
+                                String controller = control.controllerOf(name);
+                                if (controller != null) {
+                                    return error(ctx, name + " is being controlled by " + controller
+                                            + " — they go /actor back first");
+                                }
                                 if (!fpm.commandRemove(name)) {
                                     return notAnActor(ctx, name);
                                 }
@@ -109,6 +120,9 @@ public final class ActorCommands {
                 for (FakePlayerManager.ActorRecord r : records) {
                     feedback(ctx, r.name + (r.persist ? "" : " [session]") + " · via " + r.spawnedBy);
                 }
+                for (String away : control.describe()) {
+                    feedback(ctx, away);
+                }
                 return records.size();
             }));
 
@@ -116,6 +130,11 @@ public final class ActorCommands {
             RequiredArgumentBuilder<ServerCommandSource, String> actor =
                     CommandManager.argument("name", StringArgumentType.word())
                             .suggests((ctx, builder) -> suggestActors(fpm, builder));
+
+            actor.then(CommandManager.literal("view").executes(ctx ->
+                    away(ctx, () -> control.view(ctx.getSource(), StringArgumentType.getString(ctx, "name")))));
+            actor.then(CommandManager.literal("control").executes(ctx ->
+                    away(ctx, () -> control.control(ctx.getSource(), StringArgumentType.getString(ctx, "name")))));
 
             actor.then(CommandManager.literal("here").executes(ctx -> verb(ctx, fpm, (names, name) -> {
                 Vec3d pos = ctx.getSource().getPosition();
@@ -249,6 +268,24 @@ public final class ActorCommands {
             root.then(actor);
             dispatcher.register(root);
         });
+        // The verb guard below refuses an actor someone is playing as.
+        controlled = control::controllerOf;
+    }
+
+    private static java.util.function.Function<String, String> controlled = name -> null;
+
+    private interface AwayStep {
+        void run() throws McTestException;
+    }
+
+    /** view / control / back: they message the player themselves (the command's source may be swapped). */
+    private static int away(CommandContext<ServerCommandSource> ctx, AwayStep step) {
+        try {
+            step.run();
+            return 1;
+        } catch (McTestException e) {
+            return error(ctx, e.getMessage());
+        }
     }
 
     // --- handler plumbing ---
@@ -356,6 +393,10 @@ public final class ActorCommands {
         String name = StringArgumentType.getString(ctx, "name");
         if (!fpm.isActor(name)) {
             return notAnActor(ctx, name);
+        }
+        String controller = controlled.apply(name);
+        if (controller != null) {
+            return error(ctx, name + " is being controlled by " + controller + " right now");
         }
         try {
             String detail = body.run(names(fpm), name);

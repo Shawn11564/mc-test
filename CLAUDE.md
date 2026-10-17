@@ -79,6 +79,7 @@ mc-test.yml                   the environment matrix (per-target loader/mc/drive
 | `docs/ENVIRONMENTS.md` | editing `mc-test.yml`; provisioning | `mc-test.yml` schema, source resolvers (Paper/Mojang/Maven/…), worlds, matrix, provisioning policy, forced server.properties. |
 | `docs/AUTHORING.md` | writing a `.mctest.yml`; parameterizing it | Step verbs, selectors, capabilities, and the §4–§5 authoring surface: `matrix:`/`bind:`/`coverage:`/`anchors:`, the `expect:`/`except:` invariant DSL, the vacuity + dead-dimension lints, and `mc-test validate`'s lab controls. |
 | `docs/EVENTS.md` | consuming a run live | The `--events` NDJSON stream: the seven event types, field spellings, and the contracts a consumer relies on (case ids match `results.json`, `run-start` carries the declared universe). |
+| `docs/MACROS.md` | changing `/macro` or its menu; writing a project's manual test guide | The bench macro command (`/m`), the `.macro` file format, what counts as a failed step, recording, the macro menu + `/macro edit`, and the test-guide rules + `GuideCheck`. A human convenience next to `/actor`, not a test path. |
 | `docs/CI.md` | wiring a consuming project's CI; hosting the report | `mc-test init-ci` scaffolder + the reusable workflow (`.github/workflows/mc-test-ci.yml`) and its inputs; report publishing (artifact + GitHub Pages). |
 | `docs/UPGRADING.md` | a consumer is moving between mc-test versions | Per-mode update procedure, the forward-compat promise, and per-release behavior changes (e.g. the file-cleanup workspace GC). |
 

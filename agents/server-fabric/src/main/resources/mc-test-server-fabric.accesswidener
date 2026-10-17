@@ -1,0 +1,4 @@
+accessWidener v2 named
+# ActorControl takes a player out of the world and puts it back (as ServerPlayerEntity.teleportTo does across
+# dimensions), which needs the removal flag cleared.
+accessible method net/minecraft/entity/Entity unsetRemoved ()V

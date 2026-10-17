@@ -22,8 +22,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import net.minecraft.ChatFormatting;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
@@ -158,6 +160,9 @@ public final class Names {
     /** The messages echoed this tick (by identity), so one broadcast to several actors is shown once. */
     private final Set<Component> echoedThisTick = Collections.newSetFromMap(new IdentityHashMap<>());
     private int echoTick = -1;
+    private volatile ActorCommandObserver actorCommandObserver;
+    private volatile BiConsumer<String, String> toldListener;
+    private volatile Swaps swaps;
 
     public Names() {
     }
@@ -644,7 +649,44 @@ public final class Names {
     /** Runs a command as the fake player (its own permission level, not console). */
     public void actCommand(String name, String command) throws McTestException {
         ServerPlayer player = requireOnline(name);
-        requireServer().getCommands().performPrefixedCommand(player.createCommandSourceStack(), command);
+        CommandSourceStack source = player.createCommandSourceStack();
+        ActorCommandObserver observer = actorCommandObserver;
+        if (observer != null) {
+            source = observer.started(name, command).watch(source, player, null);
+        }
+        requireServer().getCommands().performPrefixedCommand(source, command);
+    }
+
+    /** Told about each command an actor is made to run, so a macro can tell whether it worked. */
+    public interface ActorCommandObserver {
+        CommandOutcome started(String actor, String command);
+    }
+
+    /** Set while a macro step runs ({@link MacroCommands}); null otherwise. */
+    public void setActorCommandObserver(ActorCommandObserver observer) {
+        this.actorCommandObserver = observer;
+    }
+
+    /**
+     * What {@link ActorControl} tells the facade about the players it has swapped: while someone controls an
+     * actor, their own body sits behind the actor's discard connection and the actor behind theirs, so the
+     * connection alone no longer says who is an actor.
+     */
+    public interface Swaps {
+        /** A real player's body, parked behind an actor's connection while they control the actor. */
+        boolean isParked(ServerPlayer player);
+
+        /** Who is controlling the actor {@code name}, or null. */
+        String controllerOf(String name);
+    }
+
+    public void setSwaps(Swaps swaps) {
+        this.swaps = swaps;
+    }
+
+    /** Hears every message an actor is told (actor name, plain text), muted or not; for macro waits. */
+    public void setToldListener(BiConsumer<String, String> listener) {
+        this.toldListener = listener;
     }
 
     /** Teleports the fake player within/into the named world (default: its current world). */
@@ -986,6 +1028,10 @@ public final class Names {
         } else {
             return;
         }
+        BiConsumer<String, String> listener = toldListener;
+        if (listener != null) {
+            listener.accept(actor, text.getString());
+        }
         MinecraftServer s = this.server;
         if (s == null || muted.contains(actor)) {
             return;
@@ -1031,7 +1077,7 @@ public final class Names {
     public ActorState fakePlayerState(String name) {
         ServerPlayer player = onlinePlayer(name);
         ActorState state = new ActorState();
-        if (player == null || !isActor(player)) {
+        if (player == null || !(isActor(player) || controllerOf(name) != null)) {
             state.online = false;
             return state;
         }
@@ -1060,6 +1106,11 @@ public final class Names {
             throw McTestException.invalidParams("Fake player not online: " + name);
         }
         if (!isActor(player)) {
+            String controller = controllerOf(name);
+            if (controller != null) {
+                throw McTestException.invalidParams(name + " is being controlled by " + controller
+                        + " (/actor back hands it back)");
+            }
             // The roster goes by name: if the actor was disconnected (a duplicate login, /kick) and a real
             // player joined under that name, the name now belongs to someone who must never be driven.
             throw McTestException.invalidParams(name + " is a real player now, not an actor");
@@ -1067,9 +1118,24 @@ public final class Names {
         return player;
     }
 
-    /** Whether this online player is one of this agent's actors (joined behind a discard connection). */
-    private static boolean isActor(ServerPlayer player) {
+    /**
+     * Whether this online player is one of this agent's actors: joined behind a discard connection, and not a
+     * real player's body parked there while they control an actor ({@link ActorControl}).
+     */
+    private boolean isActor(ServerPlayer player) {
+        Swaps s = swaps;
+        return player.connection.getConnection() instanceof DiscardingConnection
+                && (s == null || !s.isParked(player));
+    }
+
+    /** Whether {@code player} is behind one of this agent's discard connections (an actor, or a parked body). */
+    static boolean isDiscarding(ServerPlayer player) {
         return player.connection.getConnection() instanceof DiscardingConnection;
+    }
+
+    private String controllerOf(String name) {
+        Swaps s = swaps;
+        return s == null ? null : s.controllerOf(name);
     }
 
     /**
@@ -1124,6 +1190,18 @@ public final class Names {
             this.actor = actor;
         }
 
+        /**
+         * Whoever is behind this connection now: the actor, or the body of someone controlling it
+         * ({@link ActorControl} swaps connections), so what that body is told is labelled with its own name.
+         */
+        private String holder() {
+            if (getPacketListener() instanceof net.minecraft.server.network.ServerGamePacketListenerImpl game
+                    && game.player != null) {
+                return game.player.getGameProfile().getName();
+            }
+            return actor;
+        }
+
         @Override
         public void send(Packet<?> packet) {
             send(packet, null, true);
@@ -1136,7 +1214,7 @@ public final class Names {
 
         @Override
         public void send(Packet<?> packet, PacketSendListener listener, boolean flush) {
-            names.echo(actor, packet);
+            names.echo(holder(), packet);
             if (listener != null) {
                 listener.onSuccess();
             }

@@ -8,6 +8,8 @@ import io.mctest.agent.core.LogSink;
 import io.mctest.agent.core.MctpServer;
 import io.mctest.agent.serverneoforge.fixtures.FixtureManager;
 import io.mctest.agent.serverneoforge.mappings.ActorCommands;
+import io.mctest.agent.serverneoforge.mappings.ActorControl;
+import io.mctest.agent.serverneoforge.mappings.MacroCommands;
 import io.mctest.agent.serverneoforge.mappings.Names;
 import io.mctest.agent.serverneoforge.players.FakePlayerManager;
 import io.mctest.agent.serverneoforge.truth.PluginStateProbe;
@@ -119,7 +121,10 @@ public final class McTestServerMod {
                 .register("player.menu", "fakePlayers", fakePlayers::menu);
 
         // The in-game /actor front door (spec/42 §4): same primitives, op-gated, dev sidecar only.
-        ActorCommands.install(fakePlayers);
+        // /actor <name> view|control and /actor back: see as, or play as, an actor, then return.
+        ActorCommands.install(fakePlayers, ActorControl.install(fakePlayers));
+        // Saved command groups for the same bench (docs/MACROS.md): /macro and /m, read from MCTEST_MACROS.
+        MacroCommands.install(fakePlayers, names);
 
         // Defer MctpServer start until the dedicated server is up (so the server-thread bounce has a
         // thread to submit to), and stop it at shutdown. Names owns the mapped server-lifecycle events and

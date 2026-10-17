@@ -121,6 +121,39 @@ UUID of its name, so an actor's playerdata, inventory and position persist acros
   leave and death messages (which everyone receives anyway) are skipped. `/actor <name> echo off`
   silences one actor.
 
+**Macros.** `/macro` and `/m` (`mappings/MacroCommands.java`) run saved command groups from the project's `.macro`
+files, mostly `/actor` lines with the names as parameters; see [docs/MACROS.md](../../docs/MACROS.md).
+`/macro` on its own opens the **macro menu** (`mappings/MacroMenus.java` draws the game-free
+`core/bench/MacroMenu` screens as a chest menu). You drag macros around, see every step, run one, and edit
+it: steps, header, description, or the whole macro in a book and quill. Checked live by
+`tests/e2e/run-bench-macro-menu.mjs`.
+
+**Seeing as an actor, and playing as one** (`mappings/ActorControl.java`):
+
+| Command | Does |
+|---|---|
+| `/actor <name> view` | Watch through the actor's eyes: you become a spectator with your camera on it. Sneak to look around freely, as in vanilla. |
+| `/actor <name> control` | Play as the actor: your keys, mouse, inventory, menus, chat and commands are its, with its permissions. |
+| `/actor back` (or the clickable **[back]**) | Back to your own player, where and as you left it: position, world, inventory, game mode. Works while you're a non-op actor. |
+
+Starting one while already viewing or controlling goes back first, so you can hop between actors.
+
+How control works: your connection is handed to the actor's `ServerPlayer` the way vanilla's respawn hands a
+connection to a new player. The actor takes your client's entity id, your client is sent a respawn into the actor's
+world and position, and from then on everything your client sends drives the actor. Nobody logs in or out, so mods
+see you and the actor online throughout. Your own player is taken out of the world (it stays in the player list)
+behind the actor's discard connection, frozen and untouchable, and goes back in on `/actor back`. Two things your
+client keeps from its login: its name and skin (you still look like yourself to *yourself*; to the server and to
+everyone else you are the actor), and its profile id. A client reads its own game mode from its own tab entry, so the
+agent re-labels that entry with the actor's game mode, and back again afterwards. While you control an actor, `/actor`
+verbs and `player.act` refuse it ("being controlled by …"), `/actor remove` waits for you to go back, and
+`/actor list` says who is where.
+
+Leaving mid-control is safe. Disconnect, and the actor leaves with your connection (saved where you left it) and is
+spawned again a tick later, while your own player leaves too, saved where you parked it. If your parked player is
+kicked, your client is disconnected with it. A server stop hands everyone back first. Riding isn't carried over:
+get off first. `tests/e2e/run-bench-control.mjs` checks all of this with a real client (Mineflayer) on a real server.
+
 `/actor` (op level 2) is the in-game front door: `spawn`, `remove`, `list`, and per actor `here`,
 `look [<x y z>]`, `chat`, `cmd`, `attack`, `use`, `useblock [<x y z>]` (the faced block, or that block's
 top face, as `interactBlock` does), `slot`, `click`/`rclick`/`shiftclick` (an ambiguous text points at

@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.mctest.agent.serverfabric.mappings.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "server": [
+    "CommandManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

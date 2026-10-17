@@ -30,6 +30,11 @@ val yarnMappings = providers.gradleProperty("yarnMappings").getOrElse("1.21.1+bu
 val loaderVersion = providers.gradleProperty("fabricLoaderVersion").getOrElse("0.16.5")
 val fabricApiVersion = providers.gradleProperty("fabricApiVersion").getOrElse("0.102.0+1.21.1")
 
+loom {
+    // ActorControl clears Entity's removal flag (/actor <name> control); see the .accesswidener file.
+    accessWidenerPath.set(file("src/main/resources/mc-test-server-fabric.accesswidener"))
+}
+
 base {
     // ENVIRONMENTS naming `agent-<variant>-<mc>.jar`; loom appends nothing extra to remapJar.
     archivesName.set("agent-server-fabric")
